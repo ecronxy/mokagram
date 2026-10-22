@@ -97,6 +97,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_window.h"
 #include "styles/style_media_player.h"
 #include "styles/style_menu_icons.h"
+#include "mokagram/streamer/mokagram_streamer.h"
 
 #include <QtWidgets/QApplication>
 #include <QtCore/QMimeData>
@@ -314,6 +315,12 @@ InnerWidget::InnerWidget(
 	setAccessibleName(tr::lng_recent_chats(tr::now));
 
 	_communityViewable.setRepaint([=] { update(); });
+
+	// Режим стримера: ник в результатах поиска рисуется без rpl.
+	Mokagram::Streamer::Changed(
+	) | rpl::on_next([=] {
+		update();
+	}, lifetime());
 
 	style::PaletteChanged(
 	) | rpl::on_next([=] {
@@ -1980,7 +1987,10 @@ void InnerWidget::paintPeerSearchResult(
 	QRect tr(context.st->textLeft, context.st->textTop, namewidth, st::dialogsTextFont->height);
 	p.setFont(st::dialogsTextFont);
 	QString username = peer->username();
-	if (!context.active && username.startsWith(_peerSearchQuery, Qt::CaseInsensitive)) {
+	const auto hideUsername = !username.isEmpty()
+		&& peer->isSelf()
+		&& Mokagram::Streamer::Active(Mokagram::Streamer::Field::Username);
+	if (!hideUsername && !context.active && username.startsWith(_peerSearchQuery, Qt::CaseInsensitive)) {
 		auto first = '@' + username.mid(0, _peerSearchQuery.size());
 		auto second = username.mid(_peerSearchQuery.size());
 		auto w = st::dialogsTextFont->width(first);
@@ -1995,7 +2005,9 @@ void InnerWidget::paintPeerSearchResult(
 		}
 	} else {
 		p.setPen(context.active ? st::dialogsTextFgActive : st::dialogsTextFgService);
-		p.drawText(tr.left(), tr.top() + st::dialogsTextFont->ascent, st::dialogsTextFont->elided('@' + username, tr.width()));
+		p.drawText(tr.left(), tr.top() + st::dialogsTextFont->ascent, st::dialogsTextFont->elided(hideUsername
+			? Mokagram::Streamer::Mask(Mokagram::Streamer::Field::Username, '@' + username)
+			: ('@' + username), tr.width()));
 	}
 
 	p.setPen(context.active ? st::dialogsTextFgActive : st::dialogsNameFg);
@@ -2125,10 +2137,19 @@ void InnerWidget::performDrag() {
 		std::move(byteArray));
 
 	if (const auto u = history->peer->username(); !u.isEmpty()) {
-		mimeData->setText(history->peer->session().createInternalLinkFull(u));
-		mimeData->setData(
-			u"application/x-telegram-input-field"_q,
-			('@' + u).toUtf8());
+		using namespace Mokagram::Streamer;
+		const auto link = ForCopy(
+			Field::Link,
+			history->peer->session().createInternalLinkFull(u));
+		const auto mention = ForCopy(Field::Username, '@' + u);
+		if (!link.isEmpty()) {
+			mimeData->setText(link);
+		}
+		if (!mention.isEmpty()) {
+			mimeData->setData(
+				u"application/x-telegram-input-field"_q,
+				mention.toUtf8());
+		}
 	}
 
 	const auto &st = st::defaultDialogRow;

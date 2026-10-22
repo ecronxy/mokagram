@@ -79,6 +79,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 
 #include "styles/style_chat_helpers.h"
+#include "mokagram/streamer/mokagram_streamer.h"
 
 #include <QtGui/QGuiApplication>
 
@@ -939,7 +940,12 @@ bool ShowInviteLink(
 	if (link.isEmpty()) {
 		return false;
 	}
-	QGuiApplication::clipboard()->setText(link);
+	if (Mokagram::Streamer::CopyBlocked(Mokagram::Streamer::Field::Link)) {
+		return true;
+	}
+	QGuiApplication::clipboard()->setText(Mokagram::Streamer::ForCopy(
+		Mokagram::Streamer::Field::Link,
+		link));
 	controller->showToast({
 		.text = { tr::lng_group_invite_copied(tr::now) },
 		.iconLottie = u"toast/voip_invite"_q,
@@ -961,7 +967,12 @@ bool CopyPeerId(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
-	TextUtilities::SetClipboardText({ match->captured(1) });
+	if (Mokagram::Streamer::CopyBlocked(Mokagram::Streamer::Field::Id)) {
+		return true;
+	}
+	TextUtilities::SetClipboardText({ Mokagram::Streamer::ForCopy(
+		Mokagram::Streamer::Field::Id,
+		match->captured(1)) });
 	if (controller) {
 		controller->showToast({
 			.text = { u"ID copied to clipboard."_q },
@@ -1237,8 +1248,14 @@ bool ShowCollectibleUsername(
 	controller->resolveCollectible(peerId, username, [=](const QString &e) {
 		if (e == u"COLLECTIBLE_NOT_FOUND"_q) {
 			if (const auto strong = weak.get()) {
+				if (Mokagram::Streamer::CopyBlocked(
+						Mokagram::Streamer::Field::Link)) {
+					return;
+				}
 				TextUtilities::SetClipboardText({
-					strong->session().createInternalLinkFull(username)
+					Mokagram::Streamer::ForCopy(
+						Mokagram::Streamer::Field::Link,
+						strong->session().createInternalLinkFull(username))
 				});
 				strong->showToast({
 					.text = { tr::lng_username_copied(tr::now) },
@@ -1259,8 +1276,13 @@ bool CopyUsernameLink(
 		return false;
 	}
 	const auto username = match->captured(1);
+	if (Mokagram::Streamer::CopyBlocked(Mokagram::Streamer::Field::Link)) {
+		return true;
+	}
 	TextUtilities::SetClipboardText({
-		controller->session().createInternalLinkFull(username)
+		Mokagram::Streamer::ForCopy(
+			Mokagram::Streamer::Field::Link,
+			controller->session().createInternalLinkFull(username))
 	});
 	controller->showToast({
 		.text = { tr::lng_username_copied(tr::now) },
@@ -1278,7 +1300,12 @@ bool CopyUsername(
 		return false;
 	}
 	const auto username = match->captured(1);
-	TextUtilities::SetClipboardText({ '@' + username });
+	if (Mokagram::Streamer::CopyBlocked(Mokagram::Streamer::Field::Username)) {
+		return true;
+	}
+	TextUtilities::SetClipboardText({ Mokagram::Streamer::ForCopy(
+		Mokagram::Streamer::Field::Username,
+		'@' + username) });
 	controller->showToast({
 		.text = { tr::lng_username_text_copied(tr::now) },
 		.iconLottie = u"toast/copy"_q,

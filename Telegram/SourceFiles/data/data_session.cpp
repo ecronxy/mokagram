@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_session.h"
 
+#include "mokagram/history/mokagram_history.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "main/main_app_config.h"
@@ -3062,6 +3063,13 @@ void Session::updateEditedMessage(const MTPMessage &data) {
 	if (existing->isLocalUpdateMedia() && data.type() == mtpc_message) {
 		updateExistingMessage(data.c_message());
 	}
+	if (data.type() == mtpc_message) {
+		const auto &fields = data.c_message();
+		Mokagram::History::OnBeforeEdit(
+			existing,
+			qs(fields.vmessage()),
+			fields.vedit_date().value_or_empty());
+	}
 	data.match([](const MTPDmessageEmpty &) {
 	}, [&](const MTPDmessageService &data) {
 		existing->applyEdition(data);
@@ -3351,6 +3359,7 @@ void Session::processMessagesDeleted(
 		}
 	}
 	if (!toDestroy.empty()) {
+		Mokagram::History::OnServerDeleted(toDestroy);
 		notifyItemsAboutToBeDestroyed(toDestroy);
 		for (const auto &item : toDestroy) {
 			item->destroy();
@@ -3374,6 +3383,7 @@ void Session::processNonChannelMessagesDeleted(const QVector<MTPint> &data) {
 		}
 	}
 	if (!toDestroy.empty()) {
+		Mokagram::History::OnServerDeleted(toDestroy);
 		notifyItemsAboutToBeDestroyed(toDestroy);
 		for (const auto &item : toDestroy) {
 			item->destroy();

@@ -103,8 +103,8 @@ infoProfileTopBarShowLastSeen: RoundButton(defaultActiveButton) {
 	ripple: universalRippleAnimation;
 }
 // The status line's 18px (infoProfileStatus.maxHeight) and a 4px gap.
-infoProfileTopBarBalanceSkip: 22px;
-infoProfileTopBarBalanceBottomSkip: 4px;
+infoProfileTopBarBalanceSkip: 28px;
+infoProfileTopBarBalanceBottomSkip: 14px;
 infoProfileBalancePillHeight: 16px;
 infoProfileTopBarBalanceReserve: infoProfileTopBarStatusTop
 	+ infoProfileTopBarBalanceSkip

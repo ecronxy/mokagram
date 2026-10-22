@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "data/data_peer_values.h"
 #include "apiwrap.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
 namespace Api {
 namespace {
@@ -69,6 +70,10 @@ void SendProgressManager::update(
 		|| (peer->isChannel()
 			&& !peer->isMegagroup()
 			&& type != SendProgressType::Speaking)) {
+		return;
+	} else if (progress >= 0
+		&& type != SendProgressType::Speaking
+		&& !Mokagram::Ghost::ShouldSendTyping()) {
 		return;
 	}
 

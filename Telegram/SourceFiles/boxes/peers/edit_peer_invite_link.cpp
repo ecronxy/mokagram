@@ -62,6 +62,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h" // st::boxDividerLabel.
 #include "styles/style_menu_icons.h"
 #include "styles/style_premium.h"
+#include "mokagram/streamer/mokagram_streamer.h"
 
 #include <QtCore/QMimeData>
 #include <QtGui/QGuiApplication>
@@ -1347,7 +1348,11 @@ void AddPermanentLinkBlock(
 }
 
 void CopyInviteLink(std::shared_ptr<Ui::Show> show, const QString &link) {
-	QGuiApplication::clipboard()->setText(link);
+	if (Mokagram::Streamer::CopyBlocked(Mokagram::Streamer::Field::Link)) {
+		return;
+	}
+	QGuiApplication::clipboard()->setText(
+		Mokagram::Streamer::ForCopy(Mokagram::Streamer::Field::Link, link));
 	show->showToast({
 		.text = { tr::lng_group_invite_copied(tr::now) },
 		.iconLottie = u"toast/voip_invite"_q,
@@ -1376,7 +1381,11 @@ object_ptr<Ui::BoxContent> ShareInviteLinkBox(
 	};
 
 	auto copyCallback = [=] {
-		QGuiApplication::clipboard()->setText(link);
+		if (Mokagram::Streamer::CopyBlocked(Mokagram::Streamer::Field::Link)) {
+			return;
+		}
+		QGuiApplication::clipboard()->setText(
+			Mokagram::Streamer::ForCopy(Mokagram::Streamer::Field::Link, link));
 		if (*box) {
 			(*box)->showToast({
 				.text = { copied.isEmpty()

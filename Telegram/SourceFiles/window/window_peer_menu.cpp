@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
 
+#include "mokagram/history/mokagram_history.h"
+
 #include "base/call_delayed.h"
 #include "menu/menu_check_item.h"
 #include "menu/menu_mark_as_read.h"
@@ -330,6 +332,7 @@ private:
 	void addDirectMessages();
 	void addToggleTopicClosed();
 	void addExportChat();
+	void addMokagramHistory();
 	void addTranslate();
 	void addReport();
 	void addNewContact();
@@ -1078,6 +1081,25 @@ void Filler::addExportChat() {
 		tr::lng_profile_export_chat(tr::now),
 		[=] { PeerMenuExportChat(navigation, peer); },
 		&st::menuIconExport);
+}
+
+void Filler::addMokagramHistory() {
+	if (!_peer
+		|| (_thread && _thread->asTopic())
+		|| !Mokagram::History::ShowInPeerMenu()) {
+		return;
+	}
+	const auto controller = _controller;
+	const auto peerId = _peer->id.value;
+	_addAction(
+		QString::fromUtf8("История удалённых и правок"),
+		[=] {
+			Mokagram::History::ShowHistoryBox(
+				controller,
+				peerId,
+				Mokagram::History::Kind::Deleted);
+		},
+		&st::menuIconRestore);
 }
 
 void Filler::addTranslate() {
@@ -1950,6 +1972,7 @@ void Filler::fillHistoryActions() {
 	addViewDiscussion();
 	addDirectMessages();
 	addExportChat();
+	addMokagramHistory();
 	addTranslate();
 	addReport();
 	addClearHistory();
@@ -1977,6 +2000,7 @@ void Filler::fillProfileActions() {
 	addViewDiscussion();
 	addDirectMessages();
 	addExportChat();
+	addMokagramHistory();
 	addToggleNoForwards();
 	addToggleFolder();
 	addBlockUser();

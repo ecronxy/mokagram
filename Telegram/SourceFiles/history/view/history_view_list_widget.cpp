@@ -60,6 +60,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "window/window_peer_menu.h"
 #include "main/main_session.h"
+#include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "media/player/media_player_instance.h"
 #include "dialogs/ui/dialogs_video_userpic.h"
 #include "ui/layers/generic_box.h"
@@ -638,6 +640,28 @@ ListWidget::ListWidget(
 			refreshItem(view);
 		}
 	}, lifetime());
+
+	// Mokagram: пересчёт скрытых сообщений заблокированных.
+	const auto refreshBlocked = [=] {
+		crl::on_main(this, [=] {
+			if (!_viewsCapacity.empty() || _refreshingViewer) {
+				return;
+			}
+			for (const auto &view : _items) {
+				view->setPendingResize();
+			}
+			const auto old = _slice;
+			refreshRows(old);
+		});
+	};
+	_session->changes().peerUpdates(
+		Data::PeerUpdate::Flag::IsBlocked
+	) | rpl::filter([] {
+		return Mokagram::Ghost::HideBlockedEnabled();
+	}) | rpl::on_next(refreshBlocked, lifetime());
+	Mokagram::Settings::BoolValue(
+		u"filters.hide_blocked"_q
+	) | rpl::skip(1) | rpl::on_next(refreshBlocked, lifetime());
 	_session->data().itemShowHighlightRequest(
 	) | rpl::on_next([this](auto item) {
 		showItemHighlight(item);

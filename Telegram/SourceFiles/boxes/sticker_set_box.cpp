@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/sticker_set_box.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "api/api_common.h"
 #include "api/api_stickers_creator.h"
@@ -1097,6 +1098,15 @@ void StickerSetBox::updateButtons() {
 					tr::lng_context_copy_link(tr::now),
 					copyLink,
 					&st::menuIconCopy);
+				if (!_inner->amSetCreator()) {
+					// Mokagram: вероятный владелец набора по его id.
+					raw->addAction(
+						QString::fromUtf8("Владелец пака"),
+						[show = _show, setId = _inner->setId()] {
+							Mokagram::Misc::ShowStickerSetOwner(show, setId);
+						},
+						&st::menuIconProfile);
+				}
 				if (fillSetCreatorMenu) {
 					fillSetCreatorMenu(raw);
 				}

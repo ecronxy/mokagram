@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_chat.h"
 #include "data/data_channel.h"
+#include "mokagram/history/mokagram_history.h"
 #include "data/data_forum_topic.h"
 #include "data/data_message_reactions.h"
 #include "lang/lang_keys.h"
@@ -1841,6 +1842,18 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 	if (isHidden()) {
 		return;
 	}
+
+	// Mokagram: призрак удалённого сообщения рисуем приглушённым.
+	const auto ghostOpacity = p.opacity();
+	const auto ghostDim = Mokagram::History::GhostDimmed(item);
+	if (ghostDim) {
+		p.setOpacity(ghostOpacity * 0.55);
+	}
+	const auto ghostRestore = gsl::finally([&] {
+		if (ghostDim) {
+			p.setOpacity(ghostOpacity);
+		}
+	});
 
 	const auto entry = logEntryOriginal();
 	const auto check = factcheckBlock();
@@ -5477,9 +5490,18 @@ TextState Message::bottomInfoTextState(
 	const auto size = _bottomInfo.currentSize();
 	const auto infoLeft = infoRight - size.width();
 	const auto infoTop = infoBottom - size.height();
-	return _bottomInfo.textState(
+	auto result = _bottomInfo.textState(
 		this,
 		point - QPoint{ infoLeft, infoTop });
+	// Mokagram: клик по пометке «изменено» открывает прежние версии.
+	if (!result.link
+		&& result.cursor == CursorState::Date
+		&& displayedEditDate()) {
+		if (const auto link = Mokagram::History::RevisionsLink(data())) {
+			result.link = link;
+		}
+	}
+	return result;
 }
 
 int Message::infoWidth() const {

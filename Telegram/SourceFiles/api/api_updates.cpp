@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_updates.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
 #include "api/api_authorizations.h"
 #include "api/api_user_names.h"
@@ -75,6 +76,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/editor/iv_editor_session.h"
 #include "ui/boxes/confirm_box.h"
 #include "apiwrap.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "ui/text/format_values.h" // Ui::FormatPhone
 
 namespace Api {
@@ -1026,12 +1028,17 @@ void Updates::updateOnline(crl::time lastNonIdleTime, bool gotOtherOffline) {
 		_lastWasOnline = isOnline;
 		_lastSetOnline = ms;
 		if (!Core::Quitting()) {
-			_onlineRequest = api().request(MTPaccount_UpdateStatus(
-				MTP_bool(!isOnline)
-			)).send();
+			if (Mokagram::Ghost::ShouldSendOnline()) {
+				_onlineRequest = api().request(MTPaccount_UpdateStatus(
+					MTP_bool(!isOnline)
+				)).send();
+			}
 		} else {
+			// При выходе всегда шлём offline, иначе quitPreventFinished не вызовется.
+			const auto offline = !isOnline
+				|| !Mokagram::Ghost::ShouldSendOnline();
 			_onlineRequest = api().request(MTPaccount_UpdateStatus(
-				MTP_bool(!isOnline)
+				MTP_bool(offline)
 			)).done([=] {
 				Core::App().quitPreventFinished();
 			}).fail([=] {
@@ -1502,6 +1509,18 @@ void Updates::applyUpdateNoPtsCheck(const MTPUpdate &update) {
 void Updates::applyUpdates(
 		const MTPUpdates &updates,
 		uint64 sentMessageRandomId) {
+	// Хук плагинов: один раз на самый внешний вызов (applyUpdates рекурсивен).
+	static auto hookDepth = 0;
+	struct HookDepth {
+		explicit HookDepth(const MTPUpdates &updates) {
+			if (!hookDepth++) {
+				Mokagram::Plugins::RunUpdatesHook(updates);
+			}
+		}
+		~HookDepth() {
+			--hookDepth;
+		}
+	} hookGuard(updates);
 	const auto randomId = sentMessageRandomId;
 
 	switch (updates.type()) {
@@ -1627,6 +1646,7 @@ void Updates::applyUpdates(
 }
 
 void Updates::feedUpdate(const MTPUpdate &update) {
+	Mokagram::Plugins::RunUpdateHook(update);
 	switch (update.type()) {
 
 	// New messages.

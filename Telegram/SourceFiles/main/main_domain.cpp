@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/shortcuts.h"
 #include "core/crash_reports.h"
 #include "main/main_account.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "main/main_session.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
@@ -56,6 +57,13 @@ Domain::Domain(const QString &dataName)
 	}) | rpl::flatten_latest(
 	) | rpl::on_next([](const Data::PeerUpdate &update) {
 		CrashReports::SetAnnotation("Username", update.peer->username());
+	}, _lifetime);
+
+	// Mokagram: лимит аккаунтов меняется настройкой.
+	Mokagram::Settings::IntValue(
+		QString::fromUtf8("misc.max_accounts")
+	) | rpl::on_next([=](int) {
+		_lastMaxAccounts = maxAccounts();
 	}, _lifetime);
 }
 
@@ -327,7 +335,7 @@ void Domain::scheduleUpdateUnreadBadge() {
 
 not_null<Main::Account*> Domain::add(MTP::Environment environment) {
 	Expects(started());
-	Expects(_accounts.size() < kPremiumMaxAccounts);
+	Expects(_accounts.size() < kHardMaxAccounts);
 
 	static const auto cloneConfig = [](const MTP::Config &config) {
 		return std::make_unique<MTP::Config>(config);
@@ -612,13 +620,11 @@ void Domain::scheduleWriteAccounts() {
 }
 
 int Domain::maxAccounts() const {
-	const auto premiumCount = ranges::count_if(accounts(), [](
-			const Main::Domain::AccountWithIndex &d) {
-		return d.account->sessionExists()
-			&& (d.account->session().premium()
-				|| d.account->session().isTestMode());
-	});
-	return std::min(int(premiumCount) + kMaxAccounts, kPremiumMaxAccounts);
+	// Mokagram: лимит из настройки, Premium больше не влияет.
+	return std::clamp(
+		Mokagram::Settings::Int(QString::fromUtf8("misc.max_accounts")),
+		kMaxAccounts,
+		kHardMaxAccounts);
 }
 
 rpl::producer<int> Domain::maxAccountsChanges() const {

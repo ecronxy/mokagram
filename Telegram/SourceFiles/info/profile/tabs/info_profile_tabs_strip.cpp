@@ -167,7 +167,8 @@ rpl::producer<QString> TabsStrip::contextMenuRequests() const {
 }
 
 QRect TabsStrip::islandRect() const {
-	return rect() - _st.margin;
+	// Mokagram: плашка вкладок во всю ширину карточек профиля.
+	return rect() - _st.margin + QMargins(5, 0, 6, 0);
 }
 
 int TabsStrip::islandInteriorWidth() const {

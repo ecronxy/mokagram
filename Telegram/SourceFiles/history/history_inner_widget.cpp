@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_inner_widget.h"
+#include "mokagram/history/mokagram_history.h"
 
 #include "api/api_polls.h"
 #include "chat_helpers/stickers_emoji_pack.h"
@@ -131,6 +132,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/ui/dialogs_video_userpic.h"
 #include "styles/style_chat.h"
 #include "styles/style_menu_icons.h"
+#include "mokagram/streamer/mokagram_streamer.h"
 
 #include <QtGui/QClipboard>
 #include <QtWidgets/QApplication>
@@ -690,6 +692,7 @@ void HistoryInner::setupSwipeReplyAndBack() {
 			if ((position.y() < itemtop)
 				|| (position.y() > itembottom)
 				|| (!view->data()->isRegular()
+					&& !Mokagram::History::IsGhost(view->data())
 					&& (!view->data()->isEphemeral()
 						|| view->data()->out()))
 				|| view->data()->isService()) {
@@ -744,6 +747,7 @@ void HistoryInner::setupSwipeReplyAndBack() {
 			if ((data.cursorPosition.y() < itemtop)
 				|| (data.cursorPosition.y() > itembottom)
 				|| (!view->data()->isRegular()
+					&& !Mokagram::History::IsGhost(view->data())
 					&& (!view->data()->isEphemeral()
 						|| view->data()->out()))
 				|| view->data()->showSimilarChannels()
@@ -2930,6 +2934,27 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 		return;
 	}
 	_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
+	if (_dragStateItem && Mokagram::History::IsGhost(_dragStateItem)) {
+		auto ghostItems = std::vector<not_null<HistoryItem*>>();
+		if (_selected.find(_dragStateItem) != _selected.cend()) {
+			for (const auto &item : _selected) {
+				if (Mokagram::History::IsGhost(item)) {
+					ghostItems.push_back(item);
+				}
+			}
+		}
+		if (ghostItems.empty()) {
+			ghostItems.push_back(_dragStateItem);
+		}
+		Mokagram::History::FillGhostMenu(
+			_menu.get(),
+			_controller,
+			std::move(ghostItems),
+			[=](const TextWithTags &text) { _widget->insertTextWithTags(text); });
+		_menu->popup(e->globalPos());
+		e->accept();
+		return;
+	}
 	if (linkUserpicPeerId) {
 		_widget->fillSenderUserpicMenu(
 			_menu.get(),
@@ -3639,7 +3664,11 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					} else if (const auto contact = media->sharedContact()) {
 						const auto phone = contact->phoneNumber;
 						_menu->addAction(tr::lng_profile_copy_phone(tr::now), [=] {
-							QGuiApplication::clipboard()->setText(phone);
+							if (Mokagram::Streamer::CopyBlocked(Mokagram::Streamer::Field::Phone)) {
+								return;
+							}
+							QGuiApplication::clipboard()->setText(
+								Mokagram::Streamer::ForCopy(Mokagram::Streamer::Field::Phone, phone));
 						}, &st::menuIconCopy);
 					} else if (media->gift()) {
 						HistoryView::AddGiftMessageAction(

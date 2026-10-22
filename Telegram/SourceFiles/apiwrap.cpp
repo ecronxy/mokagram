@@ -105,9 +105,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "support/support_helper.h"
 #include "settings/sections/settings_premium.h"
 #include "storage/localimageloader.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "storage/download_manager_mtproto.h"
 #include "storage/file_upload.h"
 #include "storage/storage_account.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
 namespace {
 
@@ -1438,6 +1440,7 @@ void ApiWrap::migrateFail(not_null<PeerData*> peer, const QString &error) {
 
 void ApiWrap::markContentsRead(
 		const base::flat_set<not_null<HistoryItem*>> &items) {
+	const auto ghost = !Mokagram::Ghost::ShouldSendRead();
 	auto markedIds = QVector<MTPint>();
 	auto channelMarkedIds = base::flat_map<
 		not_null<ChannelData*>,
@@ -1445,6 +1448,8 @@ void ApiWrap::markContentsRead(
 	markedIds.reserve(items.size());
 	for (const auto &item : items) {
 		if (!item->markContentsRead(true) || !item->isRegular()) {
+			continue;
+		} else if (ghost) {
 			continue;
 		}
 		if (const auto channel = item->history()->peer->asChannel()) {
@@ -1470,6 +1475,8 @@ void ApiWrap::markContentsRead(
 
 void ApiWrap::markContentsRead(not_null<HistoryItem*> item) {
 	if (!item->markContentsRead(true) || !item->isRegular()) {
+		return;
+	} else if (!Mokagram::Ghost::ShouldSendRead()) {
 		return;
 	}
 	const auto ids = MTP_vector<MTPint>(1, MTP_int(item->id));
@@ -4764,6 +4771,11 @@ void ApiWrap::sendMessage(
 		std::optional<MsgId> localMessageId) {
 	const auto history = message.action.history;
 	const auto peer = history->peer;
+	if (!Mokagram::Plugins::RunSendMessageHook(
+			message.textWithTags,
+			peer->id.value)) {
+		return;
+	}
 	const auto &textWithTags = message.textWithTags;
 
 	auto action = message.action;

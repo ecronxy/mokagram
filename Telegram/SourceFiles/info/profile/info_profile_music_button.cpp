@@ -54,14 +54,22 @@ void MusicButton::setOverrideBg(std::optional<QColor> color) {
 void MusicButton::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 
-	if (_overrideBg) {
-		p.fillRect(e->rect(), Ui::BlendColors(
-			*_overrideBg,
-			Qt::black,
-			st::infoProfileTopBarActionButtonBgOpacity));
-	} else {
-		p.fillRect(e->rect(), st::shadowFg);
+	// Mokagram: музыка в отдельной пилюле с отступами от краёв.
+	const auto pill = QRectF(rect().marginsRemoved(QMargins(9, 12, 9, 0)));
+	auto path = QPainterPath();
+	path.addRoundedRect(pill, pill.height() / 2, pill.height() / 2);
+	{
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(_overrideBg
+			? Ui::BlendColors(
+				*_overrideBg,
+				Qt::black,
+				st::infoProfileTopBarActionButtonBgOpacity)
+			: QColor(st::windowBg->c));
+		p.drawPath(path);
 	}
+	p.setClipPath(path);
 	const auto lightBackground = _overrideBg
 		&& Ui::IsLightBackground(*_overrideBg);
 	const auto rippleColor = !_overrideBg
@@ -108,7 +116,8 @@ void MusicButton::paintEvent(QPaintEvent *e) {
 		+ iconWidth;
 	const auto centerX = width() / 2;
 	const auto contentStartX = centerX - totalContentWidth / 2;
-	const auto textTop = (height() - st::normalFont->height) / 2;
+	const auto textTop = int(pill.top()
+		+ (pill.height() - st::normalFont->height) / 2);
 
 	p.setPen(!_overrideBg
 		? st::windowBoldFg->c
@@ -149,7 +158,7 @@ void MusicButton::paintEvent(QPaintEvent *e) {
 		+ actualTitleWidth
 		+ skip
 		+ skip;
-	const auto iconTop = (height() - iconHeight) / 2;
+	const auto iconTop = int(pill.top() + (pill.height() - iconHeight) / 2);
 	icon.paint(p, iconLeft, iconTop, iconWidth, p.pen().color());
 }
 
@@ -157,7 +166,7 @@ int MusicButton::resizeGetHeight(int newWidth) {
 	const auto padding = st::infoMusicButtonPadding;
 	const auto &font = st::defaultTextStyle.font;
 
-	return padding.top() + font->height + padding.bottom();
+	return padding.top() + font->height + padding.bottom() + 12;
 }
 
 } // namespace Info::Profile

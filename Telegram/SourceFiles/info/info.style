@@ -578,8 +578,8 @@ infoIconDeleteRed: icon {{ "info/info_delete", attentionButtonFg }};
 infoIconReport: icon {{ "info/info_report", attentionButtonFg }};
 infoIconBlock: icon {{ "info/info_block", attentionButtonFg }};
 infoIconMembers: icon {{ "info/info_members", infoIconFg }};
-infoSharedMediaButtonIconPosition: point(20px, 3px);
-infoGroupMembersIconPosition: point(20px, 10px);
+infoSharedMediaButtonIconPosition: point(20px, 7px);
+infoGroupMembersIconPosition: point(20px, 14px);
 
 infoOpenApp: RoundButton(defaultActiveButton) {
 	textTop: 11px;
@@ -615,7 +615,7 @@ infoProfileToggleOver: Toggle(infoProfileToggle) {
 infoProfileButton: SettingsButton(defaultSettingsButton) {
 	style: defaultTextStyle;
 
-	padding: margins(79px, 10px, 8px, 8px);
+	padding: margins(79px, 14px, 8px, 14px);
 	iconLeft: 22px;
 
 	toggle: infoProfileToggle;
@@ -626,7 +626,7 @@ infoMainButton: SettingsButton(infoProfileButton) {
 	textFg: lightButtonFg;
 	textFgOver: lightButtonFgOver;
 	style: semiboldTextStyle;
-	padding: margins(23px, 10px, 8px, 8px);
+	padding: margins(23px, 14px, 8px, 14px);
 }
 infoSharedMediaButton: infoProfileButton;
 

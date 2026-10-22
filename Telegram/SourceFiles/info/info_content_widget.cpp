@@ -38,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "styles/style_info.h"
 #include "styles/style_profile.h"
+#include "styles/style_dialogs.h"
 
 namespace Info {
 namespace {
@@ -91,7 +92,7 @@ ContentWidget::ContentWidget(
 		}
 		_bg = (value == Wrap::Layer)
 			? st::boxBg
-			: st::profileBg;
+			: st::dialogsBg;
 		update();
 	}, lifetime());
 	if (_controller->section().type() != Section::Type::Profile) {

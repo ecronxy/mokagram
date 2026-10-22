@@ -264,6 +264,7 @@ public:
 	void hideSingleUseKeyboard(FullMsgId replyToId);
 	bool insertBotCommand(const QString &cmd);
 	void insertTextAtCursor(const QString &text);
+	void insertTextWithTags(const TextWithTags &text);
 
 	bool eventFilter(QObject *obj, QEvent *e) override;
 
@@ -862,6 +863,7 @@ private:
 
 	bool _canSendMessages = false;
 	bool _canSendTexts = false;
+	bool _ghostNoPreview = false; // Mokagram: ответ на удалённое без превью.
 	MsgId _showAtMsgId = ShowAtUnreadMsgId;
 	base::flat_set<MsgId> _topicsRequested;
 	Window::SectionShow _showAtMsgParams;

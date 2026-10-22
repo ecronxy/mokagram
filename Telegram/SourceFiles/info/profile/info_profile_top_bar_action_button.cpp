@@ -18,6 +18,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Info::Profile {
 namespace {
 
+constexpr auto kActionRadius = 20;
+
+} // namespace
+
+namespace {
+
 constexpr auto kIconFadeStart = 0.4;
 constexpr auto kIconFadeRange = 1.0 - kIconFadeStart;
 
@@ -124,7 +130,7 @@ void TopBarActionButton::paintEvent(QPaintEvent *e) {
 	p.setBrush(_bgColor);
 	{
 		auto hq = PainterHighQualityEnabler(p);
-		p.drawRoundedRect(rect(), st::boxRadius, st::boxRadius);
+		p.drawRoundedRect(rect(), kActionRadius, kActionRadius);
 
 		const auto hovered = _rippleColor
 			? _overAnimation.value(isOver() ? 1. : 0.)
@@ -132,7 +138,7 @@ void TopBarActionButton::paintEvent(QPaintEvent *e) {
 		if (hovered > 0.) {
 			p.setOpacity(progress * hovered);
 			p.setBrush(*_rippleColor);
-			p.drawRoundedRect(rect(), st::boxRadius, st::boxRadius);
+			p.drawRoundedRect(rect(), kActionRadius, kActionRadius);
 			p.setOpacity(progress);
 		}
 	}
@@ -211,7 +217,7 @@ void TopBarActionButton::onStateChanged(
 }
 
 QImage TopBarActionButton::prepareRippleMask() const {
-	return Ui::RippleAnimation::RoundRectMask(size(), st::boxRadius);
+	return Ui::RippleAnimation::RoundRectMask(size(), kActionRadius);
 }
 
 QPoint TopBarActionButton::prepareRippleStartPosition() const {

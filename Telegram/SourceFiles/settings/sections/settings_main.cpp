@@ -87,6 +87,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/settings/mokagram_settings_box.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
 
@@ -444,6 +446,26 @@ void BuildSectionButtons(SectionBuilder &builder) {
 		.targetSection = CallsId(),
 		.icon = { &st::menuIconUnmute },
 		.keywords = { u"sessions"_q, u"calls"_q },
+	});
+
+	builder.addButton({
+		.id = u"main/plugins"_q,
+		.title = rpl::single(QString::fromUtf8("Плагины")),
+		.icon = { &st::menuIconBotCommands },
+		.onClick = [=] {
+			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
+		},
+		.keywords = { u"plugins"_q, u"python"_q },
+	});
+
+	builder.addButton({
+		.id = u"main/customize"_q,
+		.title = rpl::single(QString::fromUtf8("Кастомизация")),
+		.icon = { &st::menuIconPalette },
+		.onClick = [=] {
+			Mokagram::Settings::ShowCustomizeBox(controller);
+		},
+		.keywords = { u"customize"_q, u"mokagram"_q },
 	});
 
 	builder.addButton({

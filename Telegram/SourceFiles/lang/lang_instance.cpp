@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "lang/lang_instance.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "core/application.h"
 #include "storage/serialize_common.h"
@@ -728,7 +729,11 @@ QString Instance::getNonDefaultValue(const QByteArray &key) const {
 		: QString();
 }
 
-void Instance::applyValue(const QByteArray &key, const QByteArray &value) {
+void Instance::applyValue(
+		const QByteArray &key,
+		const QByteArray &originalValue) {
+	// Mokagram: единственная точка подмены названия клиента в строках.
+	const auto value = Mokagram::Misc::BrandRewrite(originalValue);
 	_nonDefaultValues[key] = value;
 	ParseKeyValue(key, value, [&](ushort key, QString &&value) {
 		_nonDefaultSet[key] = 1;

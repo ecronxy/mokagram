@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_context_menu.h"
+#include "mokagram/history/mokagram_history.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 
 #include "api/api_attached_stickers.h"
 #include "api/api_editing.h"
@@ -16,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_transcribes.h"
 #include "api/api_who_reacted.h"
 #include "api/api_stickers_creator.h"
+#include "mokagram/misc/mokagram_misc.h"
 #include "api/api_suggest_post.h"
 #include "api/api_toggling_media.h" // Api::ToggleFavedSticker
 #include "base/qt/qt_key_modifiers.h"
@@ -1423,6 +1426,9 @@ void AddMessageActions(
 		AddEphemeralAboutAction(menu, request.item);
 	}
 	AddRescheduleAction(menu, request, list);
+	if (request.selectedItems.empty()) {
+		Mokagram::Plugins::AddMessageMenuItems(menu, request.item);
+	}
 }
 
 void AddCopyLinkAction(
@@ -1776,6 +1782,19 @@ void FillContextMenuItems(
 	const auto hasWhoReactedItem = item
 		&& Api::WhoReactedExists(item, Api::WhoReactedList::All);
 
+	if (item && Mokagram::History::IsGhost(item)) {
+		const auto weakList = base::make_weak(list.get());
+		Mokagram::History::FillGhostMenu(
+			result,
+			list->controller(),
+			{ item },
+			[=](const TextWithTags &text) {
+				if (const auto strong = weakList.get()) {
+					strong->insertTextAtCursor(text.text);
+				}
+			});
+		return;
+	}
 	AddReplyToMessageAction(result, request, list);
 	if (item) {
 		const auto media = item->media();

@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 #include "ui/layers/show.h"
 #include "ui/text/text_utilities.h"
 
@@ -1235,6 +1236,8 @@ void Stories::loadAround(FullStoryId id, StoriesContext context) {
 void Stories::markAsRead(FullStoryId id, bool viewed) {
 	if (id.peer == _owner->session().userPeerId()) {
 		return;
+	} else if (!Mokagram::Ghost::ShouldSendStoryView()) {
+		return;
 	}
 	const auto maybeStory = lookup(id);
 	if (!maybeStory) {
@@ -1423,6 +1426,10 @@ void Stories::checkQuitPreventFinished() {
 
 void Stories::sendMarkAsReadRequests() {
 	_markReadTimer.cancel();
+	if (!Mokagram::Ghost::ShouldSendStoryView()) {
+		_markReadPending.clear();
+		return;
+	}
 	for (auto i = begin(_markReadPending); i != end(_markReadPending);) {
 		const auto peerId = *i;
 		if (_markReadRequests.contains(peerId)) {
@@ -1439,6 +1446,10 @@ void Stories::sendMarkAsReadRequests() {
 
 void Stories::sendIncrementViewsRequests() {
 	if (_incrementViewsPending.empty()) {
+		return;
+	} else if (!Mokagram::Ghost::ShouldSendStoryView()) {
+		_incrementViewsTimer.cancel();
+		_incrementViewsPending.clear();
 		return;
 	}
 	struct Prepared {
@@ -2284,6 +2295,11 @@ void Stories::togglePinnedList(
 }
 
 bool Stories::isQuitPrevent() {
+	if (!Mokagram::Ghost::ShouldSendStoryView()
+		&& _markReadRequests.empty()
+		&& _incrementViewsRequests.empty()) {
+		return false;
+	}
 	if (!_markReadPending.empty()) {
 		sendMarkAsReadRequests();
 	}

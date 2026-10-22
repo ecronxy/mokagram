@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 
 #include "apiwrap.h"
 #include "base/event_filter.h"
@@ -77,6 +78,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_wallet.h"
 #include "styles/style_window.h"
 #include "styles/style_window_main_menu.h"
+#include "mokagram/streamer/mokagram_streamer.h"
 
 #include <QtGui/QWindow>
 #include <QtGui/QScreen>
@@ -348,6 +350,13 @@ MainMenu::MainMenu(
 , _version(AddVersionLabel(_footer)) {
 	setAttribute(Qt::WA_OpaquePaintEvent);
 
+	// Режим стримера: имя в шапке рисуется без rpl, сбрасываем кэш текста.
+	Mokagram::Streamer::Changed(
+	) | rpl::on_next([=] {
+		_nameVersion = 0;
+		update();
+	}, lifetime());
+
 	setupUserpicButton();
 	setupAccountsToggle();
 	setupSetEmojiStatus();
@@ -522,14 +531,24 @@ void MainMenu::setupArchive() {
 	const auto inner = wrap->entity();
 	wrap->toggle(checkArchive(), anim::type::instant);
 
-	const auto button = AddButtonWithIcon(
-		inner,
-		tr::lng_archived_name(),
-		st::mainMenuButton,
-		{ &st::menuIconArchiveOpen });
-	inner->add(
-		object_ptr<Ui::PlainShadow>(inner),
-		{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
+	static const auto archiveStyle = [] {
+		auto result = st::mainMenuButton;
+		result.padding = style::margins(
+			result.padding.left() + 6,
+			result.padding.top() + 6,
+			result.padding.right(),
+			result.padding.bottom() + 6);
+		result.iconLeft += 4;
+		return result;
+	}();
+	const auto button = inner->add(
+		CreateButtonWithIcon(
+			inner,
+			tr::lng_archived_name(),
+			archiveStyle,
+			{ &st::menuIconArchiveOpen }),
+		QMargins(12, 4, 12, 4));
+	Mokagram::Plugins::MakePill(button, [] { return st::mainMenuBg->c; });
 	button->setAcceptBoth(true);
 	button->clicks(
 	) | rpl::on_next([=](Qt::MouseButton which) {
@@ -658,32 +677,42 @@ void MainMenu::setupMenu() {
 	using namespace Settings;
 
 	const auto controller = _controller;
+	// Mokagram: пункты меню отдельными пилюлями с одинаковыми отступами.
+	static const auto rowStyle = [] {
+		auto result = st::mainMenuButton;
+		result.padding = style::margins(
+			result.padding.left() + 6,
+			result.padding.top() + 6,
+			result.padding.right(),
+			result.padding.bottom() + 6);
+		result.iconLeft += 4;
+		return result;
+	}();
+	const auto pillMargins = QMargins(12, 4, 12, 4);
+	const auto menuBg = [] { return st::mainMenuBg->c; };
 	const auto addAction = [&](
 			rpl::producer<QString> text,
 			IconDescriptor &&descriptor) {
-		return AddButtonWithIcon(
-			_menu,
-			std::move(text),
-			st::mainMenuButton,
-			std::move(descriptor));
-	};
-	if (!_controller->session().supportMode()) {
-		_menu->add(
+		const auto button = _menu->add(
 			CreateButtonWithIcon(
 				_menu,
-				tr::lng_menu_my_profile(),
-				st::mainMenuButton,
-				{ &st::menuIconProfile })
+				std::move(text),
+				rowStyle,
+				std::move(descriptor)),
+			pillMargins);
+		Mokagram::Plugins::MakePill(button, menuBg);
+		return button;
+	};
+	if (!_controller->session().supportMode()) {
+		addAction(
+			tr::lng_menu_my_profile(),
+			{ &st::menuIconProfile }
 		)->setClickedCallback([=] {
 			controller->showSection(
 				Info::Stories::MakeMyProfile(controller->session().user()));
 		});
 
 		SetupMenuBots(_menu, controller);
-
-		_menu->add(
-			object_ptr<Ui::PlainShadow>(_menu),
-			{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
 
 		AddMyChannelsBox(addAction(
 			tr::lng_create_group_title(),
@@ -704,22 +733,16 @@ void MainMenu::setupMenu() {
 		});
 
 		addAction(
-			tr::lng_menu_contacts(),
-			{ &st::menuIconUserShow }
-		)->setClickedCallback([=] {
-			controller->show(PrepareContactsBox(controller));
-		});
-		addAction(
-			tr::lng_menu_calls(),
-			{ &st::menuIconPhone }
-		)->setClickedCallback([=] {
-			::Calls::ShowCallsBox(controller);
-		});
-		addAction(
 			tr::lng_saved_messages(),
 			{ &st::menuIconSavedMessages }
 		)->setClickedCallback([=] {
 			controller->showPeerHistory(controller->session().user());
+		});
+		addAction(
+			rpl::single(QString::fromUtf8("Плагины")),
+			{ &st::menuIconBotCommands }
+		)->setClickedCallback([=] {
+			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
 		});
 		const auto session = &controller->session();
 		const auto wallet = _menu->add(
@@ -728,12 +751,14 @@ void MainMenu::setupMenu() {
 				CreateButtonWithIcon(
 					_menu,
 					tr::lng_wallet_menu(),
-					st::mainMenuButton,
-					{ &st::walletMenuIcon })));
+					rowStyle,
+					{ &st::walletMenuIcon }),
+				pillMargins));
+		Mokagram::Plugins::MakePill(wallet->entity(), menuBg);
 		Ui::NewBadge::AddAfterButtonText(
 			wallet->entity(),
 			tr::lng_wallet_menu(),
-			st::mainMenuButton);
+			rowStyle);
 		wallet->toggleOn(session->appConfig().value(
 		) | rpl::map([=] {
 			return session->appConfig().walletAvailable();
@@ -919,7 +944,11 @@ void MainMenu::drawName(Painter &p) {
 		_nameVersion = user->nameVersion();
 		_name.setText(
 			st::semiboldTextStyle,
-			user->name(),
+			Mokagram::Streamer::Active(Mokagram::Streamer::Field::Name)
+				? Mokagram::Streamer::Mask(
+					Mokagram::Streamer::Field::Name,
+					user->name())
+				: user->name(),
 			Ui::NameTextOptions());
 		moveBadge();
 	}

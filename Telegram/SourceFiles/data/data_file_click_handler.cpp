@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_file_click_handler.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 
 #include "core/click_handler_types.h"
 #include "core/file_utilities.h"
@@ -77,6 +78,11 @@ void DocumentSaveClickHandler::Save(
 		Mode mode,
 		Fn<void()> started) {
 	if (data->isNull()) {
+		return;
+	}
+
+	if (Mokagram::Plugins::IsPluginDocument(data)) {
+		Mokagram::Plugins::OpenPluginDocument(nullptr, data, origin);
 		return;
 	}
 

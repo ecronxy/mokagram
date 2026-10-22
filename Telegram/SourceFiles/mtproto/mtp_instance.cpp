@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/config_loader.h"
 #include "mtproto/sender.h"
+#include "mokagram/plugins/mokagram_plugins.h"
 #include "storage/localstorage.h"
 #include "calls/calls_instance.h"
 #include "main/main_account.h" // Account::configUpdated.
@@ -1028,6 +1029,21 @@ void Instance::Private::sendRequest(
 		mtpRequestId afterRequestId) {
 	const auto session = getSession(shiftedDcId);
 
+	// Хук плагинов (наблюдающий): constructor и тело запроса уходят в очередь рабочего потока.
+	if (request && request->size() > details::SerializedRequest::kMessageBodyPosition) {
+		const auto body = details::SerializedRequest::kMessageBodyPosition;
+		const auto type = uint32_t((*request)[body]);
+		if (Mokagram::Plugins::HookWanted(
+				Mokagram::Plugins::HookKind::PreRequest,
+				type)) {
+			Mokagram::Plugins::QueueHook(
+				Mokagram::Plugins::HookKind::PreRequest,
+				type,
+				request->constData() + body,
+				size_t(request->size() - body) * sizeof(mtpPrime));
+		}
+	}
+
 	request->requestId = requestId;
 	storeRequest(requestId, request, std::move(callbacks));
 
@@ -1154,6 +1170,25 @@ bool Instance::Private::hasCallback(mtpRequestId requestId) const {
 
 void Instance::Private::processCallback(const Response &response) {
 	const auto requestId = response.requestId;
+	// Хук плагинов (наблюдающий): по методу запроса, в данных ответ сервера или ошибка.
+	if (!response.reply.isEmpty()
+		&& Mokagram::Plugins::HookActive(
+			Mokagram::Plugins::HookKind::PostRequest)) {
+		const auto request = getRequest(requestId);
+		const auto body = details::SerializedRequest::kMessageBodyPosition;
+		if (request && request->size() > body) {
+			const auto type = uint32_t((*request)[body]);
+			if (Mokagram::Plugins::HookWanted(
+					Mokagram::Plugins::HookKind::PostRequest,
+					type)) {
+				Mokagram::Plugins::QueueHook(
+					Mokagram::Plugins::HookKind::PostRequest,
+					type,
+					response.reply.constData(),
+					size_t(response.reply.size()) * sizeof(mtpPrime));
+			}
+		}
+	}
 	ResponseHandler handler;
 	{
 		QMutexLocker locker(&_parserMapLock);

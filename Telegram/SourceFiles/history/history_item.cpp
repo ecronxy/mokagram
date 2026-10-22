@@ -6,7 +6,10 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item.h"
+#include "mokagram/history/mokagram_history.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
+#include "mokagram/history/mokagram_history_filters.h"
 #include "api/api_premium.h"
 #include "api/api_sensitive_content.h"
 #include "api/api_transcribes.h"
@@ -2382,6 +2385,7 @@ void HistoryItem::clearMainView() {
 }
 
 void HistoryItem::applyEdition(HistoryMessageEdition &&edition) {
+	Mokagram::History::ForgetFilterResult(this);
 	history()->session().ephemeralMessages().revertAnchored(this);
 
 	int keyboardTop = -1;
@@ -3529,7 +3533,9 @@ bool HistoryItem::canDeleteForEveryone(TimeId now) const {
 }
 
 bool HistoryItem::canBeSelected() const {
-	return (isRegular() || isEphemeral())
+	return (isRegular()
+		|| isEphemeral()
+		|| Mokagram::History::IsGhost(this))
 		&& !isService()
 		&& !IsAnchoredEphemeral(this);
 }
@@ -4862,6 +4868,9 @@ bool HistoryItem::hasPossibleRestrictions() const {
 }
 
 bool HistoryItem::isEmpty() const {
+	if (Mokagram::Ghost::HidesBlocked(this)) {
+		return true;
+	}
 	return _text.empty()
 		&& !_media
 		&& !Has<HistoryMessageRichPageSource>()
@@ -4957,6 +4966,9 @@ TextWithEntities HistoryItem::notificationText(
 }
 
 ItemPreview HistoryItem::toPreview(ToPreviewOptions options) const {
+	if (Mokagram::Ghost::HidesBlocked(this)) {
+		return {};
+	}
 	if (isService()) {
 		const_cast<HistoryItem*>(this)->resolveDependent();
 
@@ -6128,6 +6140,15 @@ void HistoryItem::createServiceFromMtp(const MTPDmessageService &message) {
 
 void HistoryItem::setMedia(const MTPMessageMedia &media) {
 	_media = CreateMedia(this, media);
+	if (_media && !isLocal() && Mokagram::History::WantsMediaTl()) {
+		auto buffer = mtpBuffer();
+		media.write(buffer);
+		Mokagram::History::RememberMedia(
+			fullId(),
+			QByteArray(
+				reinterpret_cast<const char*>(buffer.constData()),
+				int(buffer.size() * sizeof(mtpPrime))));
+	}
 	checkStoryForwardInfo();
 	checkBuyButton();
 }

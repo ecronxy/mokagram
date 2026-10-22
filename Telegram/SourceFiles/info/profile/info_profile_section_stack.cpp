@@ -15,20 +15,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rect_part.h"
 #include "ui/ui_utility.h"
 
+#include "ui/painter.h"
 #include "styles/style_info.h"
+#include "styles/style_chat_helpers.h"
+#include "styles/style_dialogs.h"
 
 namespace Info::Profile {
 namespace {
 
 [[nodiscard]] not_null<Ui::SlideWrap<>*> CreatePlainSeparator(
 		not_null<Ui::VerticalLayout*> layout) {
+	// Mokagram: между таблетками обычный зазор вместо полосы-разделителя.
 	auto inner = object_ptr<Ui::VerticalLayout>(layout);
-	Ui::AddSkip(inner.data(), st::infoProfileSkip);
-	inner->add(object_ptr<Ui::BoxContentDivider>(
-		inner.data(),
-		st::boxDividerHeight,
-		st::defaultDividerBar));
-	Ui::AddSkip(inner.data(), st::infoProfileSkip);
+	Ui::AddSkip(inner.data(), 1);
 	return layout->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		layout,
 		std::move(inner)));
@@ -60,6 +59,68 @@ namespace {
 		setup(rawLabel);
 	}
 	return wrap;
+}
+
+constexpr auto kCardRadius = 22;
+
+// Mokagram: секция профиля как отдельная скруглённая таблетка.
+// Фон рисуется под содержимым, а углы закрывают четыре маленьких виджета
+// цвета страницы: дочерние строки красят свой прямоугольник целиком.
+// Радиус не больше половины высоты, чтобы низкие секции стали пилюлями.
+void MakeCard(not_null<Ui::RpWidget*> card) {
+	card->paintRequest(
+	) | rpl::on_next([=](QRect clip) {
+		auto p = QPainter(card);
+		p.fillRect(clip, st::windowBg);
+	}, card->lifetime());
+
+	struct Corner {
+		not_null<Ui::RpWidget*> widget;
+		bool right;
+		bool bottom;
+	};
+	struct State {
+		std::vector<Corner> corners;
+		int radius = kCardRadius;
+	};
+	const auto state = card->lifetime().make_state<State>();
+	for (const auto right : { false, true }) {
+		for (const auto bottom : { false, true }) {
+			const auto corner = Ui::CreateChild<Ui::RpWidget>(card.get());
+			corner->setAttribute(Qt::WA_TransparentForMouseEvents);
+			corner->paintRequest(
+			) | rpl::on_next([=] {
+				auto p = QPainter(corner);
+				auto hq = PainterHighQualityEnabler(p);
+				const auto r = state->radius;
+				auto path = QPainterPath();
+				path.addRect(corner->rect());
+				auto circle = QPainterPath();
+				circle.addEllipse(QRectF(
+					right ? -r : 0,
+					bottom ? -r : 0,
+					2 * r,
+					2 * r));
+				p.fillPath(path.subtracted(circle), st::dialogsBg);
+			}, corner->lifetime());
+			state->corners.push_back({ corner, right, bottom });
+		}
+	}
+	card->sizeValue(
+	) | rpl::on_next([=](QSize size) {
+		const auto r = std::max(1, std::min(
+			kCardRadius,
+			std::min(size.width(), size.height()) / 2));
+		state->radius = r;
+		for (const auto &corner : state->corners) {
+			corner.widget->resize(r, r);
+			corner.widget->move(
+				corner.right ? size.width() - r : 0,
+				corner.bottom ? size.height() - r : 0);
+			corner.widget->update();
+			corner.widget->raise();
+		}
+	}, card->lifetime());
 }
 
 } // namespace
@@ -197,10 +258,19 @@ void SectionStack::finalize() {
 		auto &row = _rows[i];
 		kinds.push_back(row.type);
 		switch (row.type) {
-		case RowType::Block:
-			_layout->add(std::move(row.widget));
-			intrinsic.push_back(shownOrTrue(std::move(row.shown)));
+		case RowType::Block: {
+			auto shown = shownOrTrue(std::move(row.shown));
+			const auto inner = row.widget.data();
+			MakeCard(inner);
+			const auto wrap = _layout->add(
+				object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
+					_layout,
+					std::move(row.widget),
+					QMargins(14, 5, 14, 5)));
+			wrap->toggleOn(rpl::duplicate(shown), anim::type::instant);
+			intrinsic.push_back(std::move(shown));
 			break;
+		}
 		case RowType::PlainSeparator:
 			separators[i] = CreatePlainSeparator(_layout);
 			intrinsic.push_back(rpl::single(true));

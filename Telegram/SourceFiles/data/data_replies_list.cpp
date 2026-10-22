@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "lang/lang_keys.h"
 #include "apiwrap.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
 namespace Data {
 namespace {
@@ -1001,6 +1002,9 @@ void RepliesList::readTill(
 void RepliesList::sendReadTillRequest() {
 	if (_readRequestTimer.isActive()) {
 		_readRequestTimer.cancel();
+	}
+	if (!Mokagram::Ghost::ShouldSendRead()) {
+		return;
 	}
 	const auto api = &_history->session().api();
 	api->request(base::take(_readRequestId)).cancel();

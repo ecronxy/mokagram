@@ -6,6 +6,13 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
+#include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/streamer/mokagram_streamer.h"
+#include "mokagram/history/mokagram_history.h"
+#include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "data/data_abstract_structure.h"
 #include "data/data_channel.h"
@@ -75,6 +82,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/system_media_controls_manager.h"
 #include "window/notifications_manager.h"
 #include "window/themes/window_theme.h"
+#include <QtCore/QFile>
 #include "ui/widgets/tooltip.h"
 #include "ui/gl/gl_detection.h"
 #include "ui/text/text_options.h"
@@ -314,6 +322,16 @@ void Application::run() {
 	_notifications = std::make_unique<Window::Notifications::System>();
 
 	startLocalStorage();
+
+	Mokagram::Streamer::RegisterSettings();
+	Mokagram::History::RegisterSettings();
+	Mokagram::Ghost::RegisterSettings();
+	Mokagram::Misc::RegisterSettings();
+	Mokagram::Settings::StartDebugCommands();
+	Mokagram::Settings::Load();
+	Mokagram::Plugins::Start([](const std::string &line) {
+		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+	});
 
 	style::SetCustomFont(settings().customFontFamily());
 	style::internal::StartFonts();
@@ -560,6 +578,19 @@ void Application::startDomain() {
 void Application::startSettingsAndBackground() {
 	Local::rewriteSettingsIfNeeded();
 	Window::Theme::Background()->start();
+	// Mokagram: тёмная нейтральная тема по умолчанию (один раз, дальше выбор за пользователем).
+	{
+		const auto marker = cWorkingDir() + u"tdata/mokagram_night_default"_q;
+		if (!QFile::exists(marker)) {
+			auto file = QFile(marker);
+			if (file.open(QIODevice::WriteOnly)) {
+				file.close();
+			}
+			if (!Window::Theme::IsNightMode()) {
+				Window::Theme::ToggleNightMode();
+			}
+		}
+	}
 	checkSystemDarkMode();
 	Ui::SetScreenReaderModeDisabled(
 		settings().readPref<bool>(kScreenReaderModeDisabledKey));

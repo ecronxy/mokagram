@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "data/data_document_resolver.h"
 
 #include "base/platform/base_platform_info.h"
@@ -240,6 +241,14 @@ void ResolveDocument(
 		return;
 	}
 	const auto msgId = item ? item->fullId() : FullMsgId();
+
+	if (Mokagram::Plugins::IsPluginDocument(document)) {
+		Mokagram::Plugins::OpenPluginDocument(
+			controller,
+			document,
+			Data::FileOrigin(msgId));
+		return;
+	}
 
 	const auto showDocument = [&] {
 		if (controller) {

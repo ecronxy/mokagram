@@ -107,6 +107,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_custom_emoji.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "mokagram/history/mokagram_history.h"
 #include "history/history_item_helpers.h" // GetErrorForSending.
 #include "history/history_drag_area.h"
 #include "history/history_inner_widget.h"
@@ -5341,6 +5342,9 @@ void HistoryWidget::preloadHistoryIfNeeded() {
 		return;
 	}
 
+	// Mokagram: призраки удалённых и пометки правок для видимого диапазона.
+	Mokagram::History::OnChatShown(_history);
+
 	_cornerButtons.updateJumpDownVisibility();
 	_cornerButtons.updateUnreadThingsVisibility();
 	if (!_scrollToAnimation.animating()) {
@@ -5976,6 +5980,9 @@ void HistoryWidget::sendTextWithTags(
 	message.textWithTags = textWithTags;
 	if (useWebPageDraft && _preview) {
 		message.webPage = _preview->draft();
+	}
+	if (_ghostNoPreview) {
+		message.webPage.removed = true;
 	}
 	const auto ephemeral = session().ephemeralMessages().wouldSend(message);
 	if (options.scheduled && ephemeral) {
@@ -6757,6 +6764,37 @@ void HistoryWidget::insertTextAtCursor(const QString &text) {
 		return;
 	}
 	Menu::InsertTextAtCursor(_field, text);
+}
+
+void HistoryWidget::insertTextWithTags(const TextWithTags &text) {
+	if (!_canSendTexts) {
+		return;
+	}
+	auto current = _field->getTextWithTags();
+	const auto shift = int(current.text.size());
+	current.text += text.text;
+	for (auto tag : text.tags) {
+		tag.offset += shift;
+		current.tags.push_back(tag);
+	}
+	_field->setTextWithTags(current);
+	_ghostNoPreview = true;
+	if (_preview) {
+		_preview->setDisabled(true);
+	}
+	_field->changes(
+	) | rpl::filter([=] {
+		return _field->getLastText().isEmpty();
+	}) | rpl::take(1) | rpl::on_next([=] {
+		_ghostNoPreview = false;
+		if (_preview) {
+			_preview->setDisabled(false);
+		}
+	}, _field->lifetime());
+	_field->setFocus();
+	auto cursor = _field->textCursor();
+	cursor.movePosition(QTextCursor::End);
+	_field->setTextCursor(cursor);
 }
 
 bool HistoryWidget::eventFilter(QObject *obj, QEvent *e) {

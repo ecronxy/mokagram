@@ -38,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_premium_limits.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
 #include "base/unixtime.h"
+#include "mokagram/streamer/mokagram_streamer.h"
 
 namespace Info {
 namespace Profile {
@@ -101,10 +102,17 @@ rpl::producer<QString> NameValue(not_null<PeerData*> peer) {
 	if (const auto broadcast = peer->monoforumBroadcast()) {
 		return NameValue(broadcast);
 	}
-	return peer->session().changes().peerFlagsValue(
+	auto name = peer->session().changes().peerFlagsValue(
 		peer,
 		UpdateFlag::Name
 	) | rpl::map([=] { return peer->name(); });
+	if (!peer->isSelf()) {
+		return std::move(name);
+	}
+	// Режим стримера: маска только на своё имя.
+	return Mokagram::Streamer::Wrap(
+		Mokagram::Streamer::Field::Name,
+		std::move(name));
 }
 
 rpl::producer<QString> TitleValue(not_null<Data::ForumTopic*> topic) {
@@ -129,13 +137,21 @@ rpl::producer<int32> ColorIdValue(not_null<Data::ForumTopic*> topic) {
 }
 
 rpl::producer<TextWithEntities> PhoneValue(not_null<UserData*> user) {
-	return rpl::merge(
-		Countries::Instance().updated(),
-		user->session().changes().peerFlagsValue(
-			user,
-			UpdateFlag::PhoneNumber) | rpl::to_empty
-	) | rpl::map([=] {
-		return tr::marked(Ui::FormatPhone(user->phone()));
+	return rpl::combine(
+		rpl::merge(
+			Countries::Instance().updated(),
+			user->session().changes().peerFlagsValue(
+				user,
+				UpdateFlag::PhoneNumber) | rpl::to_empty),
+		Mokagram::Streamer::ActiveValue(Mokagram::Streamer::Field::Phone)
+	) | rpl::map([=](rpl::empty_value, bool hide) {
+		auto phone = Ui::FormatPhone(user->phone());
+		if (hide && user->isSelf()) {
+			phone = Mokagram::Streamer::Mask(
+				Mokagram::Streamer::Field::Phone,
+				phone);
+		}
+		return tr::marked(phone);
 	});
 }
 
@@ -156,7 +172,10 @@ rpl::producer<TextWithEntities> PhoneOrHiddenValue(not_null<UserData*> user) {
 			const QString &hidden) {
 		if (phone.text.isEmpty() && username.isEmpty() && about.isEmpty()) {
 			return tr::marked(hidden);
-		} else if (IsCollectiblePhone(user)) {
+		} else if (IsCollectiblePhone(user)
+			&& !Mokagram::Streamer::Active(
+				Mokagram::Streamer::Field::Phone)) {
+			// При скрытом номере ссылка с реальным номером не нужна.
 			return tr::link(phone, u"internal:collectible_phone/"_q
 				+ user->phone() + '@' + QString::number(user->id.value));
 		} else {
@@ -173,9 +192,14 @@ rpl::producer<TextWithEntities> PhoneWithSpoilerValue(
 	}
 	return rpl::combine(
 		std::move(phone),
-		user->session().settings().phoneNumberHiddenValue()
-	) | rpl::map([](const TextWithEntities &phone, bool hidden) {
-		return hidden
+		user->session().settings().phoneNumberHiddenValue(),
+		Mokagram::Streamer::ActiveValue(Mokagram::Streamer::Field::Phone)
+	) | rpl::map([](
+			const TextWithEntities &phone,
+			bool hidden,
+			bool streamer) {
+		// Скрытый стримером номер уже замаскирован, спойлер не нужен.
+		return (hidden && !streamer)
 			? Ui::Text::Wrapped(phone, EntityType::Spoiler)
 			: phone;
 	});
@@ -185,19 +209,48 @@ void CopyPhoneToClipboard(rpl::producer<TextWithEntities> phone) {
 	auto text = rpl::variable<TextWithEntities>(
 		std::move(phone)).current().text;
 	text.replace(' ', QString()).replace('-', QString());
+	if (!text.isEmpty() && text.contains(QChar(0x2022))
+		&& Mokagram::Streamer::Active(Mokagram::Streamer::Field::Phone)) {
+		// Здесь текст уже замаскирован, настоящий берёт перегрузка с UserData.
+		Mokagram::Streamer::SetClipboard(
+			Mokagram::Streamer::Field::Phone,
+			text);
+		return;
+	}
+	TextUtilities::SetClipboardText({ text });
+}
+
+void CopyPhoneToClipboard(not_null<UserData*> user) {
+	auto text = Ui::FormatPhone(user->phone());
+	text.replace(' ', QString()).replace('-', QString());
+	if (user->isSelf()
+		&& Mokagram::Streamer::Active(Mokagram::Streamer::Field::Phone)) {
+		Mokagram::Streamer::SetClipboard(
+			Mokagram::Streamer::Field::Phone,
+			text);
+		return;
+	}
 	TextUtilities::SetClipboardText({ text });
 }
 
 rpl::producer<TextWithEntities> UsernameValue(
 		not_null<PeerData*> peer,
 		bool primary) {
-	return (primary
-		? PlainPrimaryUsernameValue(peer)
-		: (PlainUsernameValue(peer) | rpl::type_erased)
-	) | rpl::map([](QString &&username) {
-		return username.isEmpty()
-			? tr::marked()
-			: tr::marked('@' + username);
+	return rpl::combine(
+		(primary
+			? PlainPrimaryUsernameValue(peer)
+			: (PlainUsernameValue(peer) | rpl::type_erased)),
+		Mokagram::Streamer::ActiveValue(Mokagram::Streamer::Field::Username)
+	) | rpl::map([=](QString &&username, bool hide) {
+		if (username.isEmpty()) {
+			return tr::marked();
+		}
+		auto shown = '@' + username;
+		return tr::marked((hide && peer->isSelf())
+			? Mokagram::Streamer::Mask(
+				Mokagram::Streamer::Field::Username,
+				shown)
+			: shown);
 	});
 }
 
@@ -220,24 +273,38 @@ QString UsernameUrl(
 
 rpl::producer<std::vector<TextWithEntities>> UsernamesValue(
 		not_null<PeerData*> peer) {
-	const auto map = [=](const std::vector<QString> &usernames) {
+	// Mokagram: в режиме стримера список юзернеймов тоже маскируется.
+	const auto map = [=](const std::vector<QString> &usernames, bool hide) {
 		return ranges::views::all(
 			usernames
 		) | ranges::views::transform([&](const QString &u) {
-			return tr::link(u, UsernameUrl(peer, u));
+			auto link = tr::link(u, UsernameUrl(peer, u));
+			return hide
+				? Mokagram::Streamer::Mask(
+					Mokagram::Streamer::Field::Username,
+					std::move(link))
+				: link;
 		}) | ranges::to_vector;
 	};
 	auto value = rpl::merge(
 		peer->session().changes().peerFlagsValue(peer, UpdateFlag::Username),
 		peer->session().changes().peerFlagsValue(peer, UpdateFlag::Usernames)
 	);
+	auto hide = Mokagram::Streamer::ActiveValue(
+		Mokagram::Streamer::Field::Username);
 	if (const auto user = peer->asUser()) {
-		return std::move(value) | rpl::map([=] {
-			return map(user->usernames());
+		return rpl::combine(
+			std::move(value) | rpl::map([=] { return user->usernames(); }),
+			std::move(hide)
+		) | rpl::map([=](const std::vector<QString> &list, bool hidden) {
+			return map(list, hidden);
 		});
 	} else if (const auto channel = peer->asChannel()) {
-		return std::move(value) | rpl::map([=] {
-			return map(channel->usernames());
+		return rpl::combine(
+			std::move(value) | rpl::map([=] { return channel->usernames(); }),
+			std::move(hide)
+		) | rpl::map([=](const std::vector<QString> &list, bool hidden) {
+			return map(list, hidden);
 		});
 	} else {
 		return rpl::single(std::vector<TextWithEntities>());

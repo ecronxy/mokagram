@@ -70,6 +70,40 @@ endif()
 
 set_target_properties(Telegram PROPERTIES AUTOMOC ON)
 
+# mokagram: хост плагинов (встроенный Python)
+find_package(Python3 REQUIRED COMPONENTS Development.Embed)
+nice_target_sources(Telegram ${src_loc}
+PRIVATE
+    mokagram/plugins/mokagram_plugin_api.cpp
+    mokagram/plugins/mokagram_plugin_api.h
+    mokagram/plugins/mokagram_plugin_install.cpp
+    mokagram/plugins/mokagram_plugin_install.h
+    mokagram/plugins/mokagram_plugins.cpp
+    mokagram/plugins/mokagram_plugins.h
+    mokagram/settings/mokagram_settings.cpp
+    mokagram/settings/mokagram_settings.h
+    mokagram/settings/mokagram_settings_box.cpp
+    mokagram/settings/mokagram_settings_box.h
+    mokagram/streamer/mokagram_streamer.cpp
+    mokagram/streamer/mokagram_streamer.h
+    mokagram/history/mokagram_history.cpp
+    mokagram/history/mokagram_history.h
+    mokagram/history/mokagram_history_filters.cpp
+    mokagram/history/mokagram_history_filters.h
+    mokagram/history/mokagram_history_store.cpp
+    mokagram/history/mokagram_history_store.h
+    mokagram/history/mokagram_history_ui.cpp
+    mokagram/ghost/mokagram_ghost.cpp
+    mokagram/ghost/mokagram_ghost.h
+    mokagram/misc/mokagram_misc.cpp
+    mokagram/misc/mokagram_misc.h
+)
+# путь к Python.h только для одного файла, иначе пересоберётся весь клиент
+set_source_files_properties(
+    ${src_loc}/mokagram/plugins/mokagram_plugins.cpp
+    PROPERTIES INCLUDE_DIRECTORIES "${Python3_INCLUDE_DIRS}")
+target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES} sqlite3)
+
 target_link_libraries(Telegram
 PRIVATE
     tdesktop::lib_fido2

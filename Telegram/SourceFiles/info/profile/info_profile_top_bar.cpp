@@ -105,6 +105,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/sticker_set_box.h"
 #include "styles/style_chat.h"
 #include "styles/style_info.h"
+#include "styles/style_dialogs.h"
 #include "styles/style_info_profile_top_bar.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
@@ -2954,6 +2955,26 @@ void TopBar::paintEvent(QPaintEvent *e) {
 	}
 
 	paintTabSubtitle(p);
+
+	// Mokagram: нижние углы шапки скруглены как у остальных таблеток.
+	{
+		constexpr auto kRadius = 22;
+		p.setClipping(false);
+		auto hq = PainterHighQualityEnabler(p);
+		for (const auto right : { false, true }) {
+			const auto left = right ? width() - kRadius : 0;
+			const auto top = height() - kRadius;
+			auto path = QPainterPath();
+			path.addRect(QRectF(left, top, kRadius, kRadius));
+			auto circle = QPainterPath();
+			circle.addEllipse(QRectF(
+				right ? left - kRadius : left,
+				top - kRadius,
+				2 * kRadius,
+				2 * kRadius));
+			p.fillPath(path.subtracted(circle), st::dialogsBg);
+		}
+	}
 }
 
 void TopBar::setupButtons(

@@ -38,6 +38,8 @@ public:
 
 	static constexpr auto kMaxAccounts = 3;
 	static constexpr auto kPremiumMaxAccounts = 6;
+	// Mokagram: верхняя планка числа аккаунтов (настройка misc.max_accounts).
+	static constexpr auto kHardMaxAccounts = 50;
 
 	explicit Domain(const QString &dataName);
 	~Domain();

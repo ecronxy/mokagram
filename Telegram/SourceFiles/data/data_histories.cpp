@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/iv_rich_page.h"
 #include "core/application.h"
 #include "apiwrap.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
 namespace Data {
 namespace {
@@ -720,6 +721,20 @@ void Histories::reportPendingDeliveries() {
 void Histories::sendReadRequests() {
 	DEBUG_LOG(("Reading: send requests with count %1.").arg(_states.size()));
 	if (_states.empty()) {
+		return;
+	} else if (!Mokagram::Ghost::ShouldSendRead()) {
+		// Режим призрака: не шлём, локально чат остаётся прочитанным.
+		_readRequestsTimer.cancel();
+		auto histories = std::vector<not_null<History*>>();
+		histories.reserve(_states.size());
+		for (auto &[history, state] : _states) {
+			state.willReadTill = 0;
+			state.willReadWhen = 0;
+			histories.push_back(history);
+		}
+		for (const auto history : histories) {
+			checkEmptyState(history);
+		}
 		return;
 	}
 	const auto now = crl::now();

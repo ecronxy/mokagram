@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_key_modifiers.h"
 #include "base/timer_rpl.h"
 #include "base/unixtime.h"
+#include "mokagram/streamer/mokagram_streamer.h"
 #include "boxes/choose_filter_box.h"
 #include "boxes/peer_list_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
@@ -124,6 +125,28 @@ namespace {
 constexpr auto kDay = Data::WorkingInterval::kDay;
 constexpr auto kPeerIdLinkIndex = uint16(1);
 
+// Режим стримера: настоящий ник берём из данных, а не из показанного текста.
+[[nodiscard]] QString PrimaryUsername(not_null<PeerData*> peer) {
+	if (const auto user = peer->asUser()) {
+		const auto &list = user->usernames();
+		return list.empty() ? user->username() : list.front();
+	}
+	return peer->username();
+}
+
+// Текст для перетаскивания: по правилу копирования, но не пустой.
+[[nodiscard]] QString DragTextFor(
+		Mokagram::Streamer::Field field,
+		const QString &real) {
+	if (!Mokagram::Streamer::Active(field)) {
+		return real;
+	}
+	auto result = Mokagram::Streamer::ForCopy(field, real);
+	return result.isEmpty()
+		? Mokagram::Streamer::Mask(field, real)
+		: result;
+}
+
 class DraggableUrlClickHandler final : public UrlClickHandler {
 public:
 	DraggableUrlClickHandler(const QString &url, QString drag)
@@ -209,7 +232,16 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 				+ addToLink;
 		}
 		if (!link.isEmpty()) {
-			TextUtilities::SetClipboardText({ link });
+			if (peer->isSelf()
+				&& Mokagram::Streamer::Active(Mokagram::Streamer::Field::Link)) {
+				if (!Mokagram::Streamer::SetClipboard(
+						Mokagram::Streamer::Field::Link,
+						link)) {
+					return;
+				}
+			} else {
+				TextUtilities::SetClipboardText({ link });
+			}
 			if (const auto strong = weak.get()) {
 				strong->showToast({
 					.text = {
@@ -231,9 +263,10 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 [[nodiscard]] rpl::producer<TextWithEntities> AboutWithAdvancedValue(
 		not_null<PeerData*> peer) {
 
-	return AboutValue(
-		peer
-	) | rpl::map([=](TextWithEntities &&value) {
+	return rpl::combine(
+		AboutValue(peer),
+		Mokagram::Streamer::ActiveValue(Mokagram::Streamer::Field::Id)
+	) | rpl::map([=](TextWithEntities &&value, bool hideId) {
 		if (ShowPeerIdBelowAbout.value()) {
 			using namespace Ui::Text;
 			if (!value.empty()) {
@@ -242,7 +275,11 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 			value.append(Italic(u"id: "_q));
 			const auto raw = peer->id.value & PeerId::kChatTypeMask;
 			value.append(Link(
-				Italic(Lang::FormatCountDecimal(raw)),
+				Italic((hideId && peer->isSelf())
+					? Mokagram::Streamer::Mask(
+						Mokagram::Streamer::Field::Id,
+						Lang::FormatCountDecimal(raw))
+					: Lang::FormatCountDecimal(raw)),
 				kPeerIdLinkIndex));
 		}
 		if (ShowChannelJoinedBelowAbout.value()) {
@@ -280,14 +317,17 @@ void SetupAboutPeerIdDrag(
 		return;
 	}
 	const auto id = QString::number(peer->id.value & PeerId::kChatTypeMask);
-	AboutValue(
-		peer
+	rpl::combine(
+		AboutValue(peer),
+		Mokagram::Streamer::ActiveValue(Mokagram::Streamer::Field::Id)
 	) | rpl::on_next([=] {
 		label->setLink(
 			kPeerIdLinkIndex,
 			std::make_shared<DraggableUrlClickHandler>(
 				u"internal:~peer_id~:copy:"_q + id,
-				id));
+				peer->isSelf()
+					? DragTextFor(Mokagram::Streamer::Field::Id, id)
+					: id));
 	}, label->lifetime());
 }
 
@@ -1051,6 +1091,8 @@ auto AddActionButton(
 	return result;
 };
 
+// Mokagram: главная кнопка оформлена как «Заблокировать»: значок слева,
+// подпись слева обычным регистром, цвет акцента.
 template <typename Text, typename ToggleOn, typename Callback>
 auto AddMainButton(
 		not_null<Ui::VerticalLayout*> parent,
@@ -1059,10 +1101,50 @@ auto AddMainButton(
 		Callback &&callback,
 		Ui::MultiSlideTracker *tracker = nullptr,
 		Ui::MultiSlideTracker *buttonTracker = nullptr,
-		const style::SettingsButton &st = st::infoMainButton) {
+		const style::icon *icon = nullptr) {
+	static const auto withIcon = [] {
+		auto result = st::infoSharedMediaButton;
+		result.textFg = st::lightButtonFg;
+		result.textFgOver = st::lightButtonFgOver;
+		return result;
+	}();
+	static const auto plain = [] {
+		auto result = withIcon;
+		result.padding = style::margins(
+			23,
+			withIcon.padding.top(),
+			withIcon.padding.right(),
+			withIcon.padding.bottom());
+		return result;
+	}();
 	const auto button = AddActionButton(
 		parent,
-		std::move(text) | rpl::map(tr::upper),
+		std::move(text),
+		std::move(toggleOn),
+		std::move(callback),
+		icon,
+		icon ? withIcon : plain);
+	if (tracker) {
+		tracker->track(button);
+	}
+	if (buttonTracker) {
+		buttonTracker->track(button);
+	}
+	return button->entity();
+}
+
+template <typename Text, typename ToggleOn, typename Callback>
+auto AddMainButton(
+		not_null<Ui::VerticalLayout*> parent,
+		Text &&text,
+		ToggleOn &&toggleOn,
+		Callback &&callback,
+		Ui::MultiSlideTracker *tracker,
+		Ui::MultiSlideTracker *buttonTracker,
+		const style::SettingsButton &st) {
+	const auto button = AddActionButton(
+		parent,
+		std::move(text),
 		std::move(toggleOn),
 		std::move(callback),
 		nullptr,
@@ -1624,7 +1706,16 @@ Section DetailsFiller::makeInfo() {
 			request.menu->addAction(
 				tr::lng_context_copy_link(tr::now),
 				[=] {
-					TextUtilities::SetClipboardText({ url });
+					if (Mokagram::Streamer::Active(
+							Mokagram::Streamer::Field::Link)) {
+						if (!Mokagram::Streamer::SetClipboard(
+								Mokagram::Streamer::Field::Link,
+								url)) {
+							return;
+						}
+					} else {
+						TextUtilities::SetClipboardText({ url });
+					}
 					if (const auto strong = weak.get()) {
 						strong->showToast({
 							.text = {
@@ -1692,6 +1783,12 @@ Section DetailsFiller::makeInfo() {
 			const auto hook = [=](Ui::FlatLabel::ContextMenuRequest request) {
 				if (request.selection.empty()) {
 					const auto callback = [=] {
+						if (user->isSelf()
+							&& Mokagram::Streamer::Active(
+								Mokagram::Streamer::Field::Phone)) {
+							CopyPhoneToClipboard(user);
+							return;
+						}
 						CopyPhoneToClipboard(PhoneOrHiddenValue(user));
 					};
 					request.menu->addAction(
@@ -1720,7 +1817,7 @@ Section DetailsFiller::makeInfo() {
 			UsernameValue(user, true) | rpl::map([=](TextWithEntities u) {
 				return u.text.isEmpty()
 					? TextWithEntities()
-					: tr::link(u, UsernameUrl(user, u.text.mid(1)));
+					: tr::link(u, UsernameUrl(user, PrimaryUsername(user)));
 			}),
 			QString(),
 			st::infoProfileLabeledUsernamePadding);
@@ -1732,18 +1829,21 @@ Section DetailsFiller::makeInfo() {
 		usernameLine.subtext->overrideLinkClickHandler(callback);
 		usernameLine.text->setContextMenuHook(lnkHook);
 		usernameLine.subtext->setContextMenuHook(lnkHook);
-		UsernameValue(
-			user,
-			true
+		rpl::combine(
+			UsernameValue(user, true),
+			Mokagram::Streamer::ActiveValue(Mokagram::Streamer::Field::Link)
 		) | rpl::on_next([=, label = usernameLine.text](
-				const TextWithEntities &u) {
+				const TextWithEntities &u,
+				bool) {
 			if (u.text.isEmpty()) {
 				return;
 			}
-			const auto username = u.text.mid(1);
+			const auto username = PrimaryUsername(user);
 			label->setLink(1, std::make_shared<DraggableUrlClickHandler>(
 				UsernameUrl(user, username),
-				user->session().createInternalLinkFull(username)));
+				DragTextFor(
+					Mokagram::Streamer::Field::Link,
+					user->session().createInternalLinkFull(username))));
 		}, usernameLine.text->lifetime());
 
 		const auto qrButton = Ui::CreateChild<Ui::IconButton>(
@@ -2036,7 +2136,12 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 		const auto rebuild = [=](
 				not_null<HistoryItem*> item,
 				anim::type animated) {
-			const auto &stUserpic = st::infoPersonalChannelUserpic;
+			static const auto stUserpic = [] {
+				auto result = st::infoPersonalChannelUserpic;
+				result.size = QSize(56, 56);
+				result.photoSize = 56;
+				return result;
+			}();
 			const auto &stLabeled = st::infoProfilePersonalChannelPadding;
 
 			messageChannelWrap->toggle(false, anim::type::instant);
@@ -2045,19 +2150,29 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 			const auto inner = messageChannelWrap->entity()->add(
 				object_ptr<Ui::VerticalLayout>(messageChannelWrap->entity()));
 
+			// Mokagram: три строки (название, пост, «Канал • N») с равными
+			// промежутками, аватарка по центру всего блока.
+			constexpr auto kVPad = 14;
+			constexpr auto kRowGap = 6;
+			const auto nameHeight
+				= st::infoPersonalChannelNameLabel.style.font->height;
+			const auto previewHeight = st::infoLabeled.style.font->height;
+			const auto labelHeight = st::infoLabel.style.font->height;
+			const auto blockHeight = kVPad
+				+ nameHeight + kRowGap
+				+ previewHeight + kRowGap
+				+ labelHeight
+				+ kVPad;
 			const auto line = inner->add(
-				object_ptr<Ui::FixedHeightWidget>(
-					inner,
-					stUserpic.photoSize + rect::m::sum::v(stLabeled)));
+				object_ptr<Ui::FixedHeightWidget>(inner, blockHeight));
 			const auto userpic = Ui::CreateChild<Ui::UserpicButton>(
 				line,
 				item->history()->peer,
-				st::infoPersonalChannelUserpic);
+				stUserpic);
 
 			userpic->moveToLeft(
-				-st::infoPersonalChannelUserpicSkip
-					+ (stLabeled.left() - stUserpic.photoSize) / 2,
-				stLabeled.top());
+				16,
+				(blockHeight - stUserpic.photoSize) / 2);
 			userpic->setAttribute(Qt::WA_TransparentForMouseEvents);
 
 			const auto date = Ui::CreateChild<Ui::FlatLabel>(
@@ -2120,11 +2235,17 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 				});
 			}, preview->lifetime());
 
+			const auto channelLabel = Ui::CreateChild<Ui::FlatLabel>(
+				line,
+				channelLabelFactory(
+					rpl::single(item->history()->peer->asChannel())),
+				st::infoLabel);
+
 			line->sizeValue() | rpl::filter_size(
 			) | rpl::on_next([=](const QSize &size) {
 				const auto left = stLabeled.left();
 				const auto right = st::infoPersonalChannelDateSkip;
-				const auto top = stLabeled.top();
+				const auto top = kVPad;
 				date->moveToRight(right, top, size.width());
 
 				name->resizeToWidth(size.width()
@@ -2139,22 +2260,13 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 					st::infoLabeled.style.font->height);
 				preview->moveToLeft(
 					left,
-					size.height() - stLabeled.bottom() - preview->height());
+					top + nameHeight + kRowGap);
+				channelLabel->resizeToWidth(size.width() - left - right);
+				channelLabel->moveToLeft(
+					left,
+					top + nameHeight + kRowGap + previewHeight + kRowGap);
 			}, preview->lifetime());
 
-			{
-				inner->add(
-					object_ptr<Ui::FlatLabel>(
-						inner,
-						channelLabelFactory(
-							rpl::single(item->history()->peer->asChannel())),
-						st::infoLabel),
-					QMargins(
-						st::infoProfilePersonalChannelPadding.left(),
-						0,
-						st::infoProfilePersonalChannelPadding.right(),
-						st::infoProfilePersonalChannelPadding.bottom()));
-			}
 			{
 				const auto button = Ui::CreateSimpleRectButton(
 					messageChannelWrap->entity(),
@@ -2370,7 +2482,8 @@ Section DetailsFiller::makeAddAsContact(not_null<UserData*> user) {
 				Box(EditContactBox, controller, user));
 		},
 		nullptr,
-		nullptr);
+		nullptr,
+		&st::infoIconAddMember);
 	raw->toggleOn(CanAddContactValue(user));
 	return Section{
 		.widget = std::move(wrap),
@@ -2572,7 +2685,8 @@ Section DetailsFiller::makeViewChannel(not_null<ChannelData*> channel) {
 		std::move(viewChannelVisible),
 		std::move(viewChannel),
 		nullptr,
-		nullptr);
+		nullptr,
+		&st::infoIconMediaChannel);
 	button->setAcceptBoth();
 	button->addClickHandler([=](Qt::MouseButton mouse) {
 		if (mouse != Qt::RightButton) {

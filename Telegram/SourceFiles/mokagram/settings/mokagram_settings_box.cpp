@@ -1,0 +1,1631 @@
+// Mokagram: окно «Кастомизация», строится из реестра настроек.
+// Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
+// заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
+#include "mokagram/settings/mokagram_settings_box.h"
+
+#include "mokagram/settings/mokagram_settings.h"
+
+#include "base/call_delayed.h"
+#include "mokagram/history/mokagram_history.h"
+#include "mtproto/sender.h"
+#include "base/flat_map.h"
+#include "ui/text/text_custom_emoji.h"
+#include "apiwrap.h"
+#include "data/stickers/data_custom_emoji.h"
+#include "data/data_document.h"
+#include "api/api_common.h"
+#include "core/application.h"
+#include "data/data_session.h"
+#include "main/main_session.h"
+#include "window/window_controller.h"
+#include <QtCore/QTimer>
+#include <QtCore/QFile>
+#include "base/weak_ptr.h"
+#include "core/file_utilities.h"
+#include "settings.h"
+#include "ui/abstract_button.h"
+#include "ui/boxes/confirm_box.h"
+#include "ui/effects/animations.h"
+#include "ui/effects/ripple_animation.h"
+#include "ui/layers/generic_box.h"
+#include "ui/painter.h"
+#include "ui/rp_widget.h"
+#include "ui/text/text_entity.h"
+#include "ui/vertical_list.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/continuous_sliders.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/labels.h"
+#include "ui/widgets/popup_menu.h"
+#include "ui/wrap/slide_wrap.h"
+#include "ui/wrap/vertical_layout.h"
+#include "window/window_session_controller.h"
+#include "styles/style_boxes.h"
+#include "styles/style_edit_peer_members.h"
+#include "styles/style_layers.h"
+#include "styles/style_menu_icons.h"
+#include "styles/style_settings.h"
+#include "styles/style_widgets.h"
+
+#include <rpl/event_stream.h>
+#include <rpl/filter.h>
+#include <rpl/map.h>
+
+#include <QtCore/QFile>
+#include <QtCore/QDir>
+#include <QtGui/QPainterPath>
+
+#include <algorithm>
+
+namespace Mokagram::Settings {
+namespace {
+
+constexpr auto kPad = 16;
+constexpr auto kPlate = 30;
+constexpr auto kTextLeft = kPad + kPlate + 12;
+constexpr auto kRowPad = 11;
+constexpr auto kMinRowHeight = 52;
+constexpr auto kResetSize = 32;
+constexpr auto kGroupRadius = 22;
+constexpr auto kOuterSide = 14;
+constexpr auto kExampleHeight = 24;
+constexpr auto kBoxWidth = 440;
+constexpr auto kChipHeight = 32;
+
+[[nodiscard]] QString U(const char *text) {
+	return QString::fromUtf8(text);
+}
+
+struct Category {
+	const char *id;
+	const char *title;
+	QColor color;
+};
+
+// Порядок разделов в окне и цвет значков.
+[[nodiscard]] const std::vector<Category> &Categories() {
+	static const auto result = std::vector<Category>{
+		{ "privacy", "Приватность", QColor(0x34, 0xC7, 0x59) },
+		{ "chats", "Чаты", QColor(0x0A, 0x84, 0xFF) },
+		{ "accounts", "Аккаунты", QColor(0xAF, 0x52, 0xDE) },
+		{ "look", "Внешний вид", QColor(0xFF, 0x37, 0x5F) },
+		{ "plugins", "Плагины", QColor(0xFF, 0x9F, 0x0A) },
+		{ "other", "Прочее", QColor(0x8E, 0x8E, 0x93) },
+	};
+	return result;
+}
+
+[[nodiscard]] int CategoryIndex(const QString &id) {
+	const auto &all = Categories();
+	for (auto i = 0; i != int(all.size()); ++i) {
+		if (id == QLatin1String(all[i].id)) {
+			return i;
+		}
+	}
+	return int(all.size()) - 1;
+}
+
+[[nodiscard]] QString CategoryOf(const Entry &entry) {
+	if (!entry.category.isEmpty()) {
+		return entry.category;
+	}
+	return entry.key.startsWith(u"plugin."_q)
+		? u"plugins"_q
+		: u"other"_q;
+}
+
+// Название раздела: у плагинов своё, иначе берём id из ключа.
+[[nodiscard]] QString SectionOf(const Entry &entry) {
+	if (!entry.section.isEmpty()) {
+		return entry.section;
+	}
+	if (entry.key.startsWith(u"plugin."_q)) {
+		return entry.key.section('.', 1, 1);
+	}
+	return U("Прочее");
+}
+
+[[nodiscard]] const style::icon &IconByName(const QString &name) {
+	if (name == u"lock"_q) return st::menuIconLock;
+	if (name == u"ghost"_q) return st::menuIconStealth;
+	if (name == u"hide"_q) return st::menuIconUserHide;
+	if (name == u"phone"_q) return st::menuIconPhone;
+	if (name == u"username"_q) return st::menuIconUsername;
+	if (name == u"link"_q) return st::menuIconLinks;
+	if (name == u"id"_q) return st::menuIconInfo;
+	if (name == u"person"_q) return st::menuIconPersonal;
+	if (name == u"notify"_q) return st::menuIconNotifications;
+	if (name == u"copy"_q) return st::menuIconCopy;
+	if (name == u"read"_q) return st::menuIconMarkRead;
+	if (name == u"online"_q) return st::menuIconWhenOnline;
+	if (name == u"typing"_q) return st::menuIconChatBubble;
+	if (name == u"stories"_q) return st::menuIconStoriesSavedSection;
+	if (name == u"chats"_q) return st::menuIconChats;
+	if (name == u"history"_q) return st::menuIconTimer;
+	if (name == u"trash"_q) return st::menuIconDelete;
+	if (name == u"edit"_q) return st::menuIconEdit;
+	if (name == u"filter"_q) return st::menuIconTagFilter;
+	if (name == u"block"_q) return st::menuIconBlock;
+	if (name == u"storage"_q) return st::menuIconStorage;
+	if (name == u"calendar"_q) return st::menuIconSchedule;
+	if (name == u"accounts"_q) return st::menuIconAddAccount;
+	if (name == u"palette"_q) return st::menuIconPalette;
+	if (name == u"plugin"_q) return st::menuIconExperimental;
+	if (name == u"bot"_q) return st::menuIconBot;
+	return st::menuIconSettings;
+}
+
+// Прозрачный фон окна и скруглённая подложка, как в окне «Плагины».
+void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
+	static const auto clear = style::owned_color(QColor(0, 0, 0, 0));
+	static const auto noButtons = [] {
+		auto result = st::defaultBox;
+		result.buttonPadding = style::margins();
+		result.buttonHeight = 0;
+		result.bg = clear.color();
+		return result;
+	}();
+	box->setStyle(noButtons);
+	box->paintOn([=](QPainter &p) {
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::boxBg);
+		p.drawRoundedRect(box->rect(), 28, 28);
+	});
+	box->setWidth(kBoxWidth);
+	box->setNoContentMargin(true);
+}
+
+// Стили подписей без минимальной ширины: иначе текст обрезается.
+[[nodiscard]] const style::FlatLabel &TitleLabelStyle() {
+	static const auto result = [] {
+		auto value = st::boxLabel;
+		value.minWidth = 1;
+		return value;
+	}();
+	return result;
+}
+
+[[nodiscard]] const style::FlatLabel &TextLabelStyle() {
+	static const auto result = [] {
+		auto value = st::boxDividerLabel;
+		value.minWidth = 1;
+		return value;
+	}();
+	return result;
+}
+
+[[nodiscard]] const style::FlatLabel &HeadLabelStyle() {
+	static const auto result = [] {
+		auto value = st::boxDividerLabel;
+		value.minWidth = 1;
+		value.style.font = st::semiboldFont;
+		return value;
+	}();
+	return result;
+}
+
+// Переключатель в стиле Material 3, значение приходит из реестра.
+// Сам не кликается: клик обрабатывает строка.
+[[nodiscard]] not_null<Ui::AbstractButton*> MakeSwitch(
+		not_null<QWidget*> parent,
+		rpl::producer<bool> value) {
+	struct State {
+		Ui::Animations::Simple animation;
+		bool checked = false;
+		bool started = false;
+	};
+	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
+	const auto state = button->lifetime().make_state<State>();
+	button->resize(40, 24);
+	button->setAttribute(Qt::WA_TransparentForMouseEvents);
+	button->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(button);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto t = state->animation.value(state->checked ? 1. : 0.);
+		const auto on = st::windowBgActive->c;
+		const auto off = st::windowSubTextFg->c;
+		const auto track = QRectF(1, 1, 38, 22);
+		p.setBrush(anim::color(QColor(0, 0, 0, 0), on, t));
+		p.setPen(QPen(anim::color(off, on, t), 1.6));
+		p.drawRoundedRect(track, 11, 11);
+		const auto size = 10. + 8. * t;
+		const auto cx = 12. + 16. * t;
+		p.setPen(Qt::NoPen);
+		p.setBrush(anim::color(off, st::windowFgActive->c, t));
+		p.drawEllipse(QPointF(cx, 12.), size / 2, size / 2);
+	}, button->lifetime());
+	std::move(value) | rpl::on_next([=](bool checked) {
+		if (state->checked == checked && state->started) {
+			return;
+		}
+		const auto first = !state->started;
+		state->started = true;
+		state->checked = checked;
+		if (first) {
+			button->update();
+			return;
+		}
+		state->animation.start(
+			[=] { button->update(); },
+			checked ? 0. : 1.,
+			checked ? 1. : 0.,
+			200);
+	}, button->lifetime());
+	return button;
+}
+
+// Круглая кнопка шапки: закрыть или лупа, рисуются вручную.
+[[nodiscard]] not_null<Ui::AbstractButton*> MakeRoundButton(
+		not_null<QWidget*> parent,
+		bool back,
+		Fn<void()> callback) {
+	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
+	button->resize(36, 36);
+	button->setPointerCursor(true);
+	button->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(button);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawEllipse(button->rect());
+		p.scale(0.75, 0.75);
+		auto pen = QPen(st::windowFg->c, 2.2);
+		pen.setCapStyle(Qt::RoundCap);
+		pen.setJoinStyle(Qt::RoundJoin);
+		p.setPen(pen);
+		p.setBrush(Qt::NoBrush);
+		if (back) {
+			p.drawLine(QPointF(17, 17), QPointF(31, 31));
+			p.drawLine(QPointF(31, 17), QPointF(17, 31));
+		} else {
+			p.drawEllipse(QPointF(22.5, 22.5), 7.5, 7.5);
+			p.drawLine(QPointF(28, 28), QPointF(34, 34));
+		}
+	}, button->lifetime());
+	button->setClickedCallback(std::move(callback));
+	return button;
+}
+
+// Кнопка сброса с плавным появлением: значок или текстовая ссылка.
+struct FadeButton {
+	not_null<Ui::AbstractButton*> button;
+	Fn<void(bool shown, bool instant)> set;
+};
+
+[[nodiscard]] FadeButton MakeResetButton(
+		not_null<QWidget*> parent,
+		const QString &text,
+		Fn<void()> callback) {
+	struct State {
+		Ui::Animations::Simple animation;
+		bool shown = false;
+	};
+	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
+	const auto state = button->lifetime().make_state<State>();
+	if (text.isEmpty()) {
+		button->resize(kResetSize, kResetSize);
+	} else {
+		button->resize(st::normalFont->width(text) + 8, 24);
+	}
+	button->setPointerCursor(true);
+	button->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(button);
+		p.setOpacity(state->animation.value(state->shown ? 1. : 0.));
+		if (text.isEmpty()) {
+			st::menuIconRestore.paintInCenter(p, button->rect());
+		} else {
+			p.setFont(st::normalFont);
+			p.setPen(st::windowActiveTextFg);
+			p.drawText(button->rect(), Qt::AlignCenter, text);
+		}
+	}, button->lifetime());
+	button->setClickedCallback(std::move(callback));
+	button->hide();
+	const auto set = [=](bool shown, bool instant) {
+		if (state->shown == shown) {
+			return;
+		}
+		state->shown = shown;
+		if (instant) {
+			state->animation.stop();
+			button->setVisible(shown);
+			return;
+		}
+		button->show();
+		state->animation.start([=] {
+			button->update();
+			if (!state->shown
+				&& state->animation.value(0.) <= 0.001) {
+				button->hide();
+			}
+		}, shown ? 0. : 1., shown ? 1. : 0., 220);
+	};
+	return { .button = button, .set = set };
+}
+
+void MakeTransparent(not_null<Ui::RpWidget*> widget) {
+	widget->setAttribute(Qt::WA_TransparentForMouseEvents);
+}
+
+// Находит запрос в тексте и выделяет жирным с подчёркиванием.
+[[nodiscard]] TextWithEntities Marked(
+		const QString &text,
+		const QString &query) {
+	auto result = TextWithEntities{ text };
+	if (query.isEmpty()) {
+		return result;
+	}
+	auto from = 0;
+	while (true) {
+		const auto at = text.indexOf(query, from, Qt::CaseInsensitive);
+		if (at < 0) {
+			break;
+		}
+		result.entities.push_back(EntityInText(
+			EntityType::Bold,
+			at,
+			query.size()));
+		result.entities.push_back(EntityInText(
+			EntityType::Underline,
+			at,
+			query.size()));
+		from = at + query.size();
+	}
+	return result;
+}
+
+// Пример «было → станет» двумя плашками со стрелкой.
+[[nodiscard]] not_null<Ui::RpWidget*> MakeExample(
+		not_null<QWidget*> parent,
+		const QString &example) {
+	const auto widget = Ui::CreateChild<Ui::RpWidget>(parent.get());
+	MakeTransparent(widget);
+	widget->resize(10, kExampleHeight);
+	const auto arrow = QString::fromUtf8("\xE2\x86\x92");
+	const auto at = example.indexOf(arrow);
+	const auto before = (at >= 0) ? example.left(at).trimmed() : QString();
+	const auto after = (at >= 0)
+		? example.mid(at + arrow.size()).trimmed()
+		: example.trimmed();
+	widget->paintOn([=](QPainter &p) {
+		auto hq = PainterHighQualityEnabler(p);
+		const auto &font = st::normalFont;
+		const auto total = widget->width();
+		const auto gap = before.isEmpty() ? 0 : 26;
+		const auto room = std::max(total - gap, 40);
+		const auto one = before.isEmpty() ? room : (room / 2);
+		auto x = 0;
+		const auto pill = [&](
+				const QString &text,
+				QColor bg,
+				QColor fg,
+				int limit) {
+			const auto shown = font->elided(text, limit - 20);
+			const auto width = std::min(font->width(shown) + 20, limit);
+			p.setPen(Qt::NoPen);
+			p.setBrush(bg);
+			p.drawRoundedRect(
+				QRectF(x, 0, width, kExampleHeight),
+				kExampleHeight / 2.,
+				kExampleHeight / 2.);
+			p.setFont(font);
+			p.setPen(fg);
+			p.drawText(
+				QRect(x, 0, width, kExampleHeight),
+				Qt::AlignCenter,
+				shown);
+			x += width;
+		};
+		if (!before.isEmpty()) {
+			auto grey = st::windowSubTextFg->c;
+			grey.setAlpha(40);
+			pill(before, grey, st::windowSubTextFg->c, one);
+			auto pen = QPen(st::windowSubTextFg->c, 1.6);
+			pen.setCapStyle(Qt::RoundCap);
+			p.setPen(pen);
+			const auto cy = kExampleHeight / 2.;
+			p.drawLine(QPointF(x + 7, cy), QPointF(x + 19, cy));
+			p.drawLine(QPointF(x + 15, cy - 4), QPointF(x + 19, cy));
+			p.drawLine(QPointF(x + 15, cy + 4), QPointF(x + 19, cy));
+			x += gap;
+		}
+		auto accent = st::windowBgActive->c;
+		accent.setAlpha(46);
+		pill(after, accent, st::windowActiveTextFg->c, one);
+	});
+	return widget;
+}
+
+// Значки из набора эмодзи iOSTelegram: ищем документ по обычному эмодзи.
+class PackIcons final {
+public:
+	static PackIcons &Instance() {
+		static auto result = PackIcons();
+		return result;
+	}
+
+	void ensure(not_null<Main::Session*> session) {
+		if (_session == session || _requestId) {
+			return;
+		}
+		_session = session;
+		_requestId = session->api().request(MTPmessages_GetStickerSet(
+			MTP_inputStickerSetShortName(MTP_string(u"iOSTelegram"_q)),
+			MTP_int(0)
+		)).done([=](const MTPmessages_StickerSet &set) {
+			_requestId = 0;
+			set.match([&](const MTPDmessages_stickerSet &data) {
+				for (const auto &doc : data.vdocuments().v) {
+					const auto document = _session->data().processDocument(doc);
+					if (const auto sticker = document->sticker()) {
+						_docs.emplace(Normalize(sticker->alt), document);
+						if (!qEnvironmentVariableIsEmpty("MOKAGRAM_DEBUG_CMD")) {
+							fprintf(stderr, "PACK %s\n", sticker->alt.toUtf8().constData());
+						}
+					}
+				}
+				_updated.fire({});
+			}, [](const auto &) {});
+		}).fail([=] {
+			_requestId = 0;
+		}).send();
+	}
+	[[nodiscard]] rpl::producer<> updated() const {
+		return _updated.events();
+	}
+	[[nodiscard]] std::unique_ptr<Ui::Text::CustomEmoji> make(
+			const QString &name,
+			Fn<void()> repaint,
+			int size) {
+		if (name.isEmpty()) {
+			return nullptr;
+		}
+		const auto alt = EmojiFor(name);
+		const auto i = _docs.find(Normalize(alt));
+		if (!_session || i == _docs.end()) {
+			return nullptr;
+		}
+		return _session->data().customEmojiManager().create(
+			i->second,
+			std::move(repaint),
+			Data::CustomEmojiSizeTag::Normal,
+			size);
+	}
+
+private:
+	[[nodiscard]] static QString Normalize(QString value) {
+		return value.remove(QChar(0xFE0F)).trimmed();
+	}
+	[[nodiscard]] static QString EmojiFor(const QString &name) {
+		static const auto map = base::flat_map<QString, QString>{
+			{ u"lock"_q, QString::fromUtf8("🔑") },
+			{ u"ghost"_q, QString::fromUtf8("🫣") },
+			{ u"hide"_q, QString::fromUtf8("🛡") },
+			{ u"phone"_q, QString::fromUtf8("📞") },
+			{ u"username"_q, QString::fromUtf8("👤") },
+			{ u"link"_q, QString::fromUtf8("🔗") },
+			{ u"id"_q, QString::fromUtf8("#️⃣") },
+			{ u"person"_q, QString::fromUtf8("👥") },
+			{ u"notify"_q, QString::fromUtf8("🔔") },
+			{ u"copy"_q, QString::fromUtf8("📋") },
+			{ u"read"_q, QString::fromUtf8("✅") },
+			{ u"online"_q, QString::fromUtf8("🟢") },
+			{ u"typing"_q, QString::fromUtf8("💬") },
+			{ u"stories"_q, QString::fromUtf8("🎞") },
+			{ u"chats"_q, QString::fromUtf8("💬") },
+			{ u"history"_q, QString::fromUtf8("🕓") },
+			{ u"trash"_q, QString::fromUtf8("🗑") },
+			{ u"edit"_q, QString::fromUtf8("✏️") },
+			{ u"filter"_q, QString::fromUtf8("📑") },
+			{ u"block"_q, QString::fromUtf8("🚫") },
+			{ u"storage"_q, QString::fromUtf8("📁") },
+			{ u"calendar"_q, QString::fromUtf8("🗓") },
+			{ u"accounts"_q, QString::fromUtf8("👥") },
+			{ u"palette"_q, QString::fromUtf8("🖼") },
+			{ u"plugin"_q, QString::fromUtf8("🔧") },
+			{ u"bot"_q, QString::fromUtf8("🤖") },
+		};
+		const auto i = map.find(name);
+		return (i != map.end()) ? i->second : QString::fromUtf8("⚙");
+	}
+
+	Main::Session *_session = nullptr;
+	mtpRequestId _requestId = 0;
+	base::flat_map<QString, DocumentData*> _docs;
+	rpl::event_stream<> _updated;
+
+};
+
+// Значок строки: эмодзи из набора, пока не загрузился, обычная плашка.
+struct PackIcon {
+	std::unique_ptr<Ui::Text::CustomEmoji> emoji;
+	bool tried = false;
+};
+
+constexpr auto kPackEmojiSize = 28;
+
+void PaintPlate(
+		QPainter &p,
+		const QRect &rect,
+		QColor color,
+		const style::icon &icon,
+		const QString &name,
+		PackIcon &pack,
+		not_null<Ui::RpWidget*> widget) {
+	if (!pack.emoji && !pack.tried) {
+		pack.emoji = PackIcons::Instance().make(
+			name,
+			[=] { widget->update(); },
+			kPackEmojiSize);
+		pack.tried = (pack.emoji != nullptr);
+	}
+	auto hq = PainterHighQualityEnabler(p);
+	if (pack.emoji) {
+		pack.emoji->paint(p, {
+			.textColor = QColor(Qt::white),
+			.now = crl::now(),
+			.position = QPoint(
+				rect.x() + (rect.width() - kPackEmojiSize) / 2,
+				rect.y() + (rect.height() - kPackEmojiSize) / 2),
+		});
+		return;
+	}
+	p.setPen(Qt::NoPen);
+	p.setBrush(color);
+	p.drawRoundedRect(rect, 8, 8);
+	icon.paintInCenter(p, rect, Qt::white);
+}
+
+struct RowState {
+	PackIcon pack;
+	bool first = false;
+	bool changed = false;
+	int plateTop = 0;
+	int chevronTop = 0;
+};
+
+struct RowInfo {
+	not_null<Ui::SlideWrap<Ui::RpWidget>*> wrap;
+	QString key;
+	QString haystack;
+	QString dependsOn;
+	int section = 0;
+	Fn<void(bool)> setFirst;
+	Fn<void(const QString &)> highlight;
+};
+
+struct SectionInfo {
+	QString name;
+	QString category;
+	not_null<Ui::SlideWrap<Ui::VerticalLayout>*> wrap;
+	FadeButton reset;
+	std::vector<int> items;
+};
+
+struct Group {
+	QString name;
+	QString category;
+	QString note;
+	std::vector<Entry> entries;
+};
+
+[[nodiscard]] std::vector<Group> BuildGroups() {
+	auto result = std::vector<Group>();
+	for (const auto &entry : Entries()) {
+		const auto name = SectionOf(entry);
+		auto i = ranges::find(result, name, &Group::name);
+		if (i == result.end()) {
+			result.push_back({ .name = name, .category = CategoryOf(entry) });
+			i = result.end() - 1;
+		}
+		if (i->note.isEmpty()) {
+			i->note = entry.sectionNote;
+		}
+		i->entries.push_back(entry);
+	}
+	std::stable_sort(result.begin(), result.end(), [](
+			const Group &a,
+			const Group &b) {
+		return CategoryIndex(a.category) < CategoryIndex(b.category);
+	});
+	return result;
+}
+
+// Строка одной настройки. Раскладка зависит от вида значения.
+[[nodiscard]] RowInfo AddRow(
+		not_null<Ui::VerticalLayout*> card,
+		const Entry &entry,
+		QColor color,
+		int section,
+		const QString &sectionName,
+		Fn<void()> afterChange) {
+	auto holder = object_ptr<Ui::RippleButton>(
+		card,
+		st::defaultRippleAnimation);
+	const auto row = holder.data();
+	const auto wrap = card->add(object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
+		card,
+		std::move(holder),
+		QMargins()));
+	wrap->toggle(true, anim::type::instant);
+	const auto view = row->lifetime().make_state<RowState>();
+
+	const auto key = entry.key;
+	const auto kind = entry.kind;
+	const auto iconName = entry.icon.isEmpty()
+		? entry.sectionIcon
+		: entry.icon;
+	const auto &icon = IconByName(iconName);
+	auto description = entry.description;
+	if (const auto dot = description.indexOf(QStringLiteral(". ")); dot > 0) {
+		description = description.left(dot + 1);
+	}
+	if (entry.requiresRestart) {
+		description += (description.isEmpty() ? QString() : u"\n"_q)
+			+ U("Начнёт работать после перезапуска клиента.");
+	}
+	const auto titleText = entry.title;
+	const auto title = Ui::CreateChild<Ui::FlatLabel>(
+		row,
+		titleText,
+		TitleLabelStyle());
+	MakeTransparent(title);
+	const auto text = description.isEmpty()
+		? nullptr
+		: Ui::CreateChild<Ui::FlatLabel>(
+			row,
+			description,
+			TextLabelStyle());
+	if (text) {
+		MakeTransparent(text);
+	}
+	const auto example = entry.example.isEmpty()
+		? nullptr
+		: MakeExample(row, entry.example).get();
+	const auto reset = MakeResetButton(row, QString(), [=] {
+		Reset(key);
+	});
+
+	Ui::AbstractButton *toggle = nullptr;
+	Ui::FlatLabel *valueLabel = nullptr;
+	Ui::MediaSlider *slider = nullptr;
+	Ui::InputField *field = nullptr;
+	const auto choiceText = [=](int index) {
+		return (index >= 0 && index < int(entry.choices.size()))
+			? entry.choices[index]
+			: QString();
+	};
+	auto rippled = true;
+	switch (kind) {
+	case Kind::Bool:
+		toggle = MakeSwitch(row, BoolValue(key));
+		row->setClickedCallback([=] {
+			SetBool(key, !Bool(key));
+			afterChange();
+		});
+		row->setPointerCursor(true);
+		break;
+	case Kind::Choice: {
+		valueLabel = Ui::CreateChild<Ui::FlatLabel>(
+			row,
+			choiceText(Int(key)),
+			TextLabelStyle());
+		MakeTransparent(valueLabel);
+		row->setPointerCursor(true);
+		const auto menu = row->lifetime().make_state<
+			base::unique_qptr<Ui::PopupMenu>>();
+		row->setClickedCallback([=] {
+			*menu = base::make_unique_q<Ui::PopupMenu>(
+				row,
+				st::popupMenuWithIcons);
+			for (auto i = 0; i != int(entry.choices.size()); ++i) {
+				(*menu)->addAction(entry.choices[i], [=] {
+					SetInt(key, i);
+					afterChange();
+				});
+			}
+			(*menu)->popup(QCursor::pos());
+		});
+		IntValue(key) | rpl::on_next([=](int value) {
+			valueLabel->setText(choiceText(value));
+			row->resize(row->width(), row->height());
+		}, row->lifetime());
+	} break;
+	case Kind::Int: {
+		rippled = false;
+		valueLabel = Ui::CreateChild<Ui::FlatLabel>(
+			row,
+			QString::number(Int(key)),
+			TitleLabelStyle());
+		MakeTransparent(valueLabel);
+		slider = Ui::CreateChild<Ui::MediaSlider>(
+			row,
+			st::localStorageLimitSlider);
+		slider->setAlwaysDisplayMarker(true);
+		const auto range = std::max(entry.maxValue - entry.minValue, 1);
+		const auto toValue = [=](float64 progress) {
+			return entry.minValue
+				+ int(base::SafeRound(progress * range));
+		};
+		slider->setAdjustCallback([=](float64 progress) {
+			return float64(toValue(progress) - entry.minValue) / range;
+		});
+		slider->setChangeProgressCallback([=](float64 progress) {
+			SetInt(key, toValue(progress));
+		});
+		slider->setChangeFinishedCallback([=](float64 progress) {
+			SetInt(key, toValue(progress));
+			afterChange();
+		});
+		IntValue(key) | rpl::on_next([=](int value) {
+			valueLabel->setText(QString::number(value));
+			slider->setValue(float64(value - entry.minValue) / range);
+			row->resize(row->width(), row->height());
+		}, row->lifetime());
+	} break;
+	case Kind::String:
+	case Kind::Color: {
+		rippled = false;
+		static const auto fieldStyle = [] {
+			auto result = st::defaultInputField;
+			result.textMargins = style::margins(0, 7, 0, 7);
+			return result;
+		}();
+		field = Ui::CreateChild<Ui::InputField>(
+			row,
+			fieldStyle,
+			rpl::single(QString()),
+			String(key));
+		field->changes() | rpl::on_next([=] {
+			SetString(key, field->getLastText());
+		}, field->lifetime());
+		field->submits() | rpl::on_next([=] {
+			afterChange();
+		}, field->lifetime());
+		StringValue(key) | rpl::on_next([=](const QString &value) {
+			if (field->getLastText() != value) {
+				field->setText(value);
+			}
+		}, row->lifetime());
+	} break;
+	}
+
+	const auto relayout = [=] {
+		const auto width = row->width();
+		if (width <= 0) {
+			return;
+		}
+		const auto left = kTextLeft;
+		const auto full = width - left - kPad;
+		const auto resetW = view->changed ? kResetSize + 2 : 0;
+		const auto chevron = (kind == Kind::Choice) ? 14 : 0;
+		auto controlW = 0;
+		if (toggle) {
+			controlW = toggle->width();
+		} else if (valueLabel) {
+			valueLabel->resizeToNaturalWidth(full / 2);
+			controlW = valueLabel->width() + chevron;
+		}
+		const auto textW = full
+			- controlW
+			- resetW
+			- ((controlW || resetW) ? 10 : 0);
+		title->resizeToWidth(textW);
+		auto y = kRowPad;
+		title->move(left, y);
+		y += title->height();
+		if (text) {
+			text->resizeToWidth(textW);
+			y += 2;
+			text->move(left, y);
+			y += text->height();
+		}
+		if (example) {
+			y += 8;
+			example->resize(full, kExampleHeight);
+			example->move(left, y);
+			y += kExampleHeight;
+		}
+		const auto block = y + kRowPad;
+		auto height = std::max(kMinRowHeight, block);
+		const auto firstHeight = height;
+		if (slider) {
+			const auto sliderHeight = st::localStorageLimitSlider
+				.seekSize.height();
+			slider->setGeometry(left, y + 6, full, sliderHeight);
+			height = y + 6 + sliderHeight + kRowPad;
+		} else if (field) {
+			field->resizeToWidth(full);
+			field->move(left, y);
+			height = y + field->height() + kRowPad;
+		}
+		view->plateTop = (firstHeight - kPlate) / 2;
+		if (slider || field) {
+			view->plateTop = std::min(view->plateTop, kRowPad);
+		}
+		const auto center = (slider || field)
+			? (kRowPad + title->height() / 2)
+			: (firstHeight / 2);
+		auto right = width - kPad;
+		if (toggle) {
+			toggle->move(right - toggle->width(), center - toggle->height() / 2);
+		} else if (valueLabel) {
+			valueLabel->move(
+				right - chevron - valueLabel->width(),
+				center - valueLabel->height() / 2);
+			view->chevronTop = center;
+		}
+		right -= controlW + (controlW ? 8 : 0);
+		reset.button->move(
+			right - kResetSize + (controlW ? 0 : 6),
+			center - kResetSize / 2);
+		row->resize(width, height);
+		row->update();
+	};
+	const auto syncReset = [=](bool instant) {
+		const auto changed = IsChanged(key);
+		if (view->changed != changed) {
+			view->changed = changed;
+			reset.set(changed, instant);
+			relayout();
+		}
+	};
+	row->widthValue() | rpl::on_next(relayout, row->lifetime());
+	PackIcons::Instance().updated() | rpl::on_next([=] {
+		view->pack = PackIcon();
+		row->update();
+	}, row->lifetime());
+	syncReset(true);
+	Changed(
+	) | rpl::filter([=](const QString &changed) {
+		return changed == key;
+	}) | rpl::on_next([=] {
+		syncReset(false);
+		relayout();
+	}, row->lifetime());
+
+	row->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(row);
+		if (rippled) {
+			// Волна не выходит за скруглённые углы группы.
+			const auto origin = row->mapTo(card, QPoint());
+			auto path = QPainterPath();
+			path.addRoundedRect(
+				QRectF(-origin.x(), -origin.y(), card->width(), card->height()),
+				kGroupRadius,
+				kGroupRadius);
+			p.save();
+			p.setClipPath(path);
+			row->paintRipple(p, 0, 0);
+			p.restore();
+		}
+		PaintPlate(
+			p,
+			QRect(kPad, view->plateTop, kPlate, kPlate),
+			color,
+			icon,
+			iconName,
+			view->pack,
+			row);
+		if (!view->first) {
+			auto line = st::windowSubTextFg->c;
+			line.setAlpha(40);
+			p.fillRect(
+				kTextLeft,
+				0,
+				row->width() - kTextLeft,
+				st::lineWidth,
+				line);
+		}
+		if (kind == Kind::Choice) {
+			auto hq = PainterHighQualityEnabler(p);
+			auto pen = QPen(st::windowSubTextFg->c, 1.6);
+			pen.setCapStyle(Qt::RoundCap);
+			pen.setJoinStyle(Qt::RoundJoin);
+			p.setPen(pen);
+			const auto x = row->width() - kPad - 4.;
+			const auto y = view->chevronTop;
+			p.drawLine(QPointF(x - 3, y - 4), QPointF(x, y));
+			p.drawLine(QPointF(x, y), QPointF(x - 3, y + 4));
+		}
+	}, row->lifetime());
+
+	return {
+		.wrap = wrap,
+		.key = key,
+		.haystack = (entry.title + ' ' + description + ' ' + entry.example
+			+ ' ' + sectionName + ' ' + entry.key).toLower(),
+		.dependsOn = entry.dependsOn,
+		.section = section,
+		.setFirst = [=](bool first) {
+			if (view->first != first) {
+				view->first = first;
+				row->update();
+			}
+		},
+		.highlight = [=](const QString &query) {
+			title->setMarkedText(Marked(titleText, query));
+			if (text) {
+				text->setMarkedText(Marked(description, query));
+			}
+			relayout();
+		},
+	};
+}
+
+// Строка действия внизу: экспорт, импорт, сброс всего.
+void AddActionRow(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &titleText,
+		const QString &noteText,
+		const style::icon &icon,
+		QColor color,
+		bool first,
+		Fn<void()> callback) {
+	const auto row = card->add(object_ptr<Ui::RippleButton>(
+		card,
+		st::defaultRippleAnimation));
+	row->setPointerCursor(true);
+	row->setClickedCallback(std::move(callback));
+	const auto pack = row->lifetime().make_state<PackIcon>();
+	const auto iconName = QString();
+	const auto title = Ui::CreateChild<Ui::FlatLabel>(
+		row,
+		titleText,
+		TitleLabelStyle());
+	MakeTransparent(title);
+	const auto note = Ui::CreateChild<Ui::FlatLabel>(
+		row,
+		noteText,
+		TextLabelStyle());
+	MakeTransparent(note);
+	row->widthValue() | rpl::on_next([=](int width) {
+		const auto textW = width - kTextLeft - kPad;
+		if (textW <= 0) {
+			return;
+		}
+		title->resizeToWidth(textW);
+		note->resizeToWidth(textW);
+		const auto block = title->height() + 2 + note->height();
+		const auto height = std::max(kMinRowHeight, block + 2 * kRowPad);
+		title->move(kTextLeft, (height - block) / 2);
+		note->move(kTextLeft, (height - block) / 2 + title->height() + 2);
+		row->resize(width, height);
+	}, row->lifetime());
+	row->paintRequest(
+	) | rpl::on_next([=, &icon] {
+		auto p = QPainter(row);
+		const auto origin = row->mapTo(card, QPoint());
+		auto path = QPainterPath();
+		path.addRoundedRect(
+			QRectF(-origin.x(), -origin.y(), card->width(), card->height()),
+			kGroupRadius,
+			kGroupRadius);
+		p.save();
+		p.setClipPath(path);
+		row->paintRipple(p, 0, 0);
+		p.restore();
+		if (!first) {
+			auto line = st::windowSubTextFg->c;
+			line.setAlpha(40);
+			p.fillRect(
+				kTextLeft,
+				0,
+				row->width() - kTextLeft,
+				st::lineWidth,
+				line);
+		}
+		PaintPlate(
+			p,
+			QRect(kPad, (row->height() - kPlate) / 2, kPlate, kPlate),
+			color,
+			icon,
+			iconName,
+			*pack,
+			row);
+	}, row->lifetime());
+}
+
+void PaintGroupBg(not_null<Ui::RpWidget*> card) {
+	card->paintOn([=](QPainter &p) {
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(card->rect(), kGroupRadius, kGroupRadius);
+	});
+}
+
+} // namespace
+
+void CustomizeBox(
+		not_null<Ui::GenericBox*> box,
+		Window::SessionController *controller) {
+	RoundedNoButtons(box);
+	if (controller) {
+		PackIcons::Instance().ensure(&controller->session());
+	}
+	const auto content = box->verticalLayout();
+	const auto weak = base::make_weak(controller);
+	const auto toast = [=](const QString &text) {
+		if (const auto strong = weak.get()) {
+			strong->showToast(text);
+		}
+	};
+
+	// Закреплённая шапка: закрыть, название, поиск и ниже чипы разделов.
+	const auto pinned = box->setPinnedToTopContent(
+		object_ptr<Ui::VerticalLayout>(box));
+	const auto header = pinned->add(
+		object_ptr<Ui::RpWidget>(pinned),
+		QMargins(10, 10, 10, 0));
+	header->resize(header->width(), 40);
+	const auto close = MakeRoundButton(
+		header,
+		true,
+		[=] { box->closeBox(); });
+	const auto searchButton = MakeRoundButton(header, false, nullptr);
+	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
+		header,
+		U("Кастомизация"),
+		st::boxTitle);
+	static const auto searchClear = style::owned_color(QColor(0, 0, 0, 0));
+	static const auto fieldStyle = [] {
+		auto result = st::defaultInputField;
+		result.textBg = searchClear.color();
+		result.textBgActive = searchClear.color();
+		result.textMargins = style::margins(0, 7, 0, 7);
+		result.placeholderFgActive = st::windowSubTextFg;
+		result.placeholderScale = 1.;
+		result.placeholderShift = 0;
+		result.placeholderFont = st::normalFont;
+		result.border = 0;
+		result.borderActive = 0;
+		result.heightMin = 36;
+		return result;
+	}();
+	const auto pill = Ui::CreateChild<Ui::RpWidget>(header);
+	pill->paintOn([=](QPainter &p) {
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(pill->rect(), 18, 18);
+	});
+	const auto field = Ui::CreateChild<Ui::InputField>(
+		header,
+		fieldStyle,
+		rpl::single(U("Найти настройку")));
+	pill->hide();
+	field->hide();
+	header->widthValue() | rpl::on_next([=](int width) {
+		close->move(0, (header->height() - close->height()) / 2);
+		searchButton->move(
+			width - searchButton->width(),
+			(header->height() - searchButton->height()) / 2);
+		headerTitle->move(
+			(width - headerTitle->width()) / 2,
+			(header->height() - headerTitle->height()) / 2);
+		const auto left = close->width() + 8;
+		const auto pillWidth = width - left - searchButton->width() - 8;
+		pill->setGeometry(left, (header->height() - 36) / 2, pillWidth, 36);
+		field->resizeToWidth(pillWidth - 28);
+		field->move(
+			left + 14,
+			(header->height() - field->height()) / 2);
+	}, header->lifetime());
+
+	const auto chipsWrap = pinned->add(
+		object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
+			pinned,
+			object_ptr<Ui::RpWidget>(pinned),
+			QMargins(10, 8, 10, 8)));
+	const auto chips = chipsWrap->entity();
+	chips->resize(chips->width(), kChipHeight);
+	chipsWrap->toggle(true, anim::type::instant);
+
+	struct ChipState {
+		Ui::Animations::Simple animation;
+		bool active = false;
+	};
+	struct Chip {
+		not_null<Ui::AbstractButton*> button;
+		ChipState *state = nullptr;
+		QString text;
+		int section = 0;
+	};
+	struct State {
+		std::vector<SectionInfo> sections;
+		std::vector<RowInfo> rows;
+		std::vector<Chip> chips;
+		QString query;
+		bool built = false;
+		Fn<void()> apply;
+		Ui::SlideWrap<Ui::FlatLabel> *empty = nullptr;
+		Ui::Animations::Simple scroll;
+		Ui::Animations::Simple fade;
+	};
+	const auto state = box->lifetime().make_state<State>();
+
+	auto groups = BuildGroups();
+	if (groups.empty()) {
+		Ui::AddSkip(content, 14);
+		content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				U("Пока нет настроек."),
+				st::boxDividerLabel),
+			QMargins(24, 16, 24, 8),
+			style::al_top);
+	}
+	for (auto s = 0; s != int(groups.size()); ++s) {
+		const auto &group = groups[s];
+		const auto name = group.name;
+		const auto color = Categories()[CategoryIndex(group.category)].color;
+		const auto wrap = content->add(
+			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+				content,
+				object_ptr<Ui::VerticalLayout>(content),
+				QMargins(kOuterSide, 0, kOuterSide, 0)));
+		wrap->toggle(true, anim::type::instant);
+		const auto inner = wrap->entity();
+
+		// Серая заглавная надпись и «Сбросить» справа.
+		const auto head = inner->add(
+			object_ptr<Ui::RpWidget>(inner),
+			QMargins(0, 16, 0, 0));
+		head->resize(head->width(), 28);
+		const auto headLabel = Ui::CreateChild<Ui::FlatLabel>(
+			head,
+			name.toUpper(),
+			HeadLabelStyle());
+		MakeTransparent(headLabel);
+		const auto resetSection = MakeResetButton(
+			head,
+			U("Сбросить"),
+			[=] {
+				for (const auto &entry : Entries()) {
+					if (SectionOf(entry) == name) {
+						Reset(entry.key);
+					}
+				}
+			});
+		head->widthValue() | rpl::on_next([=](int width) {
+			headLabel->resizeToNaturalWidth(width - 120);
+			headLabel->move(
+				kPad,
+				head->height() - headLabel->height() - 4);
+			resetSection.button->move(
+				width - kPad - resetSection.button->width(),
+				head->height() - resetSection.button->height() - 2);
+		}, head->lifetime());
+
+		const auto card = inner->add(
+			object_ptr<Ui::VerticalLayout>(inner));
+		PaintGroupBg(card);
+		state->sections.push_back({
+			.name = name,
+			.category = group.category,
+			.wrap = wrap,
+			.reset = resetSection,
+		});
+		for (const auto &entry : group.entries) {
+			const auto restart = entry.requiresRestart;
+			state->rows.push_back(AddRow(
+				card,
+				entry,
+				color,
+				s,
+				name,
+				[=] {
+					if (restart) {
+						toast(U("Изменение вступит в силу "
+							"после перезапуска клиента"));
+					}
+				}));
+			state->sections[s].items.push_back(int(state->rows.size()) - 1);
+		}
+		if (false && !group.note.isEmpty()) {
+			inner->add(
+				object_ptr<Ui::FlatLabel>(
+					inner,
+					group.note,
+					TextLabelStyle()),
+				QMargins(kPad, 8, kPad, 0));
+		}
+	}
+
+	state->empty = content->add(
+		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+			content,
+			object_ptr<Ui::FlatLabel>(
+				content,
+				U("Ничего не найдено"),
+				TextLabelStyle()),
+			QMargins(24, 24, 24, 8)));
+	state->empty->toggle(false, anim::type::instant);
+
+	// Нижний раздел: экспорт, импорт и сброс всего.
+	const auto actionsWrap = content->add(
+		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			content,
+			object_ptr<Ui::VerticalLayout>(content),
+			QMargins(kOuterSide, 0, kOuterSide, 0)));
+	actionsWrap->toggle(true, anim::type::instant);
+	{
+		const auto inner = actionsWrap->entity();
+		const auto head = inner->add(
+			object_ptr<Ui::FlatLabel>(
+				inner,
+				U("ДАННЫЕ"),
+				HeadLabelStyle()),
+			QMargins(kPad, 20, kPad, 6));
+		MakeTransparent(head);
+		const auto actions = inner->add(
+			object_ptr<Ui::VerticalLayout>(inner));
+		PaintGroupBg(actions);
+		const auto grey = Categories().back().color;
+		AddActionRow(
+			actions,
+			U("Сохранить настройки в файл"),
+			U("Все ваши переключатели одним файлом, "
+				"чтобы перенести на другой компьютер."),
+			st::menuIconExport,
+			grey,
+			true,
+			[=] {
+				const auto initial = QDir::homePath() + u"/moka.mokaset"_q;
+				FileDialog::GetWritePath(
+					box.get(),
+					U("Экспорт настроек"),
+					U("Набор настроек mokaGram (*.mokaset)"),
+					initial,
+					[=](QString &&path) {
+						auto file = QFile(path);
+						if (file.open(QIODevice::WriteOnly)
+							&& file.write(Export()) >= 0) {
+							toast(U("Настройки сохранены в файл"));
+						} else {
+							toast(U("Не удалось записать файл"));
+						}
+					});
+			});
+		AddActionRow(
+			actions,
+			U("Загрузить настройки из файла"),
+			U("Перед применением покажем, сколько значений изменится."),
+			st::menuIconDownload,
+			grey,
+			false,
+			[=] {
+				FileDialog::GetOpenPath(
+					box.get(),
+					U("Импорт настроек"),
+					U("Набор настроек mokaGram (*.mokaset)"),
+					[=](FileDialog::OpenResult &&result) {
+						auto data = result.remoteContent;
+						if (data.isEmpty() && !result.paths.isEmpty()) {
+							auto file = QFile(result.paths.front());
+							if (file.open(QIODevice::ReadOnly)) {
+								data = file.readAll();
+							}
+						}
+						auto summary = ImportSummary();
+						auto error = QString();
+						if (data.isEmpty()) {
+							toast(U("Не удалось прочитать файл"));
+							return;
+						} else if (!PreviewImport(data, &summary, &error)) {
+							toast(error);
+							return;
+						}
+						auto text = U("Будет изменено настроек: ")
+							+ QString::number(summary.changed) + '.';
+						if (summary.unknown) {
+							text += U("\nНеизвестных (для плагинов, "
+								"которых нет): ")
+								+ QString::number(summary.unknown)
+								+ U(", они сохранятся.");
+						}
+						if (summary.invalid) {
+							text += U("\nПропущено неверных значений: ")
+								+ QString::number(summary.invalid) + '.';
+						}
+						const auto strong = weak.get();
+						if (!strong) {
+							return;
+						}
+						strong->show(Box([=](
+								not_null<Ui::GenericBox*> confirm) {
+							Ui::ConfirmBox(confirm, {
+								.text = text,
+								.confirmed = [=](Fn<void()> closeConfirm) {
+									auto failure = QString();
+									if (Import(data, &failure)) {
+										toast(U("Настройки применены"));
+									} else {
+										toast(failure);
+									}
+									closeConfirm();
+								},
+								.confirmText = U("Применить"),
+								.title = U("Импорт настроек"),
+							});
+						}));
+					});
+			});
+		AddActionRow(
+			actions,
+			U("Вернуть всё как было"),
+			U("Все настройки станут такими, какими были "
+				"после установки."),
+			st::menuIconRestoreAttention,
+			QColor(0xFF, 0x45, 0x3A),
+			false,
+			[=] {
+				const auto strong = weak.get();
+				if (!strong) {
+					return;
+				}
+				strong->show(Box([=](not_null<Ui::GenericBox*> confirm) {
+					Ui::ConfirmBox(confirm, {
+						.text = U("Вернуть все настройки к значениям "
+							"по умолчанию?"),
+						.confirmed = [=](Fn<void()> closeConfirm) {
+							ResetAll();
+							closeConfirm();
+						},
+						.confirmText = U("Сбросить"),
+					});
+				}));
+			});
+	}
+	Ui::AddSkip(content, 22);
+
+	// Показ и скрытие строк и разделов по поиску, зависимостям и сбросам.
+	state->apply = [=] {
+		const auto query = state->query;
+		const auto kindOfAnim = state->built
+			? anim::type::normal
+			: anim::type::instant;
+		auto any = false;
+		auto shown = std::vector<bool>(state->sections.size(), false);
+		auto firstDone = std::vector<bool>(state->sections.size(), false);
+		for (const auto &row : state->rows) {
+			const auto match = query.isEmpty()
+				|| row.haystack.contains(query);
+			const auto depends = !query.isEmpty()
+				|| row.dependsOn.isEmpty()
+				|| Bool(row.dependsOn);
+			const auto visible = match && depends;
+			row.wrap->toggle(visible, kindOfAnim);
+			if (visible) {
+				row.setFirst(!firstDone[row.section]);
+				firstDone[row.section] = true;
+			} else {
+				row.setFirst(false);
+			}
+			if (match) {
+				shown[row.section] = true;
+			}
+			row.highlight(query);
+		}
+		for (auto s = 0; s != int(state->sections.size()); ++s) {
+			auto &section = state->sections[s];
+			const auto show = query.isEmpty() || shown[s];
+			any = any || show;
+			section.wrap->toggle(show, kindOfAnim);
+			auto changed = false;
+			for (const auto index : section.items) {
+				changed = changed || IsChanged(state->rows[index].key);
+			}
+			section.reset.set(changed, !state->built);
+		}
+		state->empty->entity()->setText(query.isEmpty()
+			? U("Ничего не найдено")
+			: U("Ничего не найдено по запросу «") + query + U("»"));
+		state->empty->toggle(
+			!any && !state->sections.empty(),
+			kindOfAnim);
+	};
+	Changed() | rpl::on_next([=](const QString &) {
+		state->apply();
+	}, box->lifetime());
+	state->apply();
+	state->built = true;
+
+	// Чипы: быстрый переход к разделам с прокруткой.
+	auto seen = std::vector<QString>();
+	for (auto s = 0; s != int(state->sections.size()); ++s) {
+		const auto &category = state->sections[s].category;
+		if (ranges::contains(seen, category)) {
+			continue;
+		}
+		seen.push_back(category);
+		const auto text = U(Categories()[CategoryIndex(category)].title);
+		const auto button = Ui::CreateChild<Ui::AbstractButton>(chips);
+		const auto chip = button->lifetime().make_state<ChipState>();
+		button->setPointerCursor(true);
+		button->resize(40, kChipHeight);
+		button->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(button);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto t = chip->animation.value(chip->active ? 1. : 0.);
+			p.setPen(Qt::NoPen);
+			p.setBrush(anim::color(st::windowBg->c, st::windowBgActive->c, t));
+			p.drawRoundedRect(
+				button->rect(),
+				kChipHeight / 2.,
+				kChipHeight / 2.);
+			p.setFont(st::normalFont);
+			p.setPen(anim::color(st::windowFg->c, st::windowFgActive->c, t));
+			p.drawText(button->rect(), Qt::AlignCenter, text);
+		}, button->lifetime());
+		button->setClickedCallback([=] {
+			if (!state->query.isEmpty()) {
+				return;
+			}
+			const auto top = std::max(
+				state->sections[s].wrap->y() + 4,
+				0);
+			state->scroll.start([=](float64 value) {
+				box->scrollToY(int(base::SafeRound(value)));
+			}, box->scrollTop(), top, 340, anim::easeOutCubic);
+		});
+		state->chips.push_back({
+			.button = button,
+			.state = chip,
+			.text = text,
+			.section = s,
+		});
+	}
+	chips->widthValue() | rpl::on_next([=](int width) {
+		if (state->chips.empty()) {
+			return;
+		}
+		const auto count = int(state->chips.size());
+		auto sum = 0;
+		for (const auto &chip : state->chips) {
+			sum += st::normalFont->width(chip.text);
+		}
+		const auto gaps = 6 * (count - 1);
+		const auto pad = std::clamp((width - gaps - sum) / (2 * count), 4, 14);
+		auto x = 0;
+		for (const auto &chip : state->chips) {
+			const auto w = st::normalFont->width(chip.text) + 2 * pad;
+			chip.button->setGeometry(x, 0, w, kChipHeight);
+			x += w + 6;
+		}
+	}, chips->lifetime());
+	const auto syncChips = [=] {
+		if (state->chips.empty()) {
+			return;
+		}
+		const auto top = box->scrollTop() + 24;
+		auto current = 0;
+		for (auto i = 0; i != int(state->chips.size()); ++i) {
+			if (state->sections[state->chips[i].section].wrap->y() <= top) {
+				current = i;
+			}
+		}
+		if (box->scrollTop() + box->scrollHeight()
+			>= content->height() - 2) {
+			current = int(state->chips.size()) - 1;
+		}
+		for (auto i = 0; i != int(state->chips.size()); ++i) {
+			const auto chip = state->chips[i].state;
+			const auto active = (i == current);
+			if (chip->active != active) {
+				chip->active = active;
+				chip->animation.start(
+					[button = state->chips[i].button] { button->update(); },
+					active ? 0. : 1.,
+					active ? 1. : 0.,
+					220);
+			}
+		}
+	};
+	if (!state->chips.empty()) {
+		state->chips.front().state->active = true;
+	}
+	box->scrolls() | rpl::on_next(syncChips, box->lifetime());
+	content->heightValue() | rpl::on_next(syncChips, box->lifetime());
+
+	// Поиск: поле вместо заголовка, чипы прячутся.
+	const auto searching = std::make_shared<bool>(false);
+	const auto applyFilter = [=] {
+		state->query = *searching
+			? field->getLastText().trimmed().toLower()
+			: QString();
+		state->apply();
+	};
+	field->changes() | rpl::on_next(applyFilter, field->lifetime());
+	searchButton->setClickedCallback([=] {
+		*searching = !*searching;
+		headerTitle->setVisible(!*searching);
+		pill->setVisible(*searching);
+		field->setVisible(*searching);
+		field->raise();
+		chipsWrap->toggle(!*searching, anim::type::normal);
+		if (*searching) {
+			field->setFocusFast();
+		} else {
+			field->setText(QString());
+		}
+		applyFilter();
+	});
+
+	// Плавное появление окна: закрывающая плёнка постепенно тает.
+	const auto cover = Ui::CreateChild<Ui::RpWidget>(box.get());
+	MakeTransparent(cover);
+	cover->paintOn([=](QPainter &p) {
+		const auto t = state->fade.value(0.);
+		if (t <= 0.001) {
+			return;
+		}
+		auto hq = PainterHighQualityEnabler(p);
+		p.setOpacity(t);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::boxBg);
+		p.drawRoundedRect(cover->rect(), 28, 28);
+	});
+	box->sizeValue() | rpl::on_next([=](QSize size) {
+		cover->setGeometry(QRect(QPoint(), size));
+		cover->raise();
+	}, cover->lifetime());
+	state->fade.start([=] {
+		cover->update();
+		if (state->fade.value(0.) <= 0.001) {
+			cover->hide();
+		}
+	}, 1., 0., 380, anim::easeOutCubic);
+}
+
+void ShowCustomizeBox(Window::SessionController *controller) {
+	if (controller) {
+		controller->show(Box(CustomizeBox, controller));
+	}
+}
+
+void StartDebugCommands() {
+	if (qEnvironmentVariableIsEmpty("MOKAGRAM_DEBUG_CMD")) {
+		return;
+	}
+	const auto timer = new QTimer(qApp);
+	QObject::connect(timer, &QTimer::timeout, [] {
+		auto file = QFile(u"/tmp/mokagram_cmd"_q);
+		if (!file.open(QIODevice::ReadOnly)) {
+			return;
+		}
+		const auto cmd = QString::fromUtf8(file.readAll()).trimmed();
+		file.close();
+		QFile::remove(u"/tmp/mokagram_cmd"_q);
+		const auto window = Core::App().activePrimaryWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!controller) {
+			return;
+		}
+		if (cmd == u"customize"_q) {
+			ShowCustomizeBox(controller);
+		} else if (cmd == u"profile"_q) {
+			controller->showPeerInfo(controller->session().userPeerId());
+		} else if (cmd.startsWith(u"chat:"_q)) {
+			controller->showPeerHistory(
+				PeerId(cmd.mid(5).toULongLong()),
+				Window::SectionShow::Way::Forward);
+		} else if (cmd == u"history"_q) {
+			History::ShowChatsBox(controller);
+		} else if (cmd == u"filters"_q) {
+			History::ShowFiltersBox(controller);
+		} else if (cmd == u"close"_q) {
+			controller->hideLayer();
+		}
+	});
+	timer->start(400);
+}
+
+} // namespace Mokagram::Settings
