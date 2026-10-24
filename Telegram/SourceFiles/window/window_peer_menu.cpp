@@ -338,6 +338,7 @@ private:
 	void addMokagramHistory();
 	void addMokagramGhost();
 	void addMokagramPlugins(const QString &location);
+	void addMokagramDeleteMine();
 	void addMokagramGuard();
 	void addTranslate();
 	void addReport();
@@ -1141,6 +1142,20 @@ void Filler::addMokagramPlugins(const QString &location) {
 		[&](const QString &text, Fn<void()> handler, const style::icon *icon) {
 			_addAction(text, std::move(handler), icon);
 		});
+}
+
+void Filler::addMokagramDeleteMine() {
+	if (!_peer
+		|| (_thread && _thread->asTopic())
+		|| !Mokagram::History::CanDeleteMyMessages(_peer)) {
+		return;
+	}
+	const auto peer = _peer;
+	const auto controller = _controller;
+	_addAction(
+		QString::fromUtf8("Удалить все мои сообщения"),
+		[=] { Mokagram::History::ShowDeleteMyMessages(controller, peer); },
+		&st::menuIconDelete);
 }
 
 void Filler::addMokagramGuard() {
@@ -2011,6 +2026,7 @@ void Filler::fillContextMenuActions() {
 		}
 	}
 	addBanFromChannel();
+	addMokagramDeleteMine();
 	addClearHistory();
 	addDeleteChat();
 	addLeaveChat();
@@ -2039,6 +2055,7 @@ void Filler::fillHistoryActions() {
 	addMokagramPlugins(u"chat"_q);
 	addTranslate();
 	addReport();
+	addMokagramDeleteMine();
 	addClearHistory();
 	addDeleteChat();
 	addLeaveChat();

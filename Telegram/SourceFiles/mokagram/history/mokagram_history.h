@@ -85,6 +85,13 @@ void ShowRevisionsBox(
 	uint64 peerId,
 	int64 messageId);
 void ShowChatsBox(not_null<Window::SessionController*> controller);
+
+// «Удалить все мои сообщения» в чате: подтверждение, поиск на сервере, удаление пачками.
+// Для групп, супергрупп, личных чатов и «Избранного». Каналы не поддерживаются.
+[[nodiscard]] bool CanDeleteMyMessages(not_null<PeerData*> peer);
+void ShowDeleteMyMessages(
+	not_null<Window::SessionController*> controller,
+	not_null<PeerData*> peer);
 // peerId = 0: фильтры создаются «везде», иначе только для этого чата.
 void ShowFiltersBox(
 	not_null<Window::SessionController*> controller,

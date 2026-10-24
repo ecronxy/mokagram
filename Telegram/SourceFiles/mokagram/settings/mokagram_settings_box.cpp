@@ -22,6 +22,10 @@
 
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
+#include "data/data_user.h"
+#include "dialogs/dialogs_row.h"
+#include "dialogs/dialogs_main_list.h"
+#include "dialogs/dialogs_indexed_list.h"
 #include "mtproto/sender.h"
 #include "base/flat_map.h"
 #include "ui/text/text_custom_emoji.h"
@@ -1833,6 +1837,20 @@ void StartDebugCommands() {
 					}
 				}
 			}
+		} else if (cmd.startsWith(u"deletemine"_q)) {
+			auto peer = (PeerData*)controller->session().user();
+			if (cmd.size() > 11) {
+				auto index = cmd.mid(11).toInt();
+				for (const auto &row : controller->session().data().chatsList()->indexed()->all()) {
+					if (const auto history = row->history()) {
+						if (!index--) {
+							peer = history->peer;
+							break;
+						}
+					}
+				}
+			}
+			Mokagram::History::ShowDeleteMyMessages(controller, peer);
 		} else if (cmd == u"readnow"_q) {
 			if (const auto history = controller->activeChatCurrent().history()) {
 				LOG(("MOKAREAD before unread=%1").arg(history->unreadCount()));
