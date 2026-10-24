@@ -26,6 +26,28 @@ index fd2a4d4..755fbb2 100644
  	auto checkCorner = [this](const Corner &corner) {
  		if (!corner.valid()) return;
  		if (_startWidth >= 0) Assert(corner.width <= _startWidth);
+diff --git i/ui/layers/box_content.cpp w/ui/layers/box_content.cpp
+index b255ca0..929a404 100644
+--- i/ui/layers/box_content.cpp
++++ w/ui/layers/box_content.cpp
+@@ -448,13 +448,11 @@ object_ptr<RpWidget> BoxContent::doTakeInnerWidget() {
+ }
+ 
+ void BoxContent::paintEvent(QPaintEvent *e) {
+-	Painter p(this);
+-
++	// Mokagram: фон и скругления рисует слой окна, поэтому содержимое
++	// не должно быть непрозрачным, иначе углы получаются квадратными.
+ 	if (testAttribute(Qt::WA_OpaquePaintEvent)) {
+-		const auto &color = getDelegate()->style().bg;
+-		for (const auto &rect : e->region()) {
+-			p.fillRect(rect, color);
+-		}
++		setAttribute(Qt::WA_OpaquePaintEvent, false);
++		update();
+ 	}
+ }
+ 
 diff --git i/ui/layers/box_layer_widget.cpp w/ui/layers/box_layer_widget.cpp
 index 7a9c2b7..3b17cec 100644
 --- i/ui/layers/box_layer_widget.cpp
@@ -505,7 +527,7 @@ index 7633972..d697404 100644
  	RippleButton::paintRipple(p, 0, 0);
  
 diff --git i/ui/widgets/widgets.style w/ui/widgets/widgets.style
-index 8b8df7d..8451b00 100644
+index 8b8df7d..e5687e6 100644
 --- i/ui/widgets/widgets.style
 +++ w/ui/widgets/widgets.style
 @@ -992,7 +992,7 @@ defaultPopupMenu: PopupMenu {
@@ -517,7 +539,7 @@ index 8b8df7d..8451b00 100644
  	duration: 150;
  	showDuration: 200;
  }
-@@ -1030,13 +1030,13 @@ defaultInputField: InputField {
+@@ -1030,7 +1030,7 @@ defaultInputField: InputField {
  	textBgActive: windowBg;
  	textFg: windowFg;
  	textMarkBg: windowBgOver;
@@ -526,13 +548,6 @@ index 8b8df7d..8451b00 100644
  	textAlign: align(topleft);
  
  	placeholderFg: windowSubTextFg;
- 	placeholderFgActive: windowActiveTextFg;
- 	placeholderFgError: attentionButtonFg;
--	placeholderMargins: margins(0px, 0px, 0px, 0px);
-+	placeholderMargins: margins(16px, 0px, 0px, 0px);
- 	placeholderAlign: align(topleft);
- 	placeholderScale: 0.9;
- 	placeholderShift: -20px;
 @@ -1047,9 +1047,9 @@ defaultInputField: InputField {
  	borderFgActive: activeLineFg;
  	borderFgError: activeLineFgError;

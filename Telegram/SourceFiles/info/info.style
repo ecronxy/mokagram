@@ -887,8 +887,7 @@ editPeerTitleField: InputField(defaultInputField) {
 	textMargins: margins(0px, 28px, 30px, 4px);
 }
 editPeerDescription: InputField(defaultInputField) {
-	textBg: transparent;
-	textMargins: margins(0px, 7px, 0px, 7px);
+	textMargins: margins(16px, 11px, 16px, 11px);
 
 	placeholderFg: placeholderFg;
 	placeholderFgActive: placeholderFgActive;
@@ -898,9 +897,9 @@ editPeerDescription: InputField(defaultInputField) {
 	placeholderFont: normalFont;
 
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
 
-	heightMin: 32px;
+	heightMin: 44px;
 }
 editPeerDescriptionMargins: margins(22px, 3px, 22px, 2px);
 editPeerPrivaciesMargins: margins(15px, 7px, 22px, 0px);

@@ -284,7 +284,6 @@ windowFilterSmallRemove: IconButton(notifyClose) {
 windowFilterSmallRemoveRight: 10px;
 windowFilterNameInput: InputField(defaultInputField) {
 	textMargins: margins(16px, 26px, 52px, 4px);
-	placeholderMargins: margins(16px, 0px, 0px, 0px);
 	border: 0px;
 	borderActive: 2px;
 	borderRadius: 16px;
