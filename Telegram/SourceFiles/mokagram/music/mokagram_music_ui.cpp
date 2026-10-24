@@ -882,8 +882,8 @@ private:
 			return;
 		}
 		if (_glyph == Glyph::Play) {
-			// Без подложки: просто синяя пауза или треугольник.
-			p.setBrush(isOver() ? st::windowActiveTextFg->c.lighter(115) : st::windowActiveTextFg->c);
+			// Без подложки: белая пауза или треугольник.
+			p.setBrush(isOver() ? QColor(st::windowFg->c).darker(115) : st::windowFg->c);
 			const auto u = r.width() / 64.;
 			if (_playing) {
 				p.drawRoundedRect(QRectF(c.x() - 14 * u, c.y() - 17 * u, 10 * u, 34 * u), 3 * u, 3 * u);
@@ -1081,14 +1081,14 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		};
 		info->paintOn([=](QPainter &p) {
 			auto hq = PainterHighQualityEnabler(p);
-			const auto side = std::min(info->width() - 80, 300);
+			const auto side = std::min(info->width() - 64, 340);
 			const auto art = QRect((info->width() - side) / 2, 8, side, side);
 			const auto current = instance->current(AudioMsgId::Type::Song);
 			auto cover = current.audio()
 				? CoverForDocument(current.audio()->id)
 				: QImage();
 			auto path = QPainterPath();
-			path.addRoundedRect(art, 28, 28);
+			path.addRoundedRect(art, 20, 20);
 			if (!cover.isNull()) {
 				p.save();
 				p.setClipPath(path);
@@ -1113,11 +1113,11 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			big.setPixelSize(22);
 			p.setFont(big);
 			p.setPen(st::windowFg);
-			const auto textWidth = info->width() - 64;
+			const auto textWidth = info->width() - 64 - 56;
 			const auto metrics = QFontMetrics(big);
 			p.drawText(
 				QRect(32, art.bottom() + 24, textWidth, 30),
-				Qt::AlignCenter,
+				Qt::AlignLeft | Qt::AlignVCenter,
 				metrics.elidedText(name, Qt::ElideRight, textWidth));
 			auto mid = st::normalFont->f;
 			mid.setPixelSize(16);
@@ -1125,9 +1125,16 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			p.setPen(st::windowSubTextFg);
 			p.drawText(
 				QRect(32, art.bottom() + 56, textWidth, 24),
-				Qt::AlignCenter,
+				Qt::AlignLeft | Qt::AlignVCenter,
 				QFontMetrics(mid).elidedText(artist, Qt::ElideRight, textWidth));
 		});
+
+		const auto heart = Ui::CreateChild<RoundGlyph>(info, Glyph::Heart, 48);
+		info->widthValue(
+		) | rpl::on_next([=](int width) {
+			const auto side = std::min(width - 64, 340);
+			heart->move(width - 32 - 48 + 8, 8 + side + 24 + 4);
+		}, heart->lifetime());
 
 		// Перемотка и время.
 		const auto seek = content->add(
@@ -1153,14 +1160,12 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		const auto previous = Ui::CreateChild<RoundGlyph>(controls, Glyph::Previous, 56);
 		const auto play = Ui::CreateChild<RoundGlyph>(controls, Glyph::Play, 72);
 		const auto next = Ui::CreateChild<RoundGlyph>(controls, Glyph::Next, 56);
-		const auto heart = Ui::CreateChild<RoundGlyph>(controls, Glyph::Heart, 48);
 		controls->widthValue(
 		) | rpl::on_next([=](int width) {
 			const auto top = (controls->height() - 72) / 2;
 			play->move((width - 72) / 2, top);
-			previous->move(play->x() - 16 - 56, top + 8);
-			next->move(play->x() + 72 + 16, top + 8);
-			heart->move(width - 48 - 12, top + 12);
+			previous->move(play->x() - 28 - 56, top + 8);
+			next->move(play->x() + 72 + 28, top + 8);
 		}, controls->lifetime());
 
 		const auto step = [=](int delta) {

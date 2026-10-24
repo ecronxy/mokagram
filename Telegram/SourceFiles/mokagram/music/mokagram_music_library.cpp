@@ -339,6 +339,11 @@ bool HasTaste() {
 	return !Lib().liked.empty() || !Lib().history.empty();
 }
 
+std::set<QString> &ShownRecently() {
+	static auto result = std::set<QString>();
+	return result;
+}
+
 void BuildForYou(
 		int count,
 		Fn<void(std::vector<Track>, QString)> done) {
@@ -357,18 +362,17 @@ void BuildForYou(
 		return a.second > b.second;
 	});
 	auto seeds = std::vector<std::pair<QString, double>>();
-	for (auto i = 0; i != int(ranked.size()) && ranked[i].second > 0.; ++i) {
-		if (i < 3) {
-			seeds.push_back(ranked[i]);
-		}
+	// Каждое обновление берёт другие семена: один сильный всегда, остальные из верхней части.
+	if (!ranked.empty() && ranked[0].second > 0.) {
+		seeds.push_back(ranked[0]);
 	}
 	auto pool = std::vector<std::pair<QString, double>>();
-	for (auto i = 3; i < std::min<int>(ranked.size(), 24); ++i) {
+	for (auto i = 1; i < std::min<int>(ranked.size(), 30); ++i) {
 		if (ranked[i].second > 0.) {
 			pool.push_back(ranked[i]);
 		}
 	}
-	for (auto picked = 0; picked != 3 && !pool.empty(); ++picked) {
+	for (auto picked = 0; picked != 5 && !pool.empty(); ++picked) {
 		const auto at = base::RandomIndex(int(pool.size()));
 		seeds.push_back(pool[at]);
 		pool.erase(pool.begin() + at);
@@ -415,6 +419,9 @@ void BuildForYou(
 			}
 			if (artistAffinity < -0.8) {
 				score -= 2.;
+			}
+			if (ShownRecently().contains(id)) {
+				score -= 1.6; // уже было в прошлой подборке
 			}
 			const auto last = profile->lastFinished.find(id);
 			if (last != profile->lastFinished.end() && (now - last->second) < 7 * 86400) {
@@ -482,6 +489,12 @@ void BuildForYou(
 					}
 				}
 			}
+		}
+		for (const auto &t : result) {
+			ShownRecently().insert(t.id);
+		}
+		if (ShownRecently().size() > 300) {
+			ShownRecently().clear();
 		}
 		done(std::move(result), QString());
 	};
