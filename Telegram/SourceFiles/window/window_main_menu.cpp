@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_music_ui.h"
 #include <QtGui/QBitmap>
 
@@ -763,6 +764,12 @@ void MainMenu::setupMenu() {
 			{ &st::menuIconSoundOn }
 		)->setClickedCallback([=] {
 			Mokagram::Music::ShowMusicBox(controller);
+		});
+		addAction(
+			rpl::single(QString::fromUtf8("Удалить мои сообщения")),
+			{ &st::menuIconDelete }
+		)->setClickedCallback([=] {
+			Mokagram::History::ShowDeleteMyMessagesMulti(controller);
 		});
 		for (auto &item : Mokagram::Plugins::DrawerMenuItems()) {
 			addAction(
