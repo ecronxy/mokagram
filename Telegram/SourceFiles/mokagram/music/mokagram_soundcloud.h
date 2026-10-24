@@ -3,6 +3,7 @@
 #pragma once
 
 #include "base/basic_types.h"
+#include "rpl/producer.h"
 
 #include <QtCore/QString>
 #include <QtGui/QImage>
@@ -42,6 +43,12 @@ void Download(
 
 // Картинка по ссылке (обложки). Результат кэшируется в памяти.
 void LoadImage(const QString &url, Fn<void(QImage)> done);
+
+// Обложка трека SoundCloud по id документа клиента (пока не загружена, пустая).
+[[nodiscard]] QImage CoverForDocument(uint64 documentId);
+void SetCover(uint64 documentId, QImage image);
+[[nodiscard]] rpl::producer<> CoversChanged();
+[[nodiscard]] uint64 DocumentIdForTrack(const QString &trackId);
 
 // Папка кэша скачанных треков.
 [[nodiscard]] QString CacheDir();

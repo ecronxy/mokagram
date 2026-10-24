@@ -6,6 +6,11 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/player/media_player_widget.h"
+#include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_music_ui.h"
+#include "data/data_document.h"
+#include "ui/painter.h"
+#include "styles/style_menu_icons.h"
 
 #include "platform/platform_specific.h"
 #include "data/data_document.h"
@@ -89,6 +94,10 @@ Widget::Widget(
 	setAttribute(Qt::WA_OpaquePaintEvent);
 	setMouseTracking(true);
 	resize(width(), st::mediaPlayerHeight + st::lineWidth);
+	Mokagram::Music::CoversChanged(
+	) | rpl::on_next([=] {
+		update();
+	}, lifetime());
 
 	setupRightControls();
 
@@ -458,6 +467,33 @@ void Widget::paintEvent(QPaintEvent *e) {
 	if (!fill.isEmpty()) {
 		p.fillRect(fill, st::mediaPlayerBg);
 	}
+	// Mokagram: обложка слева.
+	if (_type == AudioMsgId::Type::Song) {
+		const auto size = 44;
+		const auto art = QRect(
+			14,
+			(st::mediaPlayerHeight - size) / 2,
+			size,
+			size);
+		auto hq = PainterHighQualityEnabler(p);
+		auto path = QPainterPath();
+		path.addRoundedRect(art, 12, 12);
+		const auto current = instance()->current(AudioMsgId::Type::Song);
+		const auto cover = current.audio()
+			? Mokagram::Music::CoverForDocument(current.audio()->id)
+			: QImage();
+		if (!cover.isNull()) {
+			p.save();
+			p.setClipPath(path);
+			p.drawImage(art, cover);
+			p.restore();
+		} else {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawPath(path);
+			st::menuIconSoundOn.paintInCenter(p, art);
+		}
+	}
 }
 
 void Widget::enterEventHook(QEnterEvent *e) {
@@ -520,6 +556,25 @@ void Widget::mousePressEvent(QMouseEvent *e) {
 }
 
 void Widget::mouseReleaseEvent(QMouseEvent *e) {
+	// Mokagram: клик по обложке открывает очередь и управление, по названию
+	// музыку с последним запросом.
+	if (_type == AudioMsgId::Type::Song) {
+		const auto cover = QRect(14, (st::mediaPlayerHeight - 44) / 2, 44, 44);
+		if (cover.contains(e->pos())) {
+			Mokagram::Music::ShowPlayerBox(_controller);
+			return;
+		}
+		const auto left = getNameLeft();
+		const auto labels = QRect(
+			left,
+			0,
+			width() - left - _rightControls->width() - _close->width(),
+			height() - st::mediaPlayerPlayback.fullWidth);
+		if (labels.contains(e->pos())) {
+			Mokagram::Music::ShowMusicBox(_controller);
+			return;
+		}
+	}
 	if (auto downLabels = base::take(_labelsDown)) {
 		if (_labelsOver != downLabels) {
 			return;
@@ -609,7 +664,7 @@ void Widget::updateLabelsGeometry() {
 	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - st::mediaPlayerName.style.font->ascent);
 
 	const auto right = getTimeRight();
-	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerTime.font->ascent);
+	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerPlayTop - st::mediaPlayerTime.font->ascent);
 
 	updateControlsWrapGeometry();
 }

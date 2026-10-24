@@ -1,6 +1,7 @@
 #include "mokagram/music/mokagram_soundcloud.h"
 
 #include "core/application.h"
+#include "rpl/event_stream.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -310,6 +311,39 @@ void LoadImage(const QString &url, Fn<void(QImage)> done) {
 		cache[url] = image;
 		done(image);
 	});
+}
+
+namespace {
+std::map<uint64, QImage> &Covers() {
+	static auto result = std::map<uint64, QImage>();
+	return result;
+}
+} // namespace
+
+QImage CoverForDocument(uint64 documentId) {
+	const auto &covers = Covers();
+	const auto i = covers.find(documentId);
+	return (i != covers.end()) ? i->second : QImage();
+}
+
+namespace {
+rpl::event_stream<> &CoversStream() {
+	static auto result = rpl::event_stream<>();
+	return result;
+}
+} // namespace
+
+void SetCover(uint64 documentId, QImage image) {
+	Covers()[documentId] = std::move(image);
+	CoversStream().fire({});
+}
+
+rpl::producer<> CoversChanged() {
+	return CoversStream().events();
+}
+
+uint64 DocumentIdForTrack(const QString &trackId) {
+	return 0x4D4F4B0000000000ULL + trackId.toULongLong();
 }
 
 QString CacheDir() {
