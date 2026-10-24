@@ -689,8 +689,13 @@ int MainWindow::computeMinHeight() const {
 }
 
 void MainWindow::refreshTitleWidget() {
-	if (Ui::Platform::NativeWindowFrameSupported()
-		&& Core::App().settings().nativeWindowFrame()) {
+#ifdef Q_OS_LINUX
+	const auto useNativeFrame = Ui::Platform::NativeWindowFrameSupported();
+#else
+	const auto useNativeFrame = Ui::Platform::NativeWindowFrameSupported()
+		&& Core::App().settings().nativeWindowFrame();
+#endif
+	if (useNativeFrame) {
 		setNativeFrame(true);
 		if (Platform::NativeTitleRequiresShadow()) {
 			_titleShadow.create(this);

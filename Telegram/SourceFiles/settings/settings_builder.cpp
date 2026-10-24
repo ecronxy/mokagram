@@ -15,14 +15,178 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_common.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "ui/vertical_list.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/wrap/padding_wrap.h"
+#include "ui/painter.h"
 #include "window/window_session_controller.h"
 #include "styles/style_settings.h"
+#include "styles/style_window.h"
 
 namespace Settings::Builder {
+
+namespace {
+
+// Mokagram: блок строк настроек как отдельная скруглённая карточка.
+constexpr auto kGroupRadius = 22;
+const auto kGroupMargins = style::margins(10, 7, 10, 7);
+constexpr auto kGroupInset = 6;
+
+[[nodiscard]] Ui::VerticalLayout *GroupOuter(
+		not_null<Ui::VerticalLayout*> container) {
+	const auto value = container->property("moka-group-outer");
+	return value.isValid()
+		? reinterpret_cast<Ui::VerticalLayout*>(value.value<quintptr>())
+		: nullptr;
+}
+
+[[nodiscard]] not_null<Ui::VerticalLayout*> BeginGroup(
+		not_null<Ui::VerticalLayout*> outer) {
+	const auto pad = outer->add(
+		object_ptr<Ui::PaddingWrap<Ui::VerticalLayout>>(
+			outer,
+			object_ptr<Ui::VerticalLayout>(outer),
+			kGroupMargins + style::margins(
+				kGroupInset,
+				kGroupInset,
+				kGroupInset,
+				kGroupInset)));
+	const auto inner = pad->entity();
+	inner->setProperty(
+		"moka-group-outer",
+		QVariant::fromValue<quintptr>(reinterpret_cast<quintptr>(outer.get())));
+
+	pad->paintRequest(
+	) | rpl::on_next([=](QRect clip) {
+		auto p = QPainter(pad);
+		p.fillRect(clip, st::dialogsBg);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		const auto card = pad->rect() - kGroupMargins;
+		const auto r = std::min(kGroupRadius, card.height() / 2);
+		p.drawRoundedRect(card, r, r);
+	}, pad->lifetime());
+
+	struct Corner {
+		not_null<Ui::RpWidget*> widget;
+		bool right;
+		bool bottom;
+	};
+	struct State {
+		std::vector<Corner> corners;
+		int radius = kGroupRadius;
+	};
+	const auto state = pad->lifetime().make_state<State>();
+	for (const auto right : { false, true }) {
+		for (const auto bottom : { false, true }) {
+			const auto corner = Ui::CreateChild<Ui::RpWidget>(pad);
+			corner->setAttribute(Qt::WA_TransparentForMouseEvents);
+			corner->paintRequest(
+			) | rpl::on_next([=] {
+				auto p = QPainter(corner);
+				auto hq = PainterHighQualityEnabler(p);
+				const auto r = state->radius;
+				auto path = QPainterPath();
+				path.addRect(corner->rect());
+				auto circle = QPainterPath();
+				circle.addEllipse(QRectF(
+					right ? -r : 0,
+					bottom ? -r : 0,
+					2 * r,
+					2 * r));
+				p.fillPath(path.subtracted(circle), st::dialogsBg);
+			}, corner->lifetime());
+			state->corners.push_back({ corner, right, bottom });
+		}
+	}
+
+	// Тонкие линии между строками, от начала текста до края.
+	const auto lines = Ui::CreateChild<Ui::RpWidget>(pad);
+	lines->setAttribute(Qt::WA_TransparentForMouseEvents);
+	struct HoverWatcher final : QObject {
+		explicit HoverWatcher(QWidget *target) : QObject(target), target(target) {
+		}
+		bool eventFilter(QObject *, QEvent *e) override {
+			if (e->type() == QEvent::Enter || e->type() == QEvent::Leave) {
+				target->update();
+			}
+			return false;
+		}
+		QWidget *target;
+	};
+	const auto watcher = new HoverWatcher(lines);
+	lines->paintRequest(
+	) | rpl::on_next([=] {
+		auto rows = std::vector<QWidget*>();
+		for (const auto child : inner->children()) {
+			if (const auto w = qobject_cast<QWidget*>(child)) {
+				if (!w->isHidden() && w->height() >= 30) {
+					rows.push_back(w);
+				}
+			}
+		}
+		std::sort(rows.begin(), rows.end(), [](QWidget *a, QWidget *b) {
+			return a->y() < b->y();
+		});
+		auto p = QPainter(lines);
+		p.setPen(QColor(255, 255, 255, 34));
+		const auto left = kGroupInset + st::settingsButton.padding.left();
+		const auto hovered = [&](QWidget *row) {
+			return row->rect().contains(row->mapFromGlobal(QCursor::pos()))
+				&& row->isVisible()
+				&& row->underMouse();
+		};
+		for (const auto row : rows) {
+			// Строка под курсором подсвечена пилюлей: линии рядом прячем.
+			if (!row->property("moka-watched").toBool()) {
+				row->setProperty("moka-watched", true);
+				row->installEventFilter(watcher);
+			}
+		}
+		for (auto i = 0; i + 1 < int(rows.size()); ++i) {
+			if (hovered(rows[i]) || hovered(rows[i + 1])) {
+				continue;
+			}
+			const auto a = rows[i];
+			const auto y = kGroupInset + a->y() + a->height() - 1;
+			p.drawLine(
+				a->x() + left,
+				y,
+				kGroupInset + a->x() + a->width() - 12,
+				y);
+		}
+	}, lines->lifetime());
+
+	pad->sizeValue(
+	) | rpl::on_next([=](QSize size) {
+		const auto card = QRect(QPoint(), size) - kGroupMargins;
+		const auto r = std::max(1, std::min(
+			kGroupRadius,
+			std::min(card.width(), card.height()) / 2));
+		state->radius = r;
+		for (const auto &corner : state->corners) {
+			corner.widget->resize(r, r);
+			corner.widget->move(
+				card.x() + (corner.right ? card.width() - r : 0),
+				card.y() + (corner.bottom ? card.height() - r : 0));
+			corner.widget->raise();
+		}
+		lines->setGeometry(card);
+		lines->raise();
+		lines->update();
+	}, pad->lifetime());
+	inner->heightValue(
+	) | rpl::on_next([=](int) {
+		lines->update();
+	}, lines->lifetime());
+	return inner;
+}
+
+} // namespace
 namespace {
 
 [[nodiscard]] QString ResolveTitle(rpl::producer<QString> title) {
@@ -254,6 +418,7 @@ Ui::RpWidget *SectionBuilder::addControl(ControlArgs &&args) {
 Ui::SettingsButton *SectionBuilder::addButton(ButtonArgs &&args) {
 	const auto &st = args.st ? *args.st : st::settingsButton;
 	auto iconForSearch = IconDescriptor{ args.icon.icon };
+	const auto navigates = bool(args.onClick) && !args.label && !args.toggled && args.id != u"main/faq"_q;
 	const auto factory = [&](not_null<Ui::VerticalLayout*> container) {
 		auto button = CreateButtonWithIcon(
 			args.container ? args.container : container.get(),
@@ -272,6 +437,36 @@ Ui::SettingsButton *SectionBuilder::addButton(ButtonArgs &&args) {
 		}
 		if (args.toggled) {
 			button->toggleOn(std::move(args.toggled));
+		}
+		Mokagram::Plugins::MakePill(
+			button.data(),
+			[] { return st::windowBg->c; });
+		if (navigates) {
+			// Mokagram: стрелка справа, как в настройках macOS.
+			const auto chevron = Ui::CreateChild<Ui::RpWidget>(button.data());
+			chevron->setAttribute(Qt::WA_TransparentForMouseEvents);
+			chevron->resize(10, 14);
+			chevron->paintRequest(
+			) | rpl::on_next([=] {
+				auto p = QPainter(chevron);
+				auto hq = PainterHighQualityEnabler(p);
+				auto pen = QPen(st::windowSubTextFg->c, 1.6);
+				pen.setCapStyle(Qt::RoundCap);
+				pen.setJoinStyle(Qt::RoundJoin);
+				p.setPen(pen);
+				p.drawPolyline(QPolygonF({
+					QPointF(2, 2),
+					QPointF(8, 7),
+					QPointF(2, 12),
+				}));
+			}, chevron->lifetime());
+			button->sizeValue(
+			) | rpl::on_next([=](QSize size) {
+				chevron->move(
+					size.width() - 18 - chevron->width(),
+					(size.height() - chevron->height()) / 2);
+			}, chevron->lifetime());
+
 		}
 		return button;
 	};
@@ -300,8 +495,13 @@ Ui::SettingsButton *SectionBuilder::addSectionButton(SectionArgs &&args) {
 }
 
 void SectionBuilder::addDivider() {
-	v::match(_context, [&](const WidgetContext &ctx) {
-		Ui::AddDivider(ctx.container);
+	v::match(_context, [&](WidgetContext &ctx) {
+		// Mokagram: вместо полосы-разделителя начинается новая карточка.
+		auto outer = ctx.container;
+		if (const auto parent = GroupOuter(outer)) {
+			outer = parent;
+		}
+		ctx.container = BeginGroup(outer);
 	}, [](const SearchContext &) {
 	});
 }
@@ -321,8 +521,13 @@ void SectionBuilder::addSkip(int height) {
 }
 
 void SectionBuilder::addDividerText(rpl::producer<QString> text) {
-	v::match(_context, [&](const WidgetContext &ctx) {
-		Ui::AddDividerText(ctx.container, std::move(text));
+	v::match(_context, [&](WidgetContext &ctx) {
+		auto outer = ctx.container;
+		if (const auto parent = GroupOuter(outer)) {
+			outer = parent;
+			ctx.container = outer;
+		}
+		Ui::AddDividerText(outer, std::move(text));
 	}, [](const SearchContext &) {
 	});
 }

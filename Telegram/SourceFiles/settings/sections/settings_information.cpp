@@ -85,10 +85,11 @@ namespace Settings {
 		auto copy = st::mainMenuAddAccountButton;
 		copy.padding = style::margins(
 			copy.padding.left() + 6,
-			copy.padding.top() + 6,
+			copy.padding.top() + 3,
 			copy.padding.right(),
-			copy.padding.bottom() + 6);
+			copy.padding.bottom() + 3);
 		copy.iconLeft += 4;
+		copy.textBg = st::mainMenuBg;
 		return copy;
 	}();
 	return result;
@@ -1100,7 +1101,7 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 					IconType::Round,
 					&st::windowBgActive
 				}),
-			QMargins(12, 4, 12, 4)))->setDuration(0);
+			QMargins(10, 1, 10, 1)))->setDuration(0);
 	const auto button = result->entity();
 	Mokagram::Plugins::MakePill(button, [] { return st::mainMenuBg->c; });
 

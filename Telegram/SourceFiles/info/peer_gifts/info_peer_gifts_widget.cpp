@@ -1363,18 +1363,16 @@ void InnerWidget::refreshAbout() {
 	} else if ((!collectionId && _peer->isSelf())
 		|| (!collectionId && !_peer->canManageGifts())
 		|| maybeEmpty) {
-		_about = std::make_unique<Ui::FlatLabel>(
-			this,
-			((maybeEmpty && !knownEmpty)
-				? tr::lng_contacts_loading(tr::marked)
-				: _peer->isSelf()
-				? tr::lng_peer_gifts_about_mine(tr::rich)
-				: tr::lng_peer_gifts_about(
-					lt_user,
-					rpl::single(tr::bold(_peer->shortName())),
-					tr::rich)),
-			st::giftListAbout);
-		_about->show();
+		// Mokagram: пояснение «нажмите на подарок…» убрано, остаётся загрузка.
+		if (maybeEmpty && !knownEmpty) {
+			_about = std::make_unique<Ui::FlatLabel>(
+				this,
+				tr::lng_contacts_loading(tr::marked),
+				st::giftListAbout);
+			_about->show();
+		} else {
+			_about = nullptr;
+		}
 		resizeToWidth(width());
 	} else if (_about) {
 		_about = nullptr;

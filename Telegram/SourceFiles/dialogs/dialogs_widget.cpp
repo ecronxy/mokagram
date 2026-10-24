@@ -8,8 +8,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_widget.h"
 
 #include "base/call_delayed.h"
+#include "base/unixtime.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/options.h"
+#include "api/api_messages_search.h"
 #include "dialogs/ui/chat_search_in.h"
 #include "dialogs/ui/dialogs_stories_content.h"
 #include "dialogs/ui/dialogs_stories_list.h"
@@ -33,6 +35,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/choose_filter_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/buttons.h"
+#include "core/file_utilities.h"
+#include "data/data_photo.h"
+#include "data/data_photo_media.h"
+#include "data/data_document.h"
+#include "data/data_media_types.h"
+#include "data/data_file_click_handler.h"
+#include "window/window_peer_menu.h"
 #include "ui/widgets/chat_filters_tabs_strip.h"
 #include "ui/widgets/elastic_scroll.h"
 #include "ui/widgets/fields/input_field.h"
@@ -537,6 +546,13 @@ Widget::Widget(
 		copy.tab = tab;
 		applySearchState(std::move(copy));
 	}, lifetime());
+	_inner->changeSearchMediaRequests(
+	) | rpl::on_next([=](std::pair<int, int> value) {
+		auto copy = _searchState;
+		copy.media = value.first;
+		copy.period = value.second;
+		applySearchState(std::move(copy));
+	}, lifetime());
 	_inner->changeSearchFilterRequests(
 	) | rpl::filter([=](ChatTypeFilter filter) {
 		return (_searchState.filter != filter)
@@ -555,6 +571,124 @@ Widget::Widget(
 		copy.fromArchive = fromArchive;
 		applySearchState(copy);
 	}, lifetime());
+	{
+		const auto bar = Ui::CreateChild<Ui::RpWidget>(this);
+		bar->setObjectName(u"moka-pickbar"_q);
+		bar->hide();
+		const auto forward = Ui::CreateChild<Ui::RoundButton>(
+			bar,
+			rpl::single(QString()),
+			st::dialogsPickButton);
+		const auto download = Ui::CreateChild<Ui::RoundButton>(
+			bar,
+			rpl::single(QString()),
+			st::dialogsPickButton);
+		const auto cancel = Ui::CreateChild<Ui::RoundButton>(
+			bar,
+			rpl::single(QString::fromUtf8("✕")),
+			st::dialogsPickCancel);
+		bar->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(bar);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto margin = style::ConvertScale(8);
+			const auto card = QRectF(bar->rect()).marginsRemoved(
+				{ margin, margin, margin, margin });
+			p.setPen(QPen(QColor(255, 255, 255, 34), 1.));
+			p.setBrush(st::windowBg);
+			p.drawRoundedRect(
+				card.adjusted(0.5, 0.5, -0.5, -0.5),
+				card.height() / 2.,
+				card.height() / 2.);
+		}, bar->lifetime());
+		const auto layout = [=] {
+			const auto margin = style::ConvertScale(8);
+			const auto inner = style::ConvertScale(6);
+			const auto skip = style::ConvertScale(6);
+			const auto cancelWidth = style::ConvertScale(62);
+			const auto each = std::max(
+				(bar->width()
+					- 2 * (margin + inner)
+					- 2 * skip
+					- cancelWidth) / 2,
+				style::ConvertScale(40));
+			auto left = margin + inner;
+			const auto top = (bar->height() - forward->height()) / 2;
+			forward->setFullWidth(each);
+			forward->moveToLeft(left, top);
+			left += each + skip;
+			download->setFullWidth(each);
+			download->moveToLeft(left, top);
+			left += each + skip;
+			cancel->setFullWidth(cancelWidth);
+			cancel->moveToLeft(left, top);
+		};
+		bar->widthValue(
+		) | rpl::on_next([=](int) {
+			layout();
+		}, bar->lifetime());
+		_inner->pickedCountValue(
+		) | rpl::on_next([=](int count) {
+			bar->setVisible(count > 0);
+			forward->setText(rpl::single(tr::lng_selected_forward(tr::now)));
+			download->setText(rpl::single(tr::lng_media_download(tr::now)));
+			cancel->setText(rpl::single(
+				QString::fromUtf8("✕ ") + QString::number(count)));
+			layout();
+			bar->raise();
+		}, bar->lifetime());
+		forward->setClickedCallback([=] {
+			auto items = _inner->pickedItems();
+			if (items.empty()) {
+				return;
+			}
+			Window::ShowForwardMessagesBox(
+				this->controller(),
+				std::move(items),
+				[=] { _inner->clearPicked(); });
+		});
+		download->setClickedCallback([=] {
+			auto started = 0;
+			for (const auto &id : _inner->pickedItems()) {
+				const auto item = session().data().message(id);
+				const auto media = item ? item->media() : nullptr;
+				if (!media) {
+					continue;
+				}
+				if (const auto document = media->document()) {
+					++started;
+					DocumentSaveClickHandler::Save(
+						id,
+						document,
+						DocumentSaveClickHandler::Mode::ToFile);
+				} else if (const auto photo = media->photo()) {
+					++started;
+					const auto view = photo->createMediaView();
+					view->wanted(Data::PhotoSize::Large, id);
+					photo->load(Data::PhotoSize::Large, id);
+					const auto path = File::DefaultDownloadPath(&session())
+						+ u"photo_"_q
+						+ QString::number(photo->id)
+						+ u".jpg"_q;
+					const auto lifetime = std::make_shared<rpl::lifetime>();
+					session().downloaderTaskFinished(
+					) | rpl::on_next([=] {
+						if (view->loaded()) {
+							view->saveToFile(path);
+							lifetime->destroy();
+						}
+					}, *lifetime);
+				}
+			}
+			this->controller()->showToast(started
+				? QString::fromUtf8("Скачиваю файлов: ")
+					+ QString::number(started)
+				: QString::fromUtf8("В выбранных сообщениях нет файлов"));
+			_inner->clearPicked();
+		});
+		cancel->setClickedCallback([=] { _inner->clearPicked(); });
+		bar->resize(width(), forward->height() + 4 * style::ConvertScale(8));
+	}
 	_inner->resetSearchRestrictionsRequests(
 	) | rpl::filter([=] {
 		return (_searchState.tab == ChatSearchTab::MyMessages)
@@ -3129,11 +3263,13 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 		: nullptr;
 	const auto filter = _searchState.filter;
 	const auto fromArchive = _searchState.fromArchive;
+	const auto media = _searchState.media;
+	const auto period = _searchState.period;
 	const auto fromStartType = SearchRequestType{
 		.start = true,
 		.peer = (inPeer != nullptr),
 	};
-	if (trimmed.isEmpty() && !fromPeer && inTags.empty()) {
+	if (trimmed.isEmpty() && !fromPeer && inTags.empty() && !media && !period) {
 		cancelSearchRequest();
 
 		// Otherwise inside first searchApplyEmpty we call searchMode(),
@@ -3174,6 +3310,8 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 			_searchQueryCommunity = community;
 			_searchQueryFilter = filter;
 			_searchQueryFromArchive = fromArchive;
+			_searchQueryMedia = media;
+			_searchQueryPeriod = period;
 			process->nextRate = 0;
 			process->full = false;
 			_migratedProcess.full = false;
@@ -3187,7 +3325,9 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 		|| _searchQueryTab != tab
 		|| _searchQueryCommunity != community
 		|| _searchQueryFilter != filter
-		|| _searchQueryFromArchive != fromArchive) {
+		|| _searchQueryFromArchive != fromArchive
+		|| _searchQueryMedia != media
+		|| _searchQueryPeriod != period) {
 		const auto process = currentSearchProcess();
 		_searchQuery = query;
 		_searchQueryFrom = fromPeer;
@@ -3196,6 +3336,8 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 		_searchQueryCommunity = community;
 		_searchQueryFilter = filter;
 		_searchQueryFromArchive = fromArchive;
+		_searchQueryMedia = media;
+		_searchQueryPeriod = period;
 		process->nextRate = 0;
 		process->full = false;
 		_migratedProcess.full = false;
@@ -3236,8 +3378,10 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 								Data::ReactionToMTP
 							)),
 						MTP_int(topic ? topic->rootId() : 0),
-						MTP_inputMessagesFilterEmpty(),
-						MTP_int(0), // min_date
+						Api::PrepareFilter(Api::SearchFilter(media)),
+						MTP_int(period
+							? int(base::unixtime::now()) - period
+							: 0), // min_date
 						MTP_int(0), // max_date
 						MTP_int(0), // offset_id
 						MTP_int(0), // add_offset
@@ -3746,6 +3890,22 @@ void Widget::searchReceived(
 		process->full = true;
 		return std::vector<not_null<HistoryItem*>>();
 	});
+	if (_searchState.period && type.peer && !type.migrated) {
+		const auto minDate = int(base::unixtime::now()) - _searchState.period;
+		const auto count = int(messages.size());
+		messages.erase(ranges::remove_if(messages, [&](
+				not_null<HistoryItem*> item) {
+			return item->date() < minDate;
+		}), end(messages));
+		if (type.start) {
+			_searchPeriodShown = 0;
+		}
+		_searchPeriodShown += int(messages.size());
+		if (int(messages.size()) < count) {
+			process->full = true;
+			fullCount = _searchPeriodShown;
+		}
+	}
 	_inner->searchReceived(messages, inject, type, fullCount);
 
 	process->requestId = 0;
@@ -4095,6 +4255,7 @@ void Widget::closeChildList(anim::type animated) {
 }
 
 bool Widget::applySearchState(SearchState state) {
+	_inner->clearPicked();
 	if (_searchState == state) {
 		return true;
 	} else if (_childList) {
@@ -4133,6 +4294,10 @@ bool Widget::applySearchState(SearchState state) {
 	}
 	if (!state.inChat && !forum && !_openedForum) {
 		state.fromPeer = nullptr;
+	}
+	if (!state.inChat) {
+		state.media = 0;
+		state.period = 0;
 	}
 	if (state.tab == ChatSearchTab::PublicPosts
 		&& IsHashOrCashtagSearchQuery(state.query) == HashOrCashtag::None) {
@@ -4182,6 +4347,8 @@ bool Widget::applySearchState(SearchState state) {
 		state.filter = ChatTypeFilter::All;
 		state.fromArchive = true;
 	}
+	const auto mediaChanged = (_searchState.media != state.media)
+		|| (_searchState.period != state.period);
 	const auto filterChanged = (_searchState.filter != state.filter);
 	const auto fromArchiveChanged = (_searchState.fromArchive
 		!= state.fromArchive);
@@ -4268,13 +4435,16 @@ bool Widget::applySearchState(SearchState state) {
 
 	const auto searchCleared = state.query.isEmpty()
 		&& !state.fromPeer
-		&& state.tags.empty();
+		&& state.tags.empty()
+		&& !state.media
+		&& !state.period;
 	if (searchCleared
 		|| inChatChanged
 		|| communityChanged
 		|| fromPeerChanged
 		|| filterChanged
 		|| fromArchiveChanged
+		|| mediaChanged
 		|| tagsChanged
 		|| tabChanged) {
 		clearSearchCache(searchCleared);
@@ -4729,6 +4899,11 @@ void Widget::updateControlsGeometry() {
 		}
 	};
 	_updateScrollGeometryCached();
+	if (const auto bar = findChild<QWidget*>(u"moka-pickbar"_q)) {
+		const auto barHeight = style::ConvertScale(38 + 32);
+		bar->setGeometry(0, height() - barHeight, width(), barHeight);
+		bar->raise();
+	}
 
 	if (_suggestions) {
 		_suggestions->setGeometry(
@@ -5015,6 +5190,7 @@ void Widget::setSearchQuery(const QString &query, int cursorPosition) {
 }
 
 bool Widget::cancelSearch(CancelSearchOptions options) {
+	_inner->clearPicked();
 	_searchEngaged = false;
 	const auto clearingSuggestionsQuery = _suggestions
 		&& _suggestions->consumeSearchQuery(QString());

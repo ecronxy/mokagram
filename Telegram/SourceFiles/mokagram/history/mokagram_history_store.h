@@ -55,6 +55,8 @@ struct PageQuery {
 	int32 beforeEvent = 0; // Курсор (keyset), 0 = с самого свежего.
 	int64 beforeId = 0;
 	int64 minId = 0;       // Только id >= minId (для призраков), 0 = без границы.
+	int32 since = 0;       // Только события не раньше since, 0 = за всё время.
+	QString mediaLike;     // Маска подписи медиа для LIKE, пусто = любые.
 	int limit = 50;
 };
 

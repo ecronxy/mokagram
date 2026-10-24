@@ -8,6 +8,7 @@
 
 #include <rpl/producer.h>
 
+#include <functional>
 #include <vector>
 
 namespace Mokagram::Settings {
@@ -39,6 +40,8 @@ struct Entry {
 	QString icon;         // значок строки, по умолчанию как у раздела
 	QString details;      // подробное объяснение (до нескольких строк)
 	QString example;      // "было → станет", например "+7 912 → +• •••"
+	bool hidden = false;  // хранится, но в списке строк не показывается
+	std::function<void()> action; // для String: строка-кнопка, значение это подпись
 };
 
 // Регистрируется один раз при старте (повтор того же ключа заменяет запись).

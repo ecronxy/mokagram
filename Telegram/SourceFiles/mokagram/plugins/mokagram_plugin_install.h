@@ -14,11 +14,16 @@ class PopupMenu;
 namespace Ui {
 class GenericBox;
 class RpWidget;
+class AbstractButton;
 } // namespace Ui
 
 namespace Window {
 class SessionController;
 } // namespace Window
+
+namespace style {
+struct Box;
+} // namespace style
 
 namespace Mokagram::Plugins {
 
@@ -41,6 +46,19 @@ void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg);
 
 // Пункты плагинов в контекстное меню сообщения.
 void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item);
+
+// Каркас окон в стиле «Плагины»: круглое окно без кнопок и круглые
+// кнопки шапки (закрыть или поиск). Все кастомные окна строим на них.
+void RoundedWindow(not_null<Ui::GenericBox*> box);
+
+// Скругляет обычное окно (радиус 28), оставляя его кнопки внизу.
+void RoundedKeepButtons(
+	not_null<Ui::GenericBox*> box,
+	const style::Box &base);
+[[nodiscard]] not_null<Ui::AbstractButton*> MakeHeaderButton(
+	not_null<QWidget*> parent,
+	bool close,
+	Fn<void()> callback);
 
 // Окно «Плагины»: список установленных, переключатель и удаление.
 void PluginsBox(

@@ -1505,6 +1505,25 @@ void AddStarGiftTable(
 			container,
 			st.table ? *st.table : st::giveawayGiftCodeTable),
 		st::giveawayGiftCodeTableMargin);
+	// Mokagram: таблица лежит на скруглённой карточке, как в окне плагинов.
+	{
+		const auto back = Ui::CreateChild<Ui::RpWidget>(container.get());
+		back->setAttribute(Qt::WA_TransparentForMouseEvents);
+		back->lower();
+		table->geometryValue(
+		) | rpl::on_next([=](QRect rect) {
+			back->setGeometry(rect);
+			back->update();
+		}, back->lifetime());
+		back->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(back);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBg);
+			p.drawRoundedRect(back->rect(), 22, 22);
+		}, back->lifetime());
+	}
 	const auto peerId = PeerId(entry.barePeerId);
 	const auto session = &show->session();
 	const auto unique = entry.uniqueGift.get();

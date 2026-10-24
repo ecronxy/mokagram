@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_wrap_widget.h"
+#include "base/call_delayed.h"
 
 #include "info/profile/info_profile_widget.h"
 #include "info/profile/info_profile_values.h"
@@ -438,6 +439,54 @@ void WrapWidget::createTopBar() {
 	_topBar->resizeToWidth(width());
 	_topBar->finishAnimating();
 	_topBar->show();
+
+	// Mokagram: список уходит под шапку мягко, но на старте ничего не закрыто.
+	if (wrap() == Wrap::Layer
+		&& _content
+		&& !HasCustomTopBar(_controller.get())
+		&& !findChild<QWidget*>(u"moka-fade"_q)) {
+		constexpr auto kFade = 14;
+		const auto fade = Ui::CreateChild<Ui::RpWidget>(this);
+		fade->setObjectName(u"moka-fade"_q);
+		fade->setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto progress = fade->lifetime().make_state<float64>(0.);
+		fade->paintRequest(
+		) | rpl::on_next([=] {
+			if (*progress <= 0.) {
+				return;
+			}
+			auto p = QPainter(fade);
+			p.setOpacity(*progress);
+			auto gradient = QLinearGradient(0, 0, 0, fade->height());
+			for (auto i = 0; i <= 8; ++i) {
+				const auto t = i / 8.;
+				const auto eased = t * t * (3. - 2. * t);
+				auto color = st::boxBg->c;
+				color.setAlphaF(1. - eased);
+				gradient.setColorAt(t, color);
+			}
+			p.fillRect(fade->rect(), gradient);
+		}, fade->lifetime());
+		const auto animation = fade->lifetime(
+		).make_state<Ui::Animations::Simple>();
+		topShadowToggledValue(
+		) | rpl::on_next([=](bool shown) {
+			animation->start([=](float64 value) {
+				*progress = value;
+				fade->update();
+			}, shown ? 0. : 1., shown ? 1. : 0., st::slideDuration);
+		}, fade->lifetime());
+		_topBar->geometryValue(
+		) | rpl::on_next([=](QRect rect) {
+			fade->setGeometry(
+				rect.x(),
+				rect.y() + rect.height(),
+				rect.width(),
+				kFade);
+			fade->raise();
+			fade->show();
+		}, fade->lifetime());
+	}
 }
 
 void WrapWidget::setupTopBarMenuToggle() {
@@ -861,6 +910,23 @@ void WrapWidget::doSetInnerFocus() {
 }
 
 void WrapWidget::showFinishedHook() {
+	if (wrap() == Wrap::Layer) {
+		clearMask();
+		// Mokagram: после показа окна перерисовываем углы, иначе в них может
+		// остаться кусок старого содержимого (светлый «уголок»).
+		const auto repaintCorners = [=] {
+			if (const auto layer = parentWidget()) {
+				layer->update();
+				if (const auto top = layer->parentWidget()) {
+					top->update(layer->geometry().marginsAdded(
+						QMargins(40, 40, 40, 40)));
+				}
+			}
+		};
+		repaintCorners();
+		base::call_delayed(80, this, repaintCorners);
+		base::call_delayed(400, this, repaintCorners);
+	}
 	// Restore shadow visibility after showChildren() call.
 	_topShadow->toggle(_topShadow->toggled(), anim::type::instant);
 	_bottomShadow->toggle(_bottomShadow->toggled(), anim::type::instant);
@@ -1019,17 +1085,16 @@ void WrapWidget::showNewContent(
 			animationParams);
 		const auto layer = (wrap() == Wrap::Layer);
 		animationParams.withFade = layer;
-		animationParams.topSkip = layer ? st::boxRadius : 0;
+		animationParams.topSkip = layer ? 32 : 0;
 
-		if (HasCustomTopBar(_controller.get())
-			|| HasCustomTopBar(newController.get())) {
+		if (layer) {
 			const auto s = QSize(
 				newContent->width(),
 				animationParams.topSkip);
 			auto image = Ui::RippleAnimation::MaskByDrawer(s, false, [&](
 					QPainter &p) {
 				const auto r = QRect(0, 0, s.width(), s.height() * 2);
-				p.drawRoundedRect(r, st::boxRadius, st::boxRadius);
+				p.drawRoundedRect(r, 32, 32);
 			});
 			animationParams.topMask = Ui::PixmapFromImage(std::move(image));
 		}

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_main.h"
+#include "mokagram/ui/mokagram_glass.h"
 
 #include "settings/settings_common_session.h"
 
@@ -91,6 +92,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
+#include "styles/style_window.h"
 
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
@@ -102,6 +104,10 @@ namespace {
 using namespace Builder;
 
 constexpr auto kSugValidatePhone = "VALIDATE_PHONE_NUMBER"_cs;
+
+// Mokagram: шапка настроек по центру, место под ник и юз под аватаркой.
+constexpr auto kCoverExtra = 66;
+constexpr auto kCoverNameTop = 8 + 100 + 6;
 
 class Cover final : public Ui::FixedHeightWidget {
 public:
@@ -146,7 +152,8 @@ Cover::Cover(
 	parent,
 	st::settingsPhotoTop
 		+ st::infoProfileCover.photo.size.height()
-		+ st::settingsPhotoBottom)
+		+ st::settingsPhotoBottom
+		+ kCoverExtra)
 , _controller(controller)
 , _user(user)
 , _badge(
@@ -172,6 +179,19 @@ Cover::Cover(
 , _phone(this, st::defaultFlatLabel, st::popupMenuWithIcons)
 , _username(this, st::infoProfileMegagroupCover.status) {
 	_user->updateFull();
+
+	// Mokagram: шапка настроек обычной скруглённой карточкой.
+	paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(
+			QRectF(rect()).marginsRemoved(QMarginsF(10, 4, 10, 4)),
+			22.,
+			22.);
+	}, lifetime());
 
 	_name->setSelectable(true);
 	_name->setContextCopyText(tr::lng_profile_copy_fullname(tr::now));
@@ -244,8 +264,8 @@ void Cover::setupChildGeometry() {
 	widthValue(
 	) | rpl::on_next([=](int newWidth) {
 		_userpic->moveToLeft(
-			st::settingsPhotoLeft,
-			st::settingsPhotoTop,
+			(newWidth - _userpic->width()) / 2,
+			st::settingsPhotoTop + 4,
 			newWidth);
 		refreshNameGeometry(newWidth);
 		refreshPhoneGeometry(newWidth);
@@ -303,24 +323,19 @@ void Cover::initViewers() {
 }
 
 void Cover::refreshNameGeometry(int newWidth) {
-	const auto nameLeft = st::settingsNameLeft;
-	const auto nameTop = st::settingsNameTop;
-	const auto qrButtonWidth = (_qrButton && !_qrButton->isHidden())
-		? (_qrButton->width() + st::infoProfileCover.rightSkip)
-		: 0;
-	auto nameWidth = newWidth
-		- nameLeft
-		- st::infoProfileCover.rightSkip
-		- qrButtonWidth;
-	if (const auto width = _badge.widget() ? _badge.widget()->width() : 0) {
-		nameWidth -= st::infoVerifiedCheckPosition.x() + width;
-	}
-	_name->resizeToNaturalWidth(nameWidth);
-	_name->moveToLeft(nameLeft, nameTop, newWidth);
-	const auto badgeLeft = nameLeft + _name->width();
-	const auto badgeTop = nameTop;
-	const auto badgeBottom = nameTop + _name->height();
-	_badge.move(badgeLeft, badgeTop, badgeBottom);
+	const auto nameTop = st::settingsPhotoTop + 4
+		+ _userpic->height() + 8;
+	const auto badgeWidth = _badge.widget() ? _badge.widget()->width() : 0;
+	const auto available = newWidth - 2 * st::infoProfileCover.rightSkip
+		- 2 * (badgeWidth ? (st::infoVerifiedCheckPosition.x() + badgeWidth) : 0);
+	_name->resizeToNaturalWidth(available);
+	_name->moveToLeft((newWidth - _name->width()) / 2, nameTop, newWidth);
+	_badge.move(
+		_name->x() + _name->width(),
+		nameTop,
+		nameTop + _name->height());
+	refreshPhoneGeometry(newWidth);
+	refreshUsernameGeometry(newWidth);
 }
 
 void Cover::updatePhoneText() {
@@ -334,38 +349,109 @@ void Cover::updatePhoneText() {
 }
 
 void Cover::refreshPhoneGeometry(int newWidth) {
-	const auto phoneLeft = st::settingsPhoneLeft;
-	const auto phoneTop = st::settingsPhoneTop;
-	const auto phoneWidth = newWidth
-		- phoneLeft
-		- st::infoProfileCover.rightSkip;
-	_phone->resizeToWidth(phoneWidth);
-	_phone->moveToLeft(phoneLeft, phoneTop, newWidth);
+	const auto top = _name->y() + _name->height() + 2;
+	_phone->resizeToNaturalWidth(newWidth - 2 * st::infoProfileCover.rightSkip);
+	_phone->moveToLeft((newWidth - _phone->width()) / 2, top, newWidth);
 }
 
 void Cover::refreshUsernameGeometry(int newWidth) {
-	const auto usernameLeft = st::settingsUsernameLeft;
-	const auto usernameTop = st::settingsUsernameTop;
-	const auto usernameRight = st::infoProfileCover.rightSkip;
-	const auto usernameWidth = newWidth - usernameLeft - usernameRight;
-	_username->resizeToWidth(usernameWidth);
-	_username->moveToLeft(usernameLeft, usernameTop, newWidth);
+	const auto top = _phone->y() + _phone->height() + 2;
+	_username->resizeToNaturalWidth(
+		newWidth - 2 * st::infoProfileCover.rightSkip);
+	_username->moveToLeft((newWidth - _username->width()) / 2, top, newWidth);
 }
 
 void Cover::refreshQrButtonGeometry(int newWidth) {
 	if (!_qrButton) {
 		return;
 	}
-	const auto buttonTop = (height() - _qrButton->height()) / 2;
+	const auto buttonTop = st::settingsPhotoTop + 4;
 	const auto buttonRight = st::infoProfileCover.rightSkip;
 	const auto inset = st::infoProfileLabeledButtonQrInset;
 	_qrButton->moveToRight(buttonRight - inset, buttonTop, newWidth);
+}
+
+// Mokagram: отдельная вкладка с настройками клиента.
+class MokagramSettings : public Section<MokagramSettings> {
+public:
+	MokagramSettings(
+		QWidget *parent,
+		not_null<Window::SessionController*> controller);
+
+	[[nodiscard]] rpl::producer<QString> title() override;
+
+private:
+	void setupContent();
+
+};
+
+MokagramSettings::MokagramSettings(
+	QWidget *parent,
+	not_null<Window::SessionController*> controller)
+: Section(parent, controller) {
+	setupContent();
+}
+
+rpl::producer<QString> MokagramSettings::title() {
+	return rpl::single(QString::fromUtf8("Настройки mokaGram"));
+}
+
+void MokagramSettings::setupContent() {
+	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
+	const SectionBuildMethod buildMethod = [](
+			not_null<Ui::VerticalLayout*> container,
+			not_null<Window::SessionController*> controller,
+			Fn<void(Type)> showOther,
+			rpl::producer<> showFinished) {
+		auto builder = SectionBuilder(WidgetContext{
+			.container = container,
+			.controller = controller,
+			.showOther = std::move(showOther),
+			.isPaused = Window::PausedIn(
+				controller,
+				Window::GifPauseReason::Layer),
+		});
+		builder.addDivider();
+		builder.addSkip();
+		builder.addButton({
+			.id = u"main/plugins"_q,
+			.title = rpl::single(QString::fromUtf8("Плагины")),
+			.icon = { &st::menuIconBotCommands },
+			.onClick = [=] {
+				controller->show(
+					Box(Mokagram::Plugins::PluginsBox, controller));
+			},
+			.keywords = { u"plugins"_q, u"python"_q },
+		});
+		builder.addButton({
+			.id = u"main/customize"_q,
+			.title = rpl::single(QString::fromUtf8("Кастомизация")),
+			.icon = { &st::menuIconPalette },
+			.onClick = [=] {
+				Mokagram::Settings::ShowCustomizeBox(controller);
+			},
+			.keywords = { u"customize"_q, u"mokagram"_q },
+		});
+		builder.addSkip();
+	};
+	build(content, buildMethod);
+	Ui::ResizeFitChild(this, content);
 }
 
 void BuildSectionButtons(SectionBuilder &builder) {
 	const auto session = builder.session();
 	const auto controller = builder.controller();
 	const auto showOther = builder.showOther();
+
+	builder.addSectionButton({
+		.title = rpl::single(QString::fromUtf8("Настройки mokaGram")),
+		.targetSection = MokagramSettings::Id(),
+		.icon = { &Mokagram::Settings::OwnRowIcon() },
+		.keywords = { u"mokagram"_q, u"plugins"_q, u"customize"_q },
+	});
+	builder.addSkip(st::lineWidth * 4);
+	builder.addDivider();
+	builder.addSkip();
 
 	if (!session->supportMode()) {
 		builder.addButton({
@@ -446,26 +532,6 @@ void BuildSectionButtons(SectionBuilder &builder) {
 		.targetSection = CallsId(),
 		.icon = { &st::menuIconUnmute },
 		.keywords = { u"sessions"_q, u"calls"_q },
-	});
-
-	builder.addButton({
-		.id = u"main/plugins"_q,
-		.title = rpl::single(QString::fromUtf8("Плагины")),
-		.icon = { &st::menuIconBotCommands },
-		.onClick = [=] {
-			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
-		},
-		.keywords = { u"plugins"_q, u"python"_q },
-	});
-
-	builder.addButton({
-		.id = u"main/customize"_q,
-		.title = rpl::single(QString::fromUtf8("Кастомизация")),
-		.icon = { &st::menuIconPalette },
-		.onClick = [=] {
-			Mokagram::Settings::ShowCustomizeBox(controller);
-		},
-		.keywords = { u"customize"_q, u"mokagram"_q },
 	});
 
 	builder.addButton({
@@ -776,7 +842,7 @@ void Main::setupContent() {
 			.highlights = highlights,
 		});
 		builder.addDivider();
-		builder.addSkip();
+		builder.addSkip(st::lineWidth * 4);
 		BuildValidationSuggestions(builder);
 		BuildSectionButtons(builder);
 		builder.addSkip();

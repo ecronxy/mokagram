@@ -7,6 +7,7 @@
 #include <memory>
 
 class PhotoData;
+class HistoryItem;
 
 namespace ChatHelpers {
 class Show;
@@ -20,6 +21,9 @@ namespace Mokagram::Misc {
 
 // Регистрирует настройки раздела «Аккаунты» (misc.max_accounts).
 void RegisterSettings();
+
+// Кладёт в буфер «[дата время] автор: текст» для сообщения.
+void CopyWithAuthor(not_null<HistoryItem*> item);
 
 // Вероятный id владельца набора по id набора. Это эвристика, а не контракт Telegram.
 [[nodiscard]] uint64 OwnerIdFromStickerSetId(uint64 setId);

@@ -148,6 +148,8 @@ struct SearchState {
 	ChatSearchTab tab = {};
 	ChatTypeFilter filter = ChatTypeFilter::All;
 	bool fromArchive = true;
+	int media = 0;
+	int period = 0;
 	QString query;
 
 	[[nodiscard]] bool empty() const;

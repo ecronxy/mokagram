@@ -35,6 +35,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "window/window_session_controller.h"
 #include "styles/style_chat.h"
+#include "styles/style_window.h"
 #include "styles/style_menu_icons.h"
 
 #include <QtGui/QtEvents>
@@ -121,10 +122,7 @@ TwoTextAction::TwoTextAction(
 
 void TwoTextAction::paint(Painter &p) {
 	const auto selected = isSelected();
-	if (selected && _st.itemBgOver->c.alpha() < 255) {
-		p.fillRect(0, 0, width(), _height, _st.itemBg);
-	}
-	p.fillRect(0, 0, width(), _height, selected ? _st.itemBgOver : _st.itemBg);
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
 	if (isEnabled()) {
 		paintRipple(p, 0, 0);
 	}
@@ -244,13 +242,7 @@ TranslateBar::TranslateBar(
 	_wrap.hide(anim::type::instant);
 	_shadow->hide();
 
-	_shadow->showOn(rpl::combine(
-		_wrap.shownValue(),
-		_wrap.heightValue(),
-		rpl::mappers::_1 && rpl::mappers::_2 > 0
-	) | rpl::filter([=](bool shown) {
-		return (shown == _shadow->isHidden());
-	}));
+
 
 	setup(history);
 }
@@ -288,11 +280,18 @@ void TranslateBar::setup(not_null<History*> history) {
 	};
 	const auto button = static_cast<Ui::AbstractButton*>(_wrap.entity());
 	button->resize(0, st::historyTranslateBarHeight);
-	button->setAttribute(Qt::WA_OpaquePaintEvent);
-
 	button->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
-		QPainter(button).fillRect(clip, st::historyComposeButtonBg);
+		// Mokagram: плашка перевода как музыка в профиле, скруглена снизу.
+		auto p = QPainter(button);
+		button->setProperty("moka-strip", true);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::topBarBg->c.darker(175));
+		p.drawRoundedRect(
+			QRectF(button->rect()).adjusted(0, -22, 0, 0),
+			22,
+			22);
 	}, button->lifetime());
 
 	button->setClickedCallback([=] {
@@ -401,7 +400,7 @@ void TranslateBar::setup(not_null<History*> history) {
 			label->setText(phrase);
 			updateLabelGeometry();
 		}
-		if (!_forceHidden) {
+		if (!_forceHidden && !_suppressed) {
 			_wrap.toggle(_shouldBeShown, anim::type::normal);
 		}
 	}, lifetime());
@@ -617,8 +616,21 @@ void TranslateBar::showToast(
 	});
 }
 
+void TranslateBar::setSuppressed(bool suppressed) {
+	if (_suppressed == suppressed) {
+		return;
+	}
+	_suppressed = suppressed;
+	if (_suppressed) {
+		_wrap.hide(anim::type::instant);
+	} else if (!_forceHidden && _shouldBeShown) {
+		_wrap.show(anim::type::instant);
+	}
+}
+
 void TranslateBar::show() {
-	if (!_forceHidden) {
+	if (!_forceHidden || _suppressed) {
+		_forceHidden = false;
 		return;
 	}
 	_forceHidden = false;

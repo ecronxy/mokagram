@@ -260,6 +260,9 @@ void ResetSection(const QString &section) {
 }
 
 bool IsChanged(const QString &key) {
+	if (const auto entry = Find(key); entry && entry->action) {
+		return false;
+	}
 	return Data().values.contains(key);
 }
 

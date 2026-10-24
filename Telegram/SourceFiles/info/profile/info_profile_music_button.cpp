@@ -17,6 +17,28 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_info.h"
 
 namespace Info::Profile {
+namespace {
+
+int MusicCount = 0;
+rpl::event_stream<> MusicChanges;
+
+} // namespace
+
+namespace {
+std::optional<QColor> MusicBand;
+} // namespace
+
+std::optional<QColor> MusicBandColor() {
+	return MusicBand;
+}
+
+bool MusicShown() {
+	return MusicCount > 0;
+}
+
+rpl::producer<> MusicShownChanges() {
+	return MusicChanges.events();
+}
 
 MusicButton::MusicButton(
 	QWidget *parent,
@@ -27,9 +49,18 @@ MusicButton::MusicButton(
 , _noteWidth(st::normalFont->width(_noteSymbol)) {
 	updateData(std::move(data));
 	setClickedCallback(std::move(handler));
+	++MusicCount;
+	MusicBand = Ui::BlendColors(st::boxDividerBg->c, Qt::black, 0.12);
+	MusicChanges.fire({});
 }
 
-MusicButton::~MusicButton() = default;
+MusicButton::~MusicButton() {
+	--MusicCount;
+	if (!MusicCount) {
+		MusicBand = std::nullopt;
+	}
+	MusicChanges.fire({});
+}
 
 void MusicButton::updateData(MusicButtonData data) {
 	const auto result = data.name.textWithEntities();
@@ -48,25 +79,39 @@ void MusicButton::updateData(MusicButtonData data) {
 
 void MusicButton::setOverrideBg(std::optional<QColor> color) {
 	_overrideBg = color;
+	MusicBand = Ui::BlendColors(
+		color.value_or(st::boxDividerBg->c),
+		Qt::black,
+		0.12);
+	MusicChanges.fire({});
 	update();
 }
 
 void MusicButton::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 
-	// Mokagram: музыка в отдельной пилюле с отступами от краёв.
-	const auto pill = QRectF(rect().marginsRemoved(QMargins(9, 12, 9, 0)));
+	// Mokagram: музыка продолжает шапку: шапка скруглена внизу и входит в
+	// полосу, полоса скруглена внизу тем же радиусом; цвет плавно темнеет.
+	constexpr auto kRadius = 32.;
+	const auto pill = QRectF(rect().marginsRemoved(QMargins(0, 0, 0, 0)));
 	auto path = QPainterPath();
-	path.addRoundedRect(pill, pill.height() / 2, pill.height() / 2);
+	path.addRoundedRect(
+		pill.adjusted(0, -kRadius, 0, 0),
+		kRadius,
+		kRadius);
+	path = path.intersected([&] {
+		auto clip = QPainterPath();
+		clip.addRect(pill);
+		return clip;
+	}());
 	{
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
-		p.setBrush(_overrideBg
-			? Ui::BlendColors(
-				*_overrideBg,
-				Qt::black,
-				st::infoProfileTopBarActionButtonBgOpacity)
-			: QColor(st::windowBg->c));
+		const auto base = _overrideBg.value_or(QColor(st::boxDividerBg->c));
+		auto fill = QLinearGradient(pill.topLeft(), pill.bottomLeft());
+		fill.setColorAt(0., Ui::BlendColors(base, Qt::black, 0.12));
+		fill.setColorAt(1., Ui::BlendColors(base, Qt::black, 0.32));
+		p.setBrush(fill);
 		p.drawPath(path);
 	}
 	p.setClipPath(path);
@@ -166,7 +211,7 @@ int MusicButton::resizeGetHeight(int newWidth) {
 	const auto padding = st::infoMusicButtonPadding;
 	const auto &font = st::defaultTextStyle.font;
 
-	return padding.top() + font->height + padding.bottom() + 12;
+	return padding.top() + font->height + padding.bottom();
 }
 
 } // namespace Info::Profile

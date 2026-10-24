@@ -85,7 +85,7 @@ QImage CreateTopBgGradient(
 	p.end();
 
 	if (rounded) {
-		const auto mask = Images::CornersMask(st::boxRadius);
+		const auto mask = Images::CornersMask(28);
 		return Images::Round(std::move(result), mask, RectPart::FullTop);
 	}
 	return result;

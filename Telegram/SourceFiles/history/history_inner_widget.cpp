@@ -87,6 +87,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_common_adapters.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/unixtime.h"
+#include "mokagram/misc/mokagram_misc.h"
 #include "base/call_delayed.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
@@ -3699,6 +3700,16 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						_menu->addAction(
 							tr::lng_context_copy_text(tr::now),
 							[=] { copyContextText(itemId); },
+							&st::menuIconCopy);
+						_menu->addAction(
+							QString::fromUtf8("Копировать с датой и автором"),
+							[=] {
+								if (const auto item = _history->owner().message(itemId)) {
+									if (!showCopyRestriction(item)) {
+										Mokagram::Misc::CopyWithAuthor(item);
+									}
+								}
+							},
 							&st::menuIconCopy);
 					}
 					if ((!item->translation() || !_history->translatedTo())

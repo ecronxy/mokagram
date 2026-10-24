@@ -724,10 +724,13 @@ void Histories::sendReadRequests() {
 		return;
 	} else if (!Mokagram::Ghost::ShouldSendRead()) {
 		// Режим призрака: не шлём, локально чат остаётся прочитанным.
-		_readRequestsTimer.cancel();
+		// Чаты-исключения читаются как обычно.
 		auto histories = std::vector<not_null<History*>>();
 		histories.reserve(_states.size());
 		for (auto &[history, state] : _states) {
+			if (Mokagram::Ghost::ReadAllowedFor(history)) {
+				continue;
+			}
 			state.willReadTill = 0;
 			state.willReadWhen = 0;
 			histories.push_back(history);
@@ -735,7 +738,6 @@ void Histories::sendReadRequests() {
 		for (const auto history : histories) {
 			checkEmptyState(history);
 		}
-		return;
 	}
 	const auto now = crl::now();
 	auto next = std::optional<crl::time>();

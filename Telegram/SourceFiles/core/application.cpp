@@ -323,12 +323,12 @@ void Application::run() {
 
 	startLocalStorage();
 
+	Mokagram::Settings::Load();
 	Mokagram::Streamer::RegisterSettings();
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();
 	Mokagram::Misc::RegisterSettings();
 	Mokagram::Settings::StartDebugCommands();
-	Mokagram::Settings::Load();
 	Mokagram::Plugins::Start([](const std::string &line) {
 		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
 	});

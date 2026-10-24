@@ -55,6 +55,9 @@ void OnBeforeEdit(
 // Призраки удалённых сообщений: локальные HistoryItem (флаг Local, id вне
 // серверного диапазона), вставляются в ленту по дате, на сервер не уходят.
 [[nodiscard]] bool IsGhost(not_null<const HistoryItem*> item);
+// Самоуничтожающиеся фото, видео и голосовые не прячутся и не пропадают
+// после просмотра: ПК показывает их как обычные (history.keep_ttl).
+[[nodiscard]] bool KeepSelfDestruct();
 // Призрак нужно рисовать полупрозрачным (history.dim_deleted).
 [[nodiscard]] bool GhostDimmed(not_null<const HistoryItem*> item);
 // Чат открыт или подгрузил срез: подтянуть призраков и пометки правок.

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
+#include <QtWidgets/QGraphicsEffect>
 
 #include "api/api_compose_with_ai.h"
 #include "api/api_editing.h"
@@ -681,6 +682,12 @@ HistoryWidget::HistoryWidget(
 	_botCommandStart->addClickHandler([=] { startBotCommand(); });
 
 	_topShadow->hide();
+	{
+		// Mokagram: линия под шапкой не нужна, шапка скруглена.
+		const auto effect = new QGraphicsOpacityEffect(_topShadow);
+		effect->setOpacity(0.);
+		_topShadow->setGraphicsEffect(effect);
+	}
 
 	_attachDragAreas = DragArea::SetupDragAreaToContainer(
 		this,
@@ -9604,6 +9611,10 @@ void HistoryWidget::setupTranslateBar() {
 		});
 	}, _translateBar->lifetime());
 
+	if (_pinnedTracker) {
+		checkPinnedBarState();
+	}
+
 	_translateBarHeight = 0;
 	_translateBar->heightValue(
 	) | rpl::on_next([=](int height) {
@@ -9642,6 +9653,10 @@ void HistoryWidget::checkPinnedBarState() {
 		: (_migrated && !peerIsChannel(currentPinnedId.peer))
 		? (currentPinnedId.msg - ServerMaxMsgId)
 		: currentPinnedId.msg;
+	if (_translateBar) {
+		_translateBar->setSuppressed(universalPinnedId != 0
+			&& universalPinnedId != hiddenId);
+	}
 	if (universalPinnedId == hiddenId) {
 		if (_pinnedBar) {
 			_pinnedBar->setContent(rpl::single(Ui::MessageBarContent()));
@@ -11310,7 +11325,16 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 	}
 	p.setInactive(
 		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
-	p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
+	// Mokagram: верхние углы панели ввода скруглены.
+	{
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::historyReplyBg);
+		p.drawRoundedRect(
+			myrtlrect(0, backy, width(), backh + 56),
+			28,
+			28);
+	}
 
 	const auto media = (!_previewDrawPreview && drawMsgText)
 		? drawMsgText->media()

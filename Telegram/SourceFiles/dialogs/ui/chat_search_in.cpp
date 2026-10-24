@@ -100,7 +100,9 @@ Action::Action(
 , _icon(std::move(icon))
 , _checked(chosen) {
 	_text.setText(st::semiboldTextStyle, label);
-	_icon->subscribeToUpdates([=] { update(); });
+	if (_icon) {
+		_icon->subscribeToUpdates([=] { update(); });
+	}
 
 	fitToMenuWidth();
 	resolveMinWidth();
@@ -115,7 +117,9 @@ Action::Action(
 }
 
 Action::~Action() {
-	_icon->subscribeToUpdates(nullptr);
+	if (_icon) {
+		_icon->subscribeToUpdates(nullptr);
+	}
 }
 
 void Action::resolveMinWidth() {
@@ -132,11 +136,7 @@ void Action::resolveMinWidth() {
 void Action::paint(Painter &p) {
 	const auto enabled = isEnabled();
 	const auto selected = isSelected();
-	if (selected && _st.itemBgOver->c.alpha() < 255) {
-		p.fillRect(0, 0, width(), _height, _st.itemBg);
-	}
-	const auto &bg = selected ? _st.itemBgOver : _st.itemBg;
-	p.fillRect(0, 0, width(), _height, bg);
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
 	if (enabled) {
 		paintRipple(p, 0, 0);
 	}
@@ -144,8 +144,10 @@ void Action::paint(Painter &p) {
 	auto x = st::dialogsSearchInPhotoPadding;
 	const auto photos = st::dialogsSearchInPhotoSize;
 	const auto photoy = (height() - photos) / 2;
-	p.drawImage(QRect{ x, photoy, photos, photos }, _icon->image(photos));
-	x += photos + st::dialogsSearchInSkip;
+	if (_icon) {
+		p.drawImage(QRect{ x, photoy, photos, photos }, _icon->image(photos));
+		x += photos + st::dialogsSearchInSkip;
+	}
 	const auto available = width()
 		- x
 		- st::dialogsSearchInCheckSkip
@@ -263,10 +265,50 @@ void ChatSearchIn::Section::update() {
 	outer->update();
 }
 
+namespace {
+
+constexpr auto kMediaNames = std::array{
+	"Все типы",
+	"Закреплённые",
+	"Фото",
+	"Видео",
+	"Файлы",
+	"Музыка",
+	"Голосовые",
+	"Кружки",
+	"GIF",
+	"Ссылки",
+};
+constexpr auto kPeriods = std::array<std::pair<int, const char*>, 5>{ {
+	{ 0, "За всё время" },
+	{ 86400, "За сутки" },
+	{ 7 * 86400, "За неделю" },
+	{ 30 * 86400, "За месяц" },
+	{ 365 * 86400, "За год" },
+} };
+
+[[nodiscard]] QString MediaLabel(int media, int period) {
+	auto result = QString::fromUtf8(kMediaNames[media]);
+	for (const auto &[seconds, name] : kPeriods) {
+		if (seconds && seconds == period) {
+			result += QString::fromUtf8(" · ") + QString::fromUtf8(name);
+		}
+	}
+	return result;
+}
+
+} // namespace
+
 ChatSearchIn::ChatSearchIn(QWidget *parent)
 : RpWidget(parent) {
 	_in.clicks.events() | rpl::on_next([=] {
 		showMenu();
+	}, lifetime());
+	_media.clicks.events() | rpl::on_next([=] {
+		showMediaMenu();
+	}, lifetime());
+	_media.cancelRequests.events() | rpl::on_next([=] {
+		_mediaChanges.fire({ 0, 0 });
 	}, lifetime());
 }
 
@@ -277,7 +319,10 @@ void ChatSearchIn::apply(
 		ChatSearchTab active,
 		ChatSearchPeerTabType peerTabType,
 		std::shared_ptr<Ui::DynamicImage> fromUserpic,
-		QString fromName) {
+		QString fromName,
+		int media,
+		int period,
+		std::shared_ptr<Ui::DynamicImage> mediaIcon) {
 	_tabs = std::move(tabs);
 	_peerTabType = peerTabType;
 	_active = active;
@@ -295,6 +340,12 @@ void ChatSearchIn::apply(
 		tr::semibold(fromName),
 		tr::marked);
 	updateSection(&_from, std::move(fromUserpic), std::move(text));
+	_mediaValue = media;
+	_periodValue = period;
+	updateSection(
+		&_media,
+		std::move(mediaIcon),
+		tr::semibold(MediaLabel(media, period)));
 
 	resizeToWidth(width());
 }
@@ -309,6 +360,44 @@ rpl::producer<> ChatSearchIn::cancelFromRequests() const {
 
 rpl::producer<> ChatSearchIn::changeFromRequests() const {
 	return _from.clicks.events();
+}
+
+rpl::producer<std::pair<int, int>> ChatSearchIn::mediaChanges() const {
+	return _mediaChanges.events();
+}
+
+void ChatSearchIn::showMediaMenu() {
+	_menu = base::make_unique_q<Ui::PopupMenu>(
+		this,
+		st::dialogsSearchInMenu);
+	for (auto i = 0; i != int(kMediaNames.size()); ++i) {
+		const auto media = i;
+		const auto period = _periodValue;
+		auto action = base::make_unique_q<Action>(
+			_menu.get(),
+			nullptr,
+			QString::fromUtf8(kMediaNames[i]),
+			_mediaValue == media);
+		action->setActionTriggered([=] {
+			_mediaChanges.fire({ media, period });
+		});
+		_menu->addAction(std::move(action));
+	}
+	_menu->addSeparator();
+	for (const auto &[seconds, name] : kPeriods) {
+		const auto period = seconds;
+		const auto media = _mediaValue;
+		auto action = base::make_unique_q<Action>(
+			_menu.get(),
+			nullptr,
+			QString::fromUtf8(name),
+			_periodValue == period);
+		action->setActionTriggered([=] {
+			_mediaChanges.fire({ media, period });
+		});
+		_menu->addAction(std::move(action));
+	}
+	_menu->popup(QCursor::pos());
 }
 
 rpl::producer<ChatSearchTab> ChatSearchIn::tabChanges() const {
@@ -382,6 +471,13 @@ int ChatSearchIn::resizeGetHeight(int newWidth) {
 		raw->move(0, result);
 		result += raw->height();
 		_from.shadow->setGeometry(0, result, newWidth, st::lineWidth);
+		result += st::lineWidth;
+	}
+	if (const auto raw = _media.outer.get()) {
+		raw->resizeToWidth(newWidth);
+		raw->move(0, result);
+		result += raw->height();
+		_media.shadow->setGeometry(0, result, newWidth, st::lineWidth);
 		result += st::lineWidth;
 	}
 	return result;

@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/recent_shared_media_gifts.h"
 #include "data/data_birthday.h"
 #include "data/data_changes.h"
+#include "data/data_user_wallet_card.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_document_media.h"
@@ -51,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/info_memento.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_balance_pill.h"
+#include "info/profile/info_profile_music_button.h"
 #include "info/profile/info_profile_birthday_effect.h"
 #include "info/profile/info_profile_cover.h" // LargeCustomEmojiMargins
 #include "info/profile/info_profile_status_label.h"
@@ -114,6 +116,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QGuiApplication>
 
 namespace Info::Profile {
+
+constexpr auto kHeaderInset = 0;
 namespace {
 
 class Userpic final
@@ -389,8 +393,11 @@ TopBar::TopBar(
 	&& (_source == Source::Profile
 		|| (_source == Source::Stories && _peer->isSelf())))
 // Without the action buttons the pill fits the gap below the status.
-, _balanceReserve((_hasBalance && _hasActions)
-	? st::infoProfileTopBarBalanceReserve
+// Mokagram: место под баланс нужно только тем, у кого есть кошелёк.
+, _balanceReserve((_hasBalance
+	&& _peer->asUser()->walletCard()
+	&& _peer->asUser()->walletCard()->balance > 0)
+	? (_hasActions ? st::infoProfileTopBarBalanceReserve : 18)
 	: 0)
 , _minForProgress([&] {
 	QWidget::setMinimumHeight(st::infoLayerTopBarHeight);
@@ -495,7 +502,11 @@ TopBar::TopBar(
 	}
 
 	bindStatus();
-	if (_hasBalance) {
+	MusicShownChanges() | rpl::on_next([=] {
+		update();
+	}, lifetime());
+	// Без зарезервированного места плашку не создаём: иначе она лезет под кнопки.
+	if (_hasBalance && (!_hasActions || _balanceReserve > 0)) {
 		const auto user = _peer->asUser();
 		_balancePill = std::make_unique<BalancePill>(
 			this,
@@ -1864,7 +1875,9 @@ bool TopBar::clipTouchesRoundedCorners(const QRect &clip) const {
 	if (!_roundEdges) {
 		return false;
 	}
-	const auto radius = st::boxRadius;
+	// Mokagram: радиус шапки 32, иначе при частичной перерисовке (наведение,
+	// ripple) участок углов рисуется квадратным и торчит «уголком».
+	constexpr auto radius = 32;
 	return (clip.top() < radius)
 		&& ((clip.left() < radius) || (clip.right() >= width() - radius));
 }
@@ -1873,19 +1886,17 @@ void TopBar::paintEdges(
 		QPainter &p,
 		const QRect &clip,
 		const QBrush &brush) const {
-	const auto r = rect();
-	if (clipTouchesRoundedCorners(clip)) {
-		auto hq = PainterHighQualityEnabler(p);
-		const auto radius = st::boxRadius;
-		p.setPen(Qt::NoPen);
-		p.setBrush(brush);
-		p.drawRoundedRect(
-			r + QMargins{ 0, 0, 0, radius + 1 },
-			radius,
-			radius);
-	} else {
-		p.fillRect(r.intersected(clip), brush);
-	}
+	// Mokagram: шапка с отступами по краям и сверху, углы радиусом 32.
+	Q_UNUSED(clip);
+	constexpr auto kRadius = 32;
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(brush);
+	p.drawRoundedRect(
+		rect().marginsRemoved(QMargins(kHeaderInset, kHeaderInset, kHeaderInset, 0))
+			+ QMargins{ 0, 0, 0, kRadius + 1 },
+		kRadius,
+		kRadius);
 }
 
 void TopBar::paintEdges(QPainter &p, const QRect &clip) const {
@@ -2700,25 +2711,26 @@ void TopBar::updateRightButtonsPosition() {
 	if (width() <= 0) {
 		return;
 	}
-	auto right = 0;
+	// Mokagram: кнопки отступают от скруглённого угла, иначе круг обрезается.
+	auto right = 4;
 	if (_close) {
-		_close->moveToRight(right, 0);
+		_close->moveToRight(right, 1);
 		right += _close->width();
 	}
 	if (_topBarButton) {
-		_topBarButton->moveToRight(right, 0);
+		_topBarButton->moveToRight(right, 1);
 		right += _topBarButton->width();
 	}
 	if (_tabMenuToggle && _tabMenuToggle->toggled()) {
-		_tabMenuToggle->moveToRight(right, 0);
+		_tabMenuToggle->moveToRight(right, 1);
 		right += _tabMenuToggle->width();
 	}
 	if (_tabSearchToggle && _tabSearchToggle->toggled()) {
-		_tabSearchToggle->moveToRight(right, 0);
+		_tabSearchToggle->moveToRight(right, 1);
 		right += _tabSearchToggle->width();
 	}
 	if (_tabGroupToggle && _tabGroupToggle->toggled()) {
-		_tabGroupToggle->moveToRight(right, 0);
+		_tabGroupToggle->moveToRight(right, 1);
 		right += _tabGroupToggle->width();
 	}
 }
@@ -2889,6 +2901,13 @@ void TopBar::paintUserpic(QPainter &p, const QRect &geometry) {
 
 void TopBar::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
+	if (!MusicShown()) {
+		// Mokagram: без музыки шапка (и свёрнутая тоже) скруглена целиком.
+		auto path = QPainterPath();
+		path.addRoundedRect(QRectF(rect()), 32., 32.);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setClipPath(path);
+	}
 	const auto geometry = userpicGeometry();
 	const auto clipBounds = e->region().boundingRect();
 
@@ -2925,16 +2944,16 @@ void TopBar::paintEvent(QPaintEvent *e) {
 			- _cachedGradient.height() / style::DevicePixelRatio())
 				/ 2;
 		if (clipTouchesRoundedCorners(clipBounds)) {
-			if (_cachedClipPath.isEmpty()) {
-				const auto radius = st::boxRadius;
-				_cachedClipPath.addRoundedRect(
-					rect() + QMargins{ 0, 0, 0, radius + 1 },
-					radius,
-					radius);
-			}
+			// Mokagram: радиус 32, внизу прямо только под музыкой.
+			constexpr auto radius = 32;
+			auto clipPath = QPainterPath();
+			clipPath.addRoundedRect(
+				rect() + QMargins{ 0, 0, 0, MusicShown() ? radius + 1 : 0 },
+				radius,
+				radius);
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
-			p.setClipPath(_cachedClipPath);
+			p.setClipPath(clipPath);
 			p.drawImage(x, y, _cachedGradient);
 		} else {
 			p.drawImage(x, y, _cachedGradient);
@@ -2956,13 +2975,16 @@ void TopBar::paintEvent(QPaintEvent *e) {
 
 	paintTabSubtitle(p);
 
-	// Mokagram: нижние углы шапки скруглены как у остальных таблеток.
-	{
-		constexpr auto kRadius = 22;
+	// Mokagram: нижние углы шапки скруглены как у остальных таблеток,
+	// а под музыкой остаются прямыми: плашка продолжает шапку.
+	if (MusicShown()) {
+		constexpr auto kRadius = 32;
 		p.setClipping(false);
 		auto hq = PainterHighQualityEnabler(p);
 		for (const auto right : { false, true }) {
-			const auto left = right ? width() - kRadius : 0;
+			const auto left = right
+				? width() - kHeaderInset - kRadius
+				: kHeaderInset;
 			const auto top = height() - kRadius;
 			auto path = QPainterPath();
 			path.addRect(QRectF(left, top, kRadius, kRadius));
@@ -2972,7 +2994,9 @@ void TopBar::paintEvent(QPaintEvent *e) {
 				top - kRadius,
 				2 * kRadius,
 				2 * kRadius));
-			p.fillPath(path.subtracted(circle), st::dialogsBg);
+			p.fillPath(
+				path.subtracted(circle),
+				MusicBandColor().value_or(st::dialogsBg->c));
 		}
 	}
 }
@@ -3030,7 +3054,7 @@ void TopBar::setupButtons(
 					controller->hideSpecialLayer();
 				}));
 			widthValue() | rpl::on_next([=] {
-				_close->moveToRight(0, 0);
+				_close->moveToRight(4, 1);
 			}, _close->lifetime());
 		}
 
@@ -3121,9 +3145,9 @@ void TopBar::addTopBarEditButton(
 
 	widthValue() | rpl::on_next([=] {
 		if (_close) {
-			_topBarButton->moveToRight(_close->width(), 0);
+			_topBarButton->moveToRight(4 + _close->width(), 1);
 		} else {
-			_topBarButton->moveToRight(0, 0);
+			_topBarButton->moveToRight(4, 1);
 		}
 	}, _topBarButton->lifetime());
 }

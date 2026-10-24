@@ -185,19 +185,19 @@ void RegisterSettings() {
 	add("streamer.phone",
 		"Номер телефона",
 		"Ваш номер в настройках, профиле и меню.",
-		"+7 912 345 67 89 → +• ••• ••• •• ••",
+		"+888676767 → +•••••••••",
 		"phone",
 		true);
 	add("streamer.username",
 		"Юзернейм",
 		"Ваш @юзернейм там, где он показан.",
-		"@ivan → @•••••",
+		"@ecronx → @••••••",
 		"username",
 		true);
 	add("streamer.link",
 		"Ссылки на ваш профиль",
 		"Адреса вида t.me/ваш_ник.",
-		"t.me/ivan → t.me/••••••",
+		"t.me/ecronx → t.me/••••••",
 		"link",
 		true);
 	add("streamer.id",

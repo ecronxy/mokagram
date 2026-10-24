@@ -1302,6 +1302,31 @@ QImage UniqueGiftCoverWidget::prepareBackdrop(
 		backdrop.gradient = CreateTopBgGradient(
 			gradientSize,
 			backdrop.colors);
+		// Mokagram: низ фона плавно переходит в цвет окна.
+		auto p = QPainter(&backdrop.gradient);
+		p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+		const auto fade = std::min(gradientSize.height() / 4, 40);
+		auto mask = QLinearGradient(
+			0,
+			gradientSize.height() - fade,
+			0,
+			gradientSize.height());
+		// Плавная кривая (smoothstep) вместо линейного спада.
+		for (auto i = 0; i <= 8; ++i) {
+			const auto t = i / 8.;
+			const auto eased = t * t * (3. - 2. * t);
+			mask.setColorAt(t, QColor(0, 0, 0, int(255 * (1. - eased))));
+		}
+		p.fillRect(
+			QRect(0, 0, gradientSize.width(), gradientSize.height()),
+			QColor(0, 0, 0, 255));
+		p.fillRect(
+			QRect(
+				0,
+				gradientSize.height() - fade,
+				gradientSize.width(),
+				fade),
+			mask);
 	}
 	return backdrop.gradient;
 }

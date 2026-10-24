@@ -2,8 +2,20 @@
 #include "mokagram/misc/mokagram_misc.h"
 
 #include "api/api_stickers_creator.h"
+#include "base/unixtime.h"
+#include "history/history_item.h"
+#include "history/history_item_text.h"
+#include "ui/text/text_utilities.h"
 #include "chat_helpers/compose/compose_show.h"
 #include "data/data_peer.h"
+#include "data/data_user.h"
+#include "ui/unread_badge.h"
+#include "core/application.h"
+#include "base/flat_set.h"
+#include <QtCore/QFile>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
 #include "data/data_session.h"
@@ -22,6 +34,7 @@
 #include "styles/style_menu_icons.h"
 
 #include <QtGui/QGuiApplication>
+#include <vector>
 #include <QtGui/QClipboard>
 
 
@@ -51,6 +64,38 @@ void RegisterSettings() {
 			"Переключаться между аккаунтами можно в меню слева "
 			"вверху. Здесь настраивается только их предельное число."),
 	});
+	const auto look = QString::fromUtf8("Размеры в чате");
+	const auto size = [&](const char *key, const char *title, int def, int lo, int hi) {
+		Settings::Register({
+			.key = QString::fromUtf8(key),
+			.section = look,
+			.title = QString::fromUtf8(title),
+			.description = QString::fromUtf8("В пикселях. Применяется после перезапуска."),
+			.kind = Settings::Kind::Int,
+			.defaultValue = def,
+			.minValue = lo,
+			.maxValue = hi,
+			.requiresRestart = true,
+			.category = u"look"_q,
+			.sectionIcon = u"hide"_q,
+		});
+	};
+	size("look.sticker_size", "Размер стикеров", 224, 80, 512);
+	size("look.gif_size", "Размер GIF", 320, 120, 640);
+	size("look.round_size", "Размер кружков", 240, 120, 480);
+}
+
+void CopyWithAuthor(not_null<HistoryItem*> item) {
+	const auto when = base::unixtime::parse(item->date());
+	const auto from = item->from();
+	auto line = TextForMimeData();
+	line.append(QString::fromUtf8("[")
+		+ QLocale().toString(when, u"dd.MM.yyyy HH:mm"_q)
+		+ QString::fromUtf8("] ")
+		+ (from ? from->name() : QString())
+		+ QString::fromUtf8(": "));
+	line.append(HistoryItemText(item));
+	TextUtilities::SetClipboardText(line);
 }
 
 uint64 OwnerIdFromStickerSetId(uint64 setId) {
@@ -101,14 +146,112 @@ void ShowStickerSetOwner(
 }
 
 QByteArray BrandRewrite(const QByteArray &value) {
-	// Идемпотентно: «mokaGram» не содержит искомой подстроки.
-	static const auto from = QByteArrayLiteral("Telegram Desktop");
+	// Идемпотентно: «mokaGram» не содержит «Telegram». Названия
+	// «Telegram Stars» и «Telegram Business» остаются как есть.
+	static const auto from = QByteArrayLiteral("Telegram");
 	static const auto to = QByteArrayLiteral("mokaGram");
+	static const auto keep = std::vector<QByteArray>{
+		QByteArrayLiteral(" stars"),
+		QByteArrayLiteral(" business"),
+		QByteArrayLiteral(" premium"),
+		QString::fromUtf8(" бизнес").toUtf8(),
+		QString::fromUtf8(" для бизнес").toUtf8(),
+		QString::fromUtf8(" звёзд").toUtf8(),
+		QString::fromUtf8(" звезд").toUtf8(),
+	};
 	if (!value.contains(from)) {
 		return value;
 	}
-	auto result = value;
-	return result.replace(from, to);
+	auto result = QByteArray();
+	result.reserve(value.size());
+	auto i = 0;
+	while (true) {
+		const auto at = value.indexOf(from, i);
+		if (at < 0) {
+			result.append(value.mid(i));
+			break;
+		}
+		result.append(value.mid(i, at - i));
+		const auto after = at + from.size();
+		auto protectedName = false;
+		for (const auto &tail : keep) {
+			const auto rest = value.mid(after, tail.size() + 4);
+			if (QString::fromUtf8(rest).toLower().toUtf8().startsWith(tail)) {
+				protectedName = true;
+				break;
+			}
+		}
+		result.append(protectedName ? from : to);
+		i = after;
+	}
+	return result;
 }
 
 } // namespace Mokagram::Misc
+
+namespace Mokagram::Badges {
+namespace {
+
+struct State {
+	base::flat_set<quint64> users;
+	DocumentId icon = 5397879498492389616ULL;
+	bool loaded = false;
+};
+
+[[nodiscard]] State &Data() {
+	static auto result = State();
+	return result;
+}
+
+void Load() {
+	auto &state = Data();
+	if (state.loaded) {
+		return;
+	}
+	state.loaded = true;
+	// По умолчанию галочка у владельца клиента; список можно подменить файлом
+	// tdata/moka_badges.json: {"emoji_id": "...", "users": [id, ...]}.
+	state.users.emplace(6612638154ULL);
+	auto file = QFile(cWorkingDir() + u"tdata/moka_badges.json"_q);
+	if (!file.open(QIODevice::ReadOnly)) {
+		return;
+	}
+	const auto document = QJsonDocument::fromJson(file.readAll());
+	if (!document.isObject()) {
+		return;
+	}
+	const auto object = document.object();
+	const auto icon = object.value(u"emoji_id"_q).toVariant().toString().toULongLong();
+	if (icon) {
+		state.icon = icon;
+	}
+	for (const auto &value : object.value(u"users"_q).toArray()) {
+		if (const auto id = value.toVariant().toULongLong()) {
+			state.users.emplace(id);
+		}
+	}
+}
+
+} // namespace
+
+Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
+	Load();
+	const auto &state = Data();
+	if (!state.users.contains(peerToUser(user->id).bare)) {
+		return {};
+	}
+	return Ui::BotVerifyDetails{
+		.botId = UserId(0),
+		.iconId = state.icon,
+		.description = TextWithEntities{ QString::fromUtf8("Разработчик mokaGram") },
+	};
+}
+
+void Apply(not_null<UserData*> user) {
+	auto details = Synthetic(user);
+	if (details && !user->botVerifyDetails()) {
+		user->setBotVerifyDetails(std::move(details));
+	}
+}
+
+} // namespace Mokagram::Badges

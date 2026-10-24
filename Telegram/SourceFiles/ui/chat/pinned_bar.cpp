@@ -10,9 +10,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/message_bar.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/widgets/shadow.h"
+#include "ui/painter.h"
 #include "ui/widgets/buttons.h"
 #include "ui/wrap/fade_wrap.h"
 #include "styles/style_chat_helpers.h"
+#include "styles/style_window.h"
 #include "styles/palette.h"
 
 #include <QtGui/QtEvents>
@@ -29,19 +31,40 @@ PinnedBar::PinnedBar(
 	_wrap.hide(anim::type::instant);
 	_shadow->hide();
 
-	_shadow->showOn(rpl::combine(
-		_wrap.shownValue(),
-		_wrap.heightValue(),
-		rpl::mappers::_1 && rpl::mappers::_2 > 0
-	) | rpl::filter([=](bool shown) {
-		return (shown == _shadow->isHidden());
-	}));
+
 
 	_wrap.entity()->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
-		QPainter(_wrap.entity()).fillRect(clip, st::historyPinnedBg);
+		// Mokagram: закреп как полоса музыки в профиле: плашка со скруглёнными нижними углами.
+		auto p = QPainter(_wrap.entity());
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::topBarBg->c.darker(135));
+		const auto bar = _wrap.entity();
+		bar->setProperty("moka-strip", true);
+		// Если ниже стоит ещё одна плашка (перевод), в углах виден её цвет.
+		auto below = false;
+		if (const auto parent = bar->parentWidget()) {
+			for (const auto child : parent->children()) {
+				const auto w = qobject_cast<QWidget*>(child);
+				if (w && w != bar && w->property("moka-strip").toBool()
+					&& w->isVisible()
+					&& w->y() >= bar->y() + bar->height() - 2) {
+					below = true;
+				}
+			}
+		}
+		if (below) {
+			// Под скруглёнными углами виден цвет плашки перевода.
+			p.fillRect(
+				QRect(0, bar->height() - 22, bar->width(), 22),
+				st::topBarBg->c.darker(175));
+		}
+		p.drawRoundedRect(
+			QRectF(bar->rect()).adjusted(0, -22, 0, 0),
+			22,
+			22);
 	}, lifetime());
-	_wrap.setAttribute(Qt::WA_OpaquePaintEvent);
 
 	if (customEmojiPausedChanges) {
 		std::move(

@@ -6631,7 +6631,8 @@ Ui::BubbleRounding Message::countMessageRounding() const {
 			&& !edges.infoBelow
 			&& (rich->article.edgeBlocks().bottom == Block::VisualMedia);
 	};
-	const auto skipTail = smallBottom
+	// Mokagram: хвостиков у сообщений нет.
+	const auto skipTail = true || smallBottom
 		|| (media && media->skipBubbleTail())
 		|| (rich && richMediaAtBottom())
 		|| (keyboard != nullptr)

@@ -1,5 +1,12 @@
 // Mokagram: экраны истории (удалённые, правки, список чатов) и редактор фильтров.
 #include "mokagram/history/mokagram_history.h"
+#include <map>
+#include <set>
+#include "ui/boxes/confirm_box.h"
+#include "ui/painter.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
+#include "base/unixtime.h"
+#include "lang/lang_keys.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 
@@ -25,6 +32,9 @@
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/wrap/slide_wrap.h"
+#include "ui/widgets/popup_menu.h"
+#include "styles/style_dialogs.h"
 #include "window/window_session_controller.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
@@ -65,34 +75,356 @@ struct PageState {
 	bool finished = false;
 };
 
+struct HistoryFilter {
+	int period = 0; // 0 все, 1 сутки, 2 неделя, 3 месяц.
+	int type = 0;   // 0 все, 1 фото, 2 видео, 3 голосовые, 4 кружки, 5 файлы.
+};
+
+using Key = std::pair<uint64, int64>;
+
+struct Selection {
+	std::set<Key> picked;
+	std::map<Key, Fn<void(bool)>> setters;
+	std::map<Key, Fn<void()>> removers;
+
+	void remove(const Key &key) {
+		const auto i = removers.find(key);
+		if (i != removers.end() && i->second) {
+			i->second();
+		}
+	}
+	rpl::event_stream<> changed;
+
+	void set(const Key &key, bool on) {
+		if (on) {
+			picked.insert(key);
+		} else {
+			picked.erase(key);
+		}
+		changed.fire({});
+	}
+};
+
+// Карточка в стиле окна «Плагины»: скруглённая подложка, поля, анимация скрытия.
+struct CardParts {
+	not_null<Ui::VerticalLayout*> card;
+	Fn<void()> collapse;
+};
+
+[[nodiscard]] CardParts AddCard(not_null<Ui::VerticalLayout*> parent) {
+	const auto slot = parent->add(
+		object_ptr<Ui::VerticalLayout>(parent),
+		QMargins(14, 4, 14, 4),
+		style::al_justify);
+	const auto card = slot->add(
+		object_ptr<Ui::VerticalLayout>(slot),
+		QMargins(),
+		style::al_justify);
+	card->paintOn([=](QPainter &p) {
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(card->rect(), 22, 22);
+	});
+	slot->show();
+	card->show();
+	// Ряды добавляются позже общей раскладки: задаём ширину сами.
+	const auto available = parent->width() - 28;
+	if (available > 0) {
+		slot->resizeToWidth(available);
+	}
+	return {
+		.card = card,
+		.collapse = [=] { slot->clear(); },
+	};
+}
+
+// Круглый переключатель выбора в правом верхнем углу карточки.
+[[nodiscard]] not_null<Ui::AbstractButton*> AddCheck(
+		not_null<Ui::RpWidget*> card,
+		bool initial,
+		Fn<void(bool)> changed,
+		Fn<void(Fn<void(bool)>)> exposeSetter) {
+	const auto button = Ui::CreateChild<Ui::AbstractButton>(card.get());
+	button->resize(30, 30);
+	button->setPointerCursor(true);
+	const auto on = std::make_shared<bool>(initial);
+	button->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(button);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto rect = QRectF(button->rect()).adjusted(3, 3, -3, -3);
+		if (*on) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowActiveTextFg);
+			p.drawEllipse(rect);
+			auto pen = QPen(QColor(255, 255, 255), 2.2);
+			pen.setCapStyle(Qt::RoundCap);
+			pen.setJoinStyle(Qt::RoundJoin);
+			p.setPen(pen);
+			p.setBrush(Qt::NoBrush);
+			p.drawLine(QPointF(9.5, 15.5), QPointF(13.5, 19.5));
+			p.drawLine(QPointF(13.5, 19.5), QPointF(21, 11));
+		} else {
+			p.setPen(QPen(QColor(255, 255, 255, 90), 1.6));
+			p.setBrush(Qt::NoBrush);
+			p.drawEllipse(rect);
+		}
+	}, button->lifetime());
+	const auto apply = [=](bool value) {
+		*on = value;
+		button->update();
+	};
+	button->setClickedCallback([=] {
+		const auto value = !*on;
+		apply(value);
+		changed(value);
+	});
+	exposeSetter(apply);
+	card->widthValue(
+	) | rpl::on_next([=](int width) {
+		button->move(width - 14 - button->width(), 12);
+	}, button->lifetime());
+	return button;
+}
+
+// Ряд кнопок равной ширины.
+[[nodiscard]] not_null<Ui::RpWidget*> AddButtonsRow(
+		not_null<Ui::VerticalLayout*> parent,
+		std::vector<not_null<Ui::RoundButton*>> buttons) {
+	const auto row = parent->add(
+		object_ptr<Ui::RpWidget>(parent),
+		QMargins(14, 4, 14, 4));
+	for (const auto button : buttons) {
+		button->setParent(row);
+		button->show();
+	}
+	row->resize(row->width(), buttons.front()->height());
+	row->widthValue(
+	) | rpl::on_next([=](int width) {
+		const auto count = int(buttons.size());
+		const auto skip = 8;
+		const auto each = std::max((width - skip * (count - 1)) / count, 40);
+		auto left = 0;
+		for (const auto button : buttons) {
+			button->setFullWidth(each);
+			button->moveToLeft(left, 0);
+			left += each + skip;
+		}
+	}, row->lifetime());
+	return row;
+}
+
+// Шапка окна: закрыть слева, заголовок по центру.
+void AddHeader(
+		not_null<Ui::GenericBox*> box,
+		not_null<Ui::VerticalLayout*> content,
+		const QString &title) {
+	const auto header = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		QMargins(10, 10, 10, 6));
+	header->resize(header->width(), 40);
+	const auto close = Plugins::MakeHeaderButton(
+		header,
+		true,
+		[=] { box->closeBox(); });
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		header,
+		title,
+		st::boxTitle);
+	header->widthValue(
+	) | rpl::on_next([=](int width) {
+		close->move(0, (header->height() - close->height()) / 2);
+		label->resizeToNaturalWidth(width - 2 * (close->width() + 8));
+		label->move(
+			(width - label->width()) / 2,
+			(header->height() - label->height()) / 2);
+	}, header->lifetime());
+}
+
+void ConfirmAndRun(
+		not_null<Window::SessionController*> controller,
+		const QString &text,
+		const QString &button,
+		Fn<void()> run) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> confirm) {
+		Ui::ConfirmBox(confirm, {
+			.text = text,
+			.confirmed = [=](Fn<void()> close) {
+				run();
+				close();
+			},
+			.confirmText = button,
+		});
+	}));
+}
+
 void HistoryBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
 		uint64 peerId,
 		Kind kind,
-		int64 messageId) {
+		int64 messageId,
+		HistoryFilter filter = {}) {
 	const auto session = &controller->session();
 	const auto store = &StoreFor(session);
 	const auto deleted = (kind == Kind::Deleted);
-	box->setTitle(rpl::single(messageId
-		? U("Прежние версии сообщения")
-		: deleted
-		? U("Удалённые сообщения")
-		: U("История правок")));
-	box->setWidth(st::boxWideWidth);
+	Plugins::RoundedWindow(box);
 	const auto content = box->verticalLayout();
-	Ui::AddSkip(content);
+	AddHeader(
+		box,
+		content,
+		messageId
+			? U("Прежние версии")
+			: deleted
+			? (peerId ? U("Удалённые") : U("Удалённые везде"))
+			: U("История правок"));
+	const auto selection = std::make_shared<Selection>();
+
+	if (!messageId && deleted) {
+		const auto periods = std::vector<QString>{
+			U("За всё время"), U("За сутки"), U("За неделю"), U("За месяц") };
+		const auto types = std::vector<QString>{
+			U("Все типы"), U("Фото"), U("Видео"), U("Голосовые"),
+			U("Кружки"), U("Файлы") };
+		const auto periodButton = Ui::CreateChild<Ui::RoundButton>(
+			content.get(),
+			rpl::single(periods[filter.period] + U(" ▾")),
+			st::dialogsPickCancel);
+		const auto typeButton = Ui::CreateChild<Ui::RoundButton>(
+			content.get(),
+			rpl::single(types[filter.type] + U(" ▾")),
+			st::dialogsPickCancel);
+		AddButtonsRow(content, { periodButton, typeButton });
+		const auto reopen = [=](HistoryFilter next) {
+			box->closeBox();
+			controller->show(Box(
+				HistoryBox,
+				controller,
+				peerId,
+				kind,
+				messageId,
+				next));
+		};
+		const auto pick = [=](
+				not_null<Ui::RoundButton*> button,
+				const std::vector<QString> &names,
+				Fn<HistoryFilter(int)> make) {
+			button->setClickedCallback([=] {
+				const auto menu = Ui::CreateChild<Ui::PopupMenu>(
+					button.get(),
+					st::popupMenuWithIcons);
+				for (auto i = 0; i != int(names.size()); ++i) {
+					menu->addAction(names[i], [=] { reopen(make(i)); });
+				}
+				menu->popup(QCursor::pos());
+			});
+		};
+		pick(periodButton, periods, [=](int i) {
+			auto next = filter;
+			next.period = i;
+			return next;
+		});
+		pick(typeButton, types, [=](int i) {
+			auto next = filter;
+			next.type = i;
+			return next;
+		});
+
+		const auto selectAll = Ui::CreateChild<Ui::RoundButton>(
+			content.get(),
+			rpl::single(U("Выбрать всё")),
+			st::dialogsPickButton);
+		const auto removePicked = Ui::CreateChild<Ui::RoundButton>(
+			content.get(),
+			rpl::single(U("Удалить (0)")),
+			st::dialogsPickDanger);
+		const auto clearAll = Ui::CreateChild<Ui::RoundButton>(
+			content.get(),
+			rpl::single(U("Очистить")),
+			st::dialogsPickCancel);
+		AddButtonsRow(content, { selectAll, removePicked, clearAll });
+		selectAll->setClickedCallback([=] {
+			for (const auto &[key, setter] : selection->setters) {
+				setter(true);
+				selection->picked.insert(key);
+			}
+			selection->changed.fire({});
+		});
+		selection->changed.events(
+		) | rpl::on_next([=] {
+			removePicked->setText(rpl::single(
+				U("Удалить (%1)").arg(selection->picked.size())));
+		}, box->lifetime());
+		removePicked->setClickedCallback([=] {
+			if (selection->picked.empty()) {
+				return;
+			}
+			const auto count = selection->picked.size();
+			ConfirmAndRun(
+				controller,
+				U("Удалить выбранные сообщения из истории (%1)?").arg(count),
+				U("Удалить"),
+				[=] {
+					for (const auto &key : selection->picked) {
+						store->removeOne(key.first, key.second);
+						selection->remove(key);
+						selection->setters.erase(key);
+					}
+					selection->picked.clear();
+					selection->changed.fire({});
+				});
+		});
+		clearAll->setClickedCallback([=] {
+			ConfirmAndRun(
+				controller,
+				peerId
+					? U("Очистить все удалённые сообщения этого чата?")
+					: U("Очистить все удалённые сообщения из всех чатов?"),
+				U("Очистить"),
+				[=] {
+					if (peerId) {
+						store->clearPeer(peerId);
+					} else {
+						store->clearAll();
+					}
+					box->closeBox();
+				});
+		});
+	}
+
 	const auto empty = content->add(
 		object_ptr<Ui::FlatLabel>(
 			content,
 			U("Загрузка..."),
 			st::boxLabel),
-		st::boxPadding);
-	const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
+		QMargins(24, 12, 24, 12));
+	const auto list = content->add(
+		object_ptr<Ui::VerticalLayout>(content),
+		QMargins(),
+		style::al_justify);
 	const auto state = std::make_shared<PageState>();
 	const auto mark = Settings::String(u"history.mark"_q);
 	const auto weakList = QPointer<Ui::VerticalLayout>(list);
 	const auto weakEmpty = QPointer<Ui::FlatLabel>(empty);
+	const auto sinceEvent = !filter.period
+		? 0
+		: int32(base::unixtime::now()
+			- ((filter.period == 1)
+				? 86400
+				: (filter.period == 2)
+				? 7 * 86400
+				: 30 * 86400));
+	const auto mediaLike = [&] {
+		switch (filter.type) {
+		case 1: return tr::lng_in_dlg_photo(tr::now) + u"%"_q;
+		case 2: return tr::lng_in_dlg_video(tr::now) + u"%"_q;
+		case 3: return tr::lng_in_dlg_audio(tr::now) + u"%"_q;
+		case 4: return tr::lng_in_dlg_video_message(tr::now) + u"%"_q;
+		case 5: return tr::lng_in_dlg_file(tr::now) + u"%"_q;
+		}
+		return QString();
+	}();
 
 	const auto loadMore = [=] {
 		if (state->loading || state->finished) {
@@ -105,6 +437,8 @@ void HistoryBox(
 			.id = messageId,
 			.beforeEvent = state->cursorEvent,
 			.beforeId = state->cursorId,
+			.since = sinceEvent,
+			.mediaLike = mediaLike,
 			.limit = kPageSize,
 		}, [=](std::vector<Snapshot> rows) {
 			state->loading = false;
@@ -117,16 +451,12 @@ void HistoryBox(
 			for (const auto &row : rows) {
 				auto head = FormatTime(row.event)
 					+ U(" · ") + PeerTitle(session, row.from);
+				if (!peerId) {
+					head += U(" · ") + PeerTitle(session, row.peer);
+				}
 				if (deleted) {
 					head = mark + U(" ") + head;
 				}
-				Ui::AddDivider(weakList);
-				weakList->add(
-					object_ptr<Ui::FlatLabel>(
-						weakList,
-						head,
-						st::defaultSubsectionTitle),
-					st::boxPadding);
 				auto body = row.text;
 				if (!row.media.isEmpty() && row.media != row.text) {
 					body = body.isEmpty()
@@ -136,12 +466,29 @@ void HistoryBox(
 				if (body.isEmpty()) {
 					body = U("(пусто)");
 				}
-				weakList->add(
+				const auto parts = AddCard(weakList);
+				const auto card = parts.card;
+				const auto key = Key(row.peer, row.id);
+				card->add(
 					object_ptr<Ui::FlatLabel>(
-						weakList,
+						card,
+						head,
+						st::defaultSubsectionTitle),
+					QMargins(18, 14, 56, 0));
+				card->add(
+					object_ptr<Ui::FlatLabel>(
+						card,
 						body,
 						st::boxLabel),
-					st::boxPadding);
+					QMargins(18, 6, 56, 14));
+				if (deleted) {
+					selection->removers[key] = parts.collapse;
+					AddCheck(card, false, [=](bool on) {
+						selection->set(key, on);
+					}, [=](Fn<void(bool)> setter) {
+						selection->setters[key] = std::move(setter);
+					});
+				}
 			}
 			if (!rows.empty()) {
 				state->cursorEvent = rows.back().event;
@@ -157,20 +504,28 @@ void HistoryBox(
 	};
 	loadMore();
 
-	box->addButton(rpl::single(U("Ещё")), loadMore);
-	box->addButton(rpl::single(U("Закрыть")), [=] { box->closeBox(); });
+	const auto more = Ui::CreateChild<Ui::RoundButton>(
+		content.get(),
+		rpl::single(U("Показать ещё")),
+		st::dialogsPickCancel);
+	more->setClickedCallback(loadMore);
 	if (messageId) {
+		AddButtonsRow(content, { more });
 		return;
 	}
-	box->addLeftButton(
+	const auto switchKind = Ui::CreateChild<Ui::RoundButton>(
+		content.get(),
 		rpl::single(deleted ? U("Правки") : U("Удалённые")),
-		[=] {
-			box->closeBox();
-			ShowHistoryBox(
-				controller,
-				peerId,
-				deleted ? Kind::Edited : Kind::Deleted);
-		});
+		st::dialogsPickCancel);
+	switchKind->setClickedCallback([=] {
+		box->closeBox();
+		ShowHistoryBox(
+			controller,
+			peerId,
+			deleted ? Kind::Edited : Kind::Deleted);
+	});
+	AddButtonsRow(content, { more, switchKind });
+	Ui::AddSkip(content, 10);
 }
 
 void ChatsBox(
@@ -178,48 +533,104 @@ void ChatsBox(
 		not_null<Window::SessionController*> controller) {
 	const auto session = &controller->session();
 	const auto store = &StoreFor(session);
-	box->setTitle(rpl::single(U("История по чатам")));
+	Plugins::RoundedWindow(box);
 	const auto content = box->verticalLayout();
-	Ui::AddSkip(content);
-	const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
+	AddHeader(box, content, U("История по чатам"));
+	const auto selection = std::make_shared<Selection>();
+	const auto allDeleted = Ui::CreateChild<Ui::RoundButton>(
+		content.get(),
+		rpl::single(U("Все удалённые")),
+		st::dialogsPickButton);
+	const auto removePicked = Ui::CreateChild<Ui::RoundButton>(
+		content.get(),
+		rpl::single(U("Очистить (0)")),
+		st::dialogsPickDanger);
+	AddButtonsRow(content, { allDeleted, removePicked });
+	allDeleted->setClickedCallback([=] {
+		ShowHistoryBox(controller, 0, Kind::Deleted);
+	});
+	selection->changed.events(
+	) | rpl::on_next([=] {
+		removePicked->setText(rpl::single(
+			U("Очистить (%1)").arg(selection->picked.size())));
+	}, box->lifetime());
+	const auto list = content->add(
+		object_ptr<Ui::VerticalLayout>(content),
+		QMargins(),
+		style::al_justify);
 	const auto weakList = QPointer<Ui::VerticalLayout>(list);
-	const auto rebuild = [=] {
-		if (!weakList) {
+	removePicked->setClickedCallback([=] {
+		if (selection->picked.empty()) {
 			return;
 		}
-		weakList->clear();
-		auto rows = std::vector<std::pair<uint64, Counts>>();
-		for (const auto &[peer, counts] : store->allCounts()) {
-			rows.emplace_back(peer, counts);
-		}
-		std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) {
-			return (a.second.deleted + a.second.edited)
-				> (b.second.deleted + b.second.edited);
-		});
-		if (rows.empty()) {
-			weakList->add(
-				object_ptr<Ui::FlatLabel>(
-					weakList,
-					U("История пока пуста."),
-					st::boxLabel),
-				st::boxPadding);
-		}
-		for (const auto &[peer, counts] : rows) {
-			const auto text = U("%1: удалено %2, правок %3").arg(
-				PeerTitle(session, peer)).arg(counts.deleted).arg(counts.edited);
-			const auto row = weakList->add(
-				object_ptr<Ui::LinkButton>(weakList, text),
-				st::boxPadding);
-			const auto id = peer;
-			const auto kind = counts.deleted ? Kind::Deleted : Kind::Edited;
-			row->setClickedCallback([=] {
-				ShowHistoryBox(controller, id, kind);
+		const auto count = selection->picked.size();
+		ConfirmAndRun(
+			controller,
+			U("Очистить историю выбранных чатов (%1)?").arg(count),
+			U("Очистить"),
+			[=] {
+				for (const auto &key : selection->picked) {
+					store->clearPeer(key.first);
+					selection->remove(key);
+				}
+				selection->picked.clear();
+				selection->changed.fire({});
 			});
-		}
-	};
-	rebuild();
-	store->changes() | rpl::on_next(rebuild, box->lifetime());
-	box->addButton(rpl::single(U("Закрыть")), [=] { box->closeBox(); });
+	});
+	auto rows = std::vector<std::pair<uint64, Counts>>();
+	for (const auto &[peer, counts] : store->allCounts()) {
+		rows.emplace_back(peer, counts);
+	}
+	std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) {
+		return (a.second.deleted + a.second.edited)
+			> (b.second.deleted + b.second.edited);
+	});
+	if (rows.empty()) {
+		weakList->add(
+			object_ptr<Ui::FlatLabel>(
+				weakList,
+				U("История пока пуста."),
+				st::boxLabel),
+			QMargins(24, 12, 24, 12));
+	}
+	for (const auto &[peer, counts] : rows) {
+		const auto parts = AddCard(weakList);
+		const auto card = parts.card;
+		const auto key = Key(peer, 0);
+		const auto kind = counts.deleted ? Kind::Deleted : Kind::Edited;
+		const auto id = peer;
+		const auto title = card->add(
+			object_ptr<Ui::FlatLabel>(
+				card,
+				PeerTitle(session, peer),
+				st::defaultSubsectionTitle),
+			QMargins(18, 14, 56, 0));
+		const auto sub = card->add(
+			object_ptr<Ui::FlatLabel>(
+				card,
+				U("удалено %1 · правок %2").arg(counts.deleted).arg(
+					counts.edited),
+				st::boxLabel),
+			QMargins(18, 4, 56, 14));
+		title->setAttribute(Qt::WA_TransparentForMouseEvents);
+		sub->setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto hit = Ui::CreateChild<Ui::AbstractButton>(card);
+		hit->setPointerCursor(true);
+		hit->setClickedCallback([=] {
+			ShowHistoryBox(controller, id, kind);
+		});
+		card->sizeValue(
+		) | rpl::on_next([=](QSize size) {
+			hit->setGeometry(0, 0, size.width(), size.height());
+		}, hit->lifetime());
+		selection->removers[key] = parts.collapse;
+		AddCheck(card, false, [=](bool on) {
+			selection->set(key, on);
+		}, [=](Fn<void(bool)> setter) {
+			selection->setters[key] = std::move(setter);
+		});
+	}
+	Ui::AddSkip(content, 10);
 }
 
 void FiltersBox(
@@ -230,7 +641,10 @@ void FiltersBox(
 	box->setWidth(st::boxWideWidth);
 	const auto content = box->verticalLayout();
 	Ui::AddSkip(content);
-	const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
+	const auto list = content->add(
+		object_ptr<Ui::VerticalLayout>(content),
+		QMargins(),
+		style::al_justify);
 	const auto weakList = QPointer<Ui::VerticalLayout>(list);
 
 	const auto rebuild = [=] {
@@ -354,7 +768,13 @@ void ShowHistoryBox(
 		not_null<Window::SessionController*> controller,
 		uint64 peerId,
 		Kind kind) {
-	controller->show(Box(HistoryBox, controller, peerId, kind, int64(0)));
+	controller->show(Box(
+		HistoryBox,
+		controller,
+		peerId,
+		kind,
+		int64(0),
+		HistoryFilter()));
 }
 
 void ShowRevisionsBox(
@@ -366,7 +786,8 @@ void ShowRevisionsBox(
 		controller,
 		peerId,
 		Kind::Edited,
-		messageId));
+		messageId,
+		HistoryFilter()));
 }
 
 void ShowChatsBox(not_null<Window::SessionController*> controller) {

@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_click_handler.h"
 #include "data/data_file_origin.h"
 #include "chat_helpers/stickers_lottie.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_menu_icons.h"
@@ -198,7 +199,9 @@ bool Sticker::readyToDrawAnimationFrame() {
 }
 
 QSize Sticker::Size() {
-	const auto side = std::min(st::maxStickerSize, kMaxSizeFixed);
+	const auto side = std::min(
+		Mokagram::Settings::Int(u"look.sticker_size"_q),
+		kMaxSizeFixed);
 	if (OptionStickerSize.value() > 0) [[unlikely]] {
 		const auto scaled = std::clamp(
 			style::ConvertScale(OptionStickerSize.value()),

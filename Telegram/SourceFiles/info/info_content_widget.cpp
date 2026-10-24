@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_content_widget.h"
+#include "ui/painter.h"
 
 #include "api/api_who_reacted.h"
 #include "boxes/peer_list_box.h"
@@ -93,6 +94,8 @@ ContentWidget::ContentWidget(
 		_bg = (value == Wrap::Layer)
 			? st::boxBg
 			: st::dialogsBg;
+		// Mokagram: в окне углы скруглены, так что подложка не может быть квадратной.
+		setAttribute(Qt::WA_OpaquePaintEvent, value != Wrap::Layer);
 		update();
 	}, lifetime());
 	if (_controller->section().type() != Section::Type::Profile) {
@@ -160,6 +163,19 @@ bool ContentWidget::isStackBottom() const {
 
 void ContentWidget::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
+	if (_controller->wrap() == Wrap::Layer) {
+		// Скруглённая подложка сверху (32), снизу квадратная: низ скругляет слой.
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(_bg);
+		if (y() > 0) {
+			// Под шапкой окна верх подложки прямой, иначе в углах зазор.
+			p.fillRect(rect(), _bg);
+		} else {
+			p.drawRoundedRect(QRectF(rect()).adjusted(0, 0, 0, 40), 32, 32);
+		}
+		return;
+	}
 	if (_paintPadding.isNull()) {
 		p.fillRect(e->rect(), _bg);
 	} else {

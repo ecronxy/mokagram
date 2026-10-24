@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_layer_widget.h"
+#include "ui/painter.h"
 
 #include "info/info_content_widget.h"
 #include "info/info_top_bar.h"
@@ -24,6 +25,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 
 namespace Info {
+
+namespace {
+
+// Mokagram: углы слоя обрезаются по скруглению (сверху 32, снизу 20),
+// чтобы ничего из содержимого не торчало за углы.
+
+} // namespace
 
 LayerWidget::LayerWidget(
 	not_null<Window::SessionController*> controller,
@@ -121,21 +129,10 @@ void LayerWidget::setupHeightConsumers() {
 			return;
 		}
 		std::swap(_desiredHeight, height);
-		if (!height
-			|| (_heightAnimated && !_heightAnimation.animating())) {
-			_heightAnimated = true;
-			setContentHeight(_desiredHeight);
-		} else {
-			_heightAnimated = true;
-			_heightAnimation.start([=] {
-				setContentHeight(_heightAnimation.value(_desiredHeight));
-			}, _contentWrapHeight, _desiredHeight, st::slideDuration);
-			if (_inResize) {
-				_pendingResize = true;
-			} else {
-				resizeToWidth(width());
-			}
-		}
+		// Mokagram: высота окна меняется сразу, без растяжения при переходах.
+		_heightAnimation.stop();
+		_heightAnimated = false;
+		setContentHeight(_desiredHeight);
 	}, lifetime());
 }
 
@@ -307,7 +304,7 @@ QRect LayerWidget::countGeometry(int newWidth) {
 		st::infoLayerTopMaximal);
 	const auto newBottom = newTop;
 
-	const auto bottomRadius = st::boxRadius;
+	const auto bottomRadius = 20;
 	const auto maxVisibleHeight = windowHeight - newTop;
 	// Top rounding is included in _contentWrapHeight.
 	auto desiredHeight = _contentWrapHeight + bottomRadius;
@@ -361,30 +358,39 @@ void LayerWidget::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 
 	const auto clip = e->rect();
-	const auto radius = st::boxRadius;
+	const auto radius = 32;
 	const auto &corners = Ui::CachedCornerPixmaps(Ui::BoxCorners);
-	if (!_tillBottom) {
-		const auto bottom = QRect{ 0, height() - radius, width(), radius };
-		if (clip.intersects(bottom)) {
-			if (const auto rounding = _contentWrap->bottomSkipRounding()) {
-				rounding->paint(p, rect(), RectPart::FullBottom);
-			} else {
-				Ui::FillRoundRect(p, bottom, st::boxBg, {
-					.p = { QPixmap(), QPixmap(), corners.p[2], corners.p[3] }
-				});
-			}
+	// Mokagram: нижние углы слоя скруглены радиусом 20.
+	{
+		const auto bradius = 20;
+		const auto bottom = QRect{ 0, height() - bradius, width(), bradius };
+		if (clip.intersects(bottom)
+			&& (!_tillBottom || !_contentTillBottom)) {
+			const auto rounding = _contentWrap->bottomSkipRounding();
+			Q_UNUSED(rounding);
+			const auto color = st::boxBg->c;
+			p.save();
+			p.setClipRect(bottom);
+			p.setRenderHint(QPainter::Antialiasing);
+			p.setPen(Qt::NoPen);
+			p.setBrush(color);
+			p.drawRoundedRect(
+				QRect(0, height() - 2 * bradius, width(), 2 * bradius),
+				bradius,
+				bradius);
+			p.restore();
 		}
-	} else if (!_contentTillBottom) {
-		const auto rounding = _contentWrap->bottomSkipRounding();
-		const auto &color = rounding ? rounding->color() : st::boxBg;
-		p.fillRect(0, height() - radius, width(), radius, color);
 	}
+	// Mokagram: при смене высоты между содержимым и нижней полосой не должно
+	// оставаться непрозрачной дыры, сквозь которую виден чат.
+	p.fillRect(0, radius, width(), std::max(0, height() - radius - 20), st::boxBg);
 	if (_contentWrap->animatingShow()) {
 		const auto top = QRect{ 0, 0, width(), radius };
 		if (clip.intersects(top)) {
-			Ui::FillRoundRect(p, top, st::boxBg, {
-				.p = { corners.p[0], corners.p[1], QPixmap(), QPixmap() }
-			});
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::boxBg);
+			p.drawRoundedRect(QRect(0, 0, width(), radius * 2), radius, radius);
 		}
 		p.fillRect(0, radius, width(), height() - 2 * radius, st::boxBg);
 	}

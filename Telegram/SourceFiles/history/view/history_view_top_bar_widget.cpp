@@ -131,7 +131,6 @@ TopBarWidget::TopBarWidget(
 , _menuToggle(this, st::topBarMenuToggle)
 , _titlePeerText(st::windowMinWidth / 3)
 , _onlineUpdater([=] { updateOnlineDisplay(); }) {
-	setAttribute(Qt::WA_OpaquePaintEvent);
 
 	_clear->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 	_forward->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
@@ -535,7 +534,31 @@ void TopBarWidget::paintEvent(QPaintEvent *e) {
 		: -st::topBarHeight;
 	const auto slidingTop = std::max(selectedButtonsTop, searchFieldTop);
 
-	p.fillRect(QRect(0, 0, width(), st::topBarHeight), st::topBarBg);
+	// Mokagram: шапка чата со скруглёнными нижними углами, как карточка в профиле.
+	{
+		auto hq = PainterHighQualityEnabler(p);
+		// Под скруглёнными углами шапки виден цвет плашки ниже (как музыка в профиле).
+		auto stripBelow = false;
+		if (const auto parent = parentWidget()) {
+			for (const auto child : parent->children()) {
+				const auto w = qobject_cast<QWidget*>(child);
+				if (w && w != this && w->property("moka-strip").toBool()
+					&& w->isVisible()
+					&& w->y() >= y() + height() - 2) {
+					stripBelow = true;
+				}
+			}
+		}
+		p.fillRect(
+			QRect(0, st::topBarHeight - 22, width(), 22),
+			st::topBarBg->c.darker(stripBelow ? 135 : 112));
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::topBarBg);
+		p.drawRoundedRect(
+			QRectF(0, -22, width(), st::topBarHeight + 22),
+			22,
+			22);
+	}
 	if (slidingTop < 0) {
 		p.translate(0, slidingTop + st::topBarHeight);
 		paintTopBar(p);
@@ -1316,7 +1339,7 @@ void TopBarWidget::finishAnimating() {
 void TopBarWidget::setAnimatingMode(bool enabled) {
 	if (_animatingMode != enabled) {
 		_animatingMode = enabled;
-		setAttribute(Qt::WA_OpaquePaintEvent, !_animatingMode);
+		setAttribute(Qt::WA_OpaquePaintEvent, false);
 		finishAnimating();
 	} else if (!enabled) {
 		finishAnimating();

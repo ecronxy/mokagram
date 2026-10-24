@@ -191,11 +191,11 @@ giftBoxResaleFilter: PopupMenu(popupMenuWithIcons) {
 giftBoxResaleColorSize: 18px;
 giftBoxResaleColorTop: 1px;
 giftBoxPadding: margins(11px, 4px, 11px, 24px);
-giftBoxGiftSkip: point(10px, 8px);
+giftBoxGiftSkip: point(10px, 10px);
 giftBoxGiftHeight: 164px;
 giftBoxGiftSmall: 108px;
 giftBoxGiftTiny: 72px;
-giftBoxGiftRadius: 12px;
+giftBoxGiftRadius: 22px;
 giftBoxGiftBadgeFont: font(10px semibold);
 giftBoxByStarsStyle: TextStyle(defaultTextStyle) {
 	font: font(10px);

@@ -248,6 +248,7 @@ public:
 	[[nodiscard]] int width() const;
 	[[nodiscard]] int height() const;
 	[[nodiscard]] QSize size() const;
+	[[nodiscard]] const void *source() const { return _icon.get(); }
 
 private:
 	not_null<const style::icon*> _icon;

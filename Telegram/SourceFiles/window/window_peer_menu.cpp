@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
 #include "mokagram/history/mokagram_history.h"
 
@@ -333,6 +334,7 @@ private:
 	void addToggleTopicClosed();
 	void addExportChat();
 	void addMokagramHistory();
+	void addMokagramGhost();
 	void addTranslate();
 	void addReport();
 	void addNewContact();
@@ -1099,6 +1101,29 @@ void Filler::addMokagramHistory() {
 				peerId,
 				Mokagram::History::Kind::Deleted);
 		},
+		&st::menuIconRestore);
+}
+
+void Filler::addMokagramGhost() {
+	if (!_peer
+		|| (_thread && _thread->asTopic())
+		|| !Mokagram::Ghost::HidesRead()) {
+		return;
+	}
+	const auto peer = _peer;
+	_addAction(
+		QString::fromUtf8("Прочитать для собеседника"),
+		[=] {
+			if (const auto history = peer->owner().historyLoaded(peer)) {
+				Mokagram::Ghost::ReadNow(history);
+			}
+		},
+		&st::menuIconShowInChat);
+	_addAction(
+		Mokagram::Ghost::IsReadException(peer)
+			? QString::fromUtf8("Призрак: снова скрывать прочтение")
+			: QString::fromUtf8("Призрак: не скрывать прочтение здесь"),
+		[=] { Mokagram::Ghost::ToggleReadException(peer); },
 		&st::menuIconRestore);
 }
 
@@ -1944,6 +1969,7 @@ void Filler::fillContextMenuActions() {
 	addToggleUnreadMark();
 	addToggleTopicClosed();
 	addToggleFolder();
+	addMokagramGhost();
 	if (const auto user = _peer->asUser()) {
 		if (!user->isContact()) {
 			addBlockUser();
@@ -1973,6 +1999,7 @@ void Filler::fillHistoryActions() {
 	addDirectMessages();
 	addExportChat();
 	addMokagramHistory();
+	addMokagramGhost();
 	addTranslate();
 	addReport();
 	addClearHistory();
@@ -2001,6 +2028,7 @@ void Filler::fillProfileActions() {
 	addDirectMessages();
 	addExportChat();
 	addMokagramHistory();
+	addMokagramGhost();
 	addToggleNoForwards();
 	addToggleFolder();
 	addBlockUser();

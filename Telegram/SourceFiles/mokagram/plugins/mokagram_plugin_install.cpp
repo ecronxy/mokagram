@@ -1,5 +1,6 @@
 // Mokagram: окно установки плагина при клике на файл .plugin в чате.
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "base/call_delayed.h"
 
 #include "mokagram/plugins/mokagram_plugins.h"
 
@@ -968,6 +969,32 @@ Card AddPluginCard(
 }
 
 } // namespace
+
+void RoundedKeepButtons(
+		not_null<Ui::GenericBox*> box,
+		const style::Box &base) {
+	box->setStyle(base);
+	// Скругление рисует сама подложка окна, вместе с кнопками внизу.
+	const auto apply = [=] {
+		if (const auto layer = box->parentWidget()) {
+			layer->setProperty("moka-radius", 28);
+			layer->update();
+		}
+	};
+	apply();
+	base::call_delayed(0, box, apply);
+}
+
+void RoundedWindow(not_null<Ui::GenericBox*> box) {
+	RoundedNoButtons(box);
+}
+
+not_null<Ui::AbstractButton*> MakeHeaderButton(
+		not_null<QWidget*> parent,
+		bool close,
+		Fn<void()> callback) {
+	return MakeRoundButton(parent, close, std::move(callback));
+}
 
 void PluginsBox(
 		not_null<Ui::GenericBox*> box,

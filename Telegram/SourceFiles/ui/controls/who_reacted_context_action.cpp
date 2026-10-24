@@ -452,11 +452,7 @@ void Action::populateSubmenu() {
 void Action::paint(Painter &p) {
 	const auto enabled = isEnabled();
 	const auto selected = isSelected();
-	if (selected && _st.itemBgOver->c.alpha() < 255) {
-		p.fillRect(0, 0, width(), _height, _st.itemBg);
-	}
-	const auto &bg = selected ? _st.itemBgOver : _st.itemBg;
-	p.fillRect(0, 0, width(), _height, bg);
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
 	if (enabled) {
 		paintRipple(p, 0, 0);
 	}
@@ -1108,11 +1104,8 @@ void WhoReactedEntryAction::paint(Painter &&p) {
 	const auto badgeShown = closeAffordanceActive();
 	const auto closeHovered = badgeShown && _closeHovered;
 	const auto selected = isSelected() && !closeHovered;
-	if (selected && _st.itemBgOver->c.alpha() < 255) {
-		p.fillRect(0, 0, width(), _height, _st.itemBg);
-	}
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
 	const auto bg = selected ? _st.itemBgOver : _st.itemBg;
-	p.fillRect(0, 0, width(), _height, bg);
 	if (enabled && (!_closeRippleActive || _closeRect.isEmpty())) {
 		paintRipple(p, 0, 0);
 	}

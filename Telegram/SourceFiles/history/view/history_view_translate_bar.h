@@ -37,6 +37,8 @@ public:
 	void hide();
 	void raise();
 	void finishAnimating();
+	// Mokagram: при закрепе перевод не показывается.
+	void setSuppressed(bool suppressed);
 
 	void setShadowGeometryPostprocess(Fn<QRect(QRect)> postprocess);
 
@@ -73,6 +75,7 @@ private:
 	rpl::variable<LanguageId> _to;
 	bool _shouldBeShown = false;
 	bool _forceHidden = false;
+	bool _suppressed = false;
 
 };
 

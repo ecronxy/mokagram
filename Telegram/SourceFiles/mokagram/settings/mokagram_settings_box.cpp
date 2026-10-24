@@ -3,7 +3,16 @@
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
 #include "mokagram/settings/mokagram_settings_box.h"
 
+#include <QtWidgets/QApplication>
+
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/misc/mokagram_misc.h"
+#include "mokagram/ghost/mokagram_ghost.h"
+#include "history/history.h"
+#include "boxes/choose_filter_box.h"
+#include "data/data_chat_filters.h"
+#include "data/data_session.h"
+#include "history/history_item.h"
 
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
@@ -15,6 +24,7 @@
 #include "data/data_document.h"
 #include "api/api_common.h"
 #include "core/application.h"
+#include "mainwindow.h"
 #include "data/data_session.h"
 #include "main/main_session.h"
 #include "window/window_controller.h"
@@ -56,6 +66,8 @@
 #include <QtGui/QPainterPath>
 
 #include <algorithm>
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
 
 namespace Mokagram::Settings {
 namespace {
@@ -453,6 +465,22 @@ public:
 			return;
 		}
 		_session = session;
+		// Свой набор mymoka: первый эмодзи служит значком «Настройки mokaGram».
+		_ownRequestId = session->api().request(MTPmessages_GetStickerSet(
+			MTP_inputStickerSetShortName(MTP_string(u"mymoka"_q)),
+			MTP_int(0)
+		)).done([=](const MTPmessages_StickerSet &set) {
+			_ownRequestId = 0;
+			set.match([&](const MTPDmessages_stickerSet &data) {
+				if (!data.vdocuments().v.isEmpty()) {
+					_own = _session->data().processDocument(
+						data.vdocuments().v.front());
+					_updated.fire({});
+				}
+			}, [](const auto &) {});
+		}).fail([=] {
+			_ownRequestId = 0;
+		}).send();
 		_requestId = session->api().request(MTPmessages_GetStickerSet(
 			MTP_inputStickerSetShortName(MTP_string(u"iOSTelegram"_q)),
 			MTP_int(0)
@@ -484,7 +512,24 @@ public:
 		if (name.isEmpty()) {
 			return nullptr;
 		}
-		const auto alt = EmojiFor(name);
+		return makeAlt(EmojiFor(name), std::move(repaint), size);
+	}
+	[[nodiscard]] std::unique_ptr<Ui::Text::CustomEmoji> makeOwn(
+			Fn<void()> repaint,
+			int size) {
+		if (!_session || !_own) {
+			return nullptr;
+		}
+		return _session->data().customEmojiManager().create(
+			_own,
+			std::move(repaint),
+			Data::CustomEmojiSizeTag::Normal,
+			size);
+	}
+	[[nodiscard]] std::unique_ptr<Ui::Text::CustomEmoji> makeAlt(
+			const QString &alt,
+			Fn<void()> repaint,
+			int size) {
 		const auto i = _docs.find(Normalize(alt));
 		if (!_session || i == _docs.end()) {
 			return nullptr;
@@ -535,6 +580,8 @@ private:
 
 	Main::Session *_session = nullptr;
 	mtpRequestId _requestId = 0;
+	mtpRequestId _ownRequestId = 0;
+	DocumentData *_own = nullptr;
 	base::flat_map<QString, DocumentData*> _docs;
 	rpl::event_stream<> _updated;
 
@@ -616,6 +663,9 @@ struct Group {
 [[nodiscard]] std::vector<Group> BuildGroups() {
 	auto result = std::vector<Group>();
 	for (const auto &entry : Entries()) {
+		if (entry.hidden) {
+			continue;
+		}
 		const auto name = SectionOf(entry);
 		auto i = ranges::find(result, name, &Group::name);
 		if (i == result.end()) {
@@ -769,6 +819,20 @@ struct Group {
 	} break;
 	case Kind::String:
 	case Kind::Color: {
+		if (entry.action) {
+			valueLabel = Ui::CreateChild<Ui::FlatLabel>(
+				row,
+				String(key),
+				TextLabelStyle());
+			MakeTransparent(valueLabel);
+			row->setPointerCursor(true);
+			row->setClickedCallback([=] { entry.action(); });
+			StringValue(key) | rpl::on_next([=](const QString &value) {
+				valueLabel->setText(value);
+				row->resize(row->width(), row->height());
+			}, row->lifetime());
+			break;
+		}
 		rippled = false;
 		static const auto fieldStyle = [] {
 			auto result = st::defaultInputField;
@@ -802,7 +866,7 @@ struct Group {
 		const auto left = kTextLeft;
 		const auto full = width - left - kPad;
 		const auto resetW = view->changed ? kResetSize + 2 : 0;
-		const auto chevron = (kind == Kind::Choice) ? 14 : 0;
+		const auto chevron = (kind == Kind::Choice || entry.action) ? 14 : 0;
 		auto controlW = 0;
 		if (toggle) {
 			controlW = toggle->width();
@@ -922,7 +986,7 @@ struct Group {
 				st::lineWidth,
 				line);
 		}
-		if (kind == Kind::Choice) {
+		if (kind == Kind::Choice || entry.action) {
 			auto hq = PainterHighQualityEnabler(p);
 			auto pen = QPen(st::windowSubTextFg->c, 1.6);
 			pen.setCapStyle(Qt::RoundCap);
@@ -1613,19 +1677,234 @@ void StartDebugCommands() {
 			ShowCustomizeBox(controller);
 		} else if (cmd == u"profile"_q) {
 			controller->showPeerInfo(controller->session().userPeerId());
+		} else if (cmd.startsWith(u"profile:"_q)) {
+			controller->showPeerInfo(PeerId(cmd.mid(8).toULongLong()));
 		} else if (cmd.startsWith(u"chat:"_q)) {
 			controller->showPeerHistory(
 				PeerId(cmd.mid(5).toULongLong()),
 				Window::SectionShow::Way::Forward);
 		} else if (cmd == u"history"_q) {
 			History::ShowChatsBox(controller);
+		} else if (cmd == u"deleted"_q) {
+			History::ShowHistoryBox(controller, 0, History::Kind::Deleted);
 		} else if (cmd == u"filters"_q) {
 			History::ShowFiltersBox(controller);
+		} else if (cmd == u"settings"_q) {
+			controller->showSettings();
+		} else if (cmd.startsWith(u"at:"_q)) {
+			const auto parts = cmd.mid(3).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt = QPoint(parts[0].toInt(), parts[1].toInt());
+			while (w) {
+				fprintf(stderr, "AT %s %dx%d @%d,%d\n", w->metaObject()->className(), w->width(), w->height(), w->x(), w->y());
+				const auto child = w->childAt(pt);
+				if (!child) break;
+				pt = child->mapFrom(w, pt);
+				w = child;
+			}
+			{
+				auto shown = 0;
+				for (const auto child : w->children()) {
+					if (const auto cw = qobject_cast<QWidget*>(child)) {
+						fprintf(stderr, "CH %s %dx%d @%d,%d vis=%d\n", cw->metaObject()->className(), cw->width(), cw->height(), cw->x(), cw->y(), cw->isVisible() ? 1 : 0);
+						if (++shown >= 6) break;
+					}
+				}
+			}
+			for (auto up = w; up; up = up->parentWidget()) {
+				fprintf(stderr, "UP %s %dx%d @%d,%d\n", up->metaObject()->className(), up->width(), up->height(), up->x(), up->y());
+			}
+		} else if (cmd.startsWith(u"type:"_q)) {
+			if (const auto w = QApplication::focusWidget()) {
+				for (const auto ch : cmd.mid(5)) {
+					auto press = QKeyEvent(QEvent::KeyPress, 0, Qt::NoModifier, QString(ch));
+					QCoreApplication::sendEvent(w, &press);
+					auto release = QKeyEvent(QEvent::KeyRelease, 0, Qt::NoModifier, QString(ch));
+					QCoreApplication::sendEvent(w, &release);
+				}
+			}
+		} else if (cmd.startsWith(u"rclick:"_q)) {
+			const auto parts = cmd.mid(7).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt = QPoint(parts[0].toInt(), parts[1].toInt());
+			while (const auto child = w->childAt(pt)) {
+				pt = child->mapFrom(w, pt);
+				w = child;
+			}
+			auto e = QContextMenuEvent(QContextMenuEvent::Mouse, pt, w->mapToGlobal(pt));
+			QCoreApplication::sendEvent(w, &e);
+		} else if (cmd.startsWith(u"click:"_q)) {
+			const auto parts = cmd.mid(6).split(',');
+			const auto mods = (parts.size() > 2)
+				? Qt::KeyboardModifiers(Qt::ControlModifier)
+				: Qt::KeyboardModifiers(Qt::NoModifier);
+			auto w = (QWidget*)controller->widget();
+			auto pt = QPoint(parts[0].toInt(), parts[1].toInt());
+			const auto global = w->mapToGlobal(pt);
+			for (const auto top : QApplication::topLevelWidgets()) {
+				if (top != w->window() && top->isVisible() && top->geometry().contains(global)) {
+					w = top;
+					pt = top->mapFromGlobal(global);
+					break;
+				}
+			}
+			while (const auto child = w->childAt(pt)) {
+				pt = child->mapFrom(w, pt);
+				w = child;
+			}
+			for (const auto type : { QEvent::MouseButtonPress, QEvent::MouseButtonRelease }) {
+				auto e = QMouseEvent(type, QPointF(pt), w->mapToGlobal(QPointF(pt)), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, mods);
+				QCoreApplication::sendEvent(w, &e);
+			}
+		} else if (cmd.startsWith(u"url:"_q)) {
+			Core::App().openLocalUrl(cmd.mid(4), {});
+		} else if (cmd == u"menu"_q) {
+			controller->widget()->showMainMenu();
+		} else if (cmd == u"copyauthor"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto item = history->lastMessage()) {
+					Misc::CopyWithAuthor(item);
+				}
+			}
+		} else if (cmd.startsWith(u"addfolder"_q)) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				const auto &list = history->owner().chatsFilters().list();
+				const auto want = cmd.mid(9).toInt();
+				for (const auto &f : list) {
+					LOG(("MOKAFOLDER id=%1 contains=%2 inlist=%3").arg(f.id()).arg(f.contains(history)).arg(history->inChatList()));
+					if (f.id() && f.id() == want) {
+						ChooseFilterValidator(history).add(f.id());
+					}
+				}
+			}
+		} else if (cmd == u"readnow"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				LOG(("MOKAREAD before unread=%1").arg(history->unreadCount()));
+				Ghost::ReadNow(history);
+				LOG(("MOKAREAD after unread=%1").arg(history->unreadCount()));
+			}
+		} else if (cmd == u"schedule"_q) {
+			for (const auto &entry : Entries()) {
+				if (entry.action) {
+					entry.action();
+				}
+			}
+		} else if (cmd.startsWith(u"wheel:"_q)) {
+			const auto parts = cmd.mid(6).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt = QPoint(parts[0].toInt(), parts[1].toInt());
+			while (const auto child = w->childAt(pt)) {
+				pt = child->mapFrom(w, pt);
+				w = child;
+			}
+			auto e = QWheelEvent(
+				QPointF(pt),
+				QPointF(w->mapToGlobal(pt)),
+				QPoint(),
+				QPoint(0, parts[2].toInt()),
+				Qt::NoButton,
+				Qt::NoModifier,
+				Qt::NoScrollPhase,
+				false);
+			for (auto t = w; t; t = t->parentWidget()) {
+				e.setAccepted(false);
+				QCoreApplication::sendEvent(t, &e);
+				if (e.isAccepted()) {
+					break;
+				}
+			}
+		} else if (cmd.startsWith(u"hover:"_q)) {
+			const auto parts = cmd.mid(6).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt = QPoint(parts[0].toInt(), parts[1].toInt());
+			const auto global = w->mapToGlobal(pt);
+			for (const auto top : QApplication::topLevelWidgets()) {
+				if (top != w->window() && top->isVisible() && top->geometry().contains(global)) {
+					w = top;
+					pt = top->mapFromGlobal(global);
+					break;
+				}
+			}
+			while (const auto child = w->childAt(pt)) {
+				pt = child->mapFrom(w, pt);
+				w = child;
+			}
+			fprintf(stderr, "HOVER %s\n", w->metaObject()->className());
+			auto enter = QEnterEvent(QPointF(pt), QPointF(w->mapToGlobal(pt)), QPointF(w->mapToGlobal(pt)));
+			QCoreApplication::sendEvent(w, &enter);
+			auto move = QMouseEvent(QEvent::MouseMove, QPointF(pt), QPointF(w->mapToGlobal(pt)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(w, &move);
+		} else if (cmd == u"clip"_q) {
+			LOG(("MOKACLIP %1").arg(QGuiApplication::clipboard()->text()));
 		} else if (cmd == u"close"_q) {
 			controller->hideLayer();
 		}
 	});
 	timer->start(400);
+}
+
+
+const style::icon &OwnRowIcon() {
+	static const style::icon result = st::menuIconPalette;
+	return result;
+}
+
+std::unique_ptr<Ui::Text::CustomEmoji> RowIconEmoji(
+		const void *icon,
+		Fn<void()> repaint,
+		int size) {
+	static const auto map = base::flat_map<const void*, QString>{
+		{ &st::menuIconProfile, QString::fromUtf8("👤") },
+		{ &st::menuIconNotifications, QString::fromUtf8("🔔") },
+		{ &st::menuIconLock, QString::fromUtf8("🔑") },
+		{ &st::menuIconChatBubble, QString::fromUtf8("💬") },
+		{ &st::menuIconShowInFolder, QString::fromUtf8("📁") },
+		{ &st::menuIconManage, QString::fromUtf8("⚙") },
+		{ &st::menuIconUnmute, QString::fromUtf8("🎵") },
+		{ &st::menuIconBotCommands, QString::fromUtf8("🔧") },
+		{ &st::menuIconPalette, QString::fromUtf8("🖼") },
+		{ &st::menuIconPowerUsage, QString::fromUtf8("💤") },
+		{ &st::menuIconTranslate, QString::fromUtf8("🗣") },
+		{ &st::menuIconTon, QString::fromUtf8("💰") },
+		{ &st::menuIconShop, QString::fromUtf8("📈") },
+		{ &st::menuIconGiftPremium, QString::fromUtf8("🎁") },
+		{ &st::menuIconFaq, QString::fromUtf8("❔") },
+		{ &st::menuIconEmojiObjects, QString::fromUtf8("ℹ️") },
+		{ &st::menuIconShowInChat, QString::fromUtf8("👁") },
+		{ &st::menuIconDiscussion, QString::fromUtf8("💬") },
+	};
+	const auto i = map.find(icon);
+	const auto window = Core::App().activePrimaryWindow();
+	const auto controller = window ? window->sessionController() : nullptr;
+	if (icon == &OwnRowIcon() && controller) {
+		auto &pack = PackIcons::Instance();
+		pack.ensure(&controller->session());
+		return pack.makeOwn(std::move(repaint), size);
+	}
+	if (i == map.end() || !controller) {
+		return nullptr;
+	}
+	auto &pack = PackIcons::Instance();
+	pack.ensure(&controller->session());
+	return pack.makeAlt(i->second, std::move(repaint), size);
+}
+
+std::unique_ptr<Ui::Text::CustomEmoji> AltIconEmoji(
+		const QString &alt,
+		Fn<void()> repaint,
+		int size) {
+	const auto window = Core::App().activePrimaryWindow();
+	const auto controller = window ? window->sessionController() : nullptr;
+	if (!controller) {
+		return nullptr;
+	}
+	auto &pack = PackIcons::Instance();
+	pack.ensure(&controller->session());
+	return pack.makeAlt(alt, std::move(repaint), size);
+}
+
+rpl::producer<> RowIconsUpdated() {
+	return PackIcons::Instance().updated();
 }
 
 } // namespace Mokagram::Settings

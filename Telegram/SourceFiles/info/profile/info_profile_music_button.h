@@ -8,10 +8,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/widgets/buttons.h"
+#include <rpl/event_stream.h>
 #include "ui/text/format_song_name.h"
 #include "ui/text/text.h"
 
 namespace Info::Profile {
+
+// Mokagram: музыка прилегает к шапке, пока показана хотя бы одна плашка.
+[[nodiscard]] bool MusicShown();
+[[nodiscard]] std::optional<QColor> MusicBandColor();
+[[nodiscard]] rpl::producer<> MusicShownChanges();
 
 struct MusicButtonData {
 	Ui::Text::FormatSongName name;

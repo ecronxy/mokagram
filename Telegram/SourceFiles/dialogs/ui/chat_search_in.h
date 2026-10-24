@@ -48,12 +48,16 @@ public:
 		ChatSearchTab active,
 		ChatSearchPeerTabType peerTabType,
 		std::shared_ptr<Ui::DynamicImage> fromUserpic,
-		QString fromName);
+		QString fromName,
+		int media,
+		int period,
+		std::shared_ptr<Ui::DynamicImage> mediaIcon);
 
 	[[nodiscard]] rpl::producer<> cancelInRequests() const;
 	[[nodiscard]] rpl::producer<> cancelFromRequests() const;
 	[[nodiscard]] rpl::producer<> changeFromRequests() const;
 	[[nodiscard]] rpl::producer<ChatSearchTab> tabChanges() const;
+	[[nodiscard]] rpl::producer<std::pair<int, int>> mediaChanges() const;
 
 private:
 	struct Section {
@@ -72,6 +76,7 @@ private:
 	int resizeGetHeight(int newWidth) override;
 	void paintEvent(QPaintEvent *e) override;
 	void showMenu();
+	void showMediaMenu();
 
 	void updateSection(
 		not_null<Section*> section,
@@ -80,6 +85,10 @@ private:
 
 	Section _in;
 	Section _from;
+	Section _media;
+	int _mediaValue = 0;
+	int _periodValue = 0;
+	rpl::event_stream<std::pair<int, int>> _mediaChanges;
 	rpl::variable<ChatSearchTab> _active;
 
 	base::unique_qptr<Ui::PopupMenu> _menu;

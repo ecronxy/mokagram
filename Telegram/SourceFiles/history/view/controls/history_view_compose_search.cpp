@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/controls/history_view_compose_search.h"
 
 #include "api/api_messages_search_merged.h"
+#include "base/unixtime.h"
 #include "boxes/peer_list_box.h"
 #include "core/click_handler_types.h"
 #include "core/ui_integration.h"
@@ -323,6 +324,7 @@ public:
 	[[nodiscard]] rpl::producer<not_null<QKeyEvent*>> keyEvents() const;
 
 	void setFrom(PeerData *peer);
+	void repeatSearch();
 	bool handleKeyPress(not_null<QKeyEvent*> e);
 
 protected:
@@ -607,6 +609,10 @@ void TopBar::requestSearchDelayed() {
 	_searchTimer.callOnce(AutoSearchTimeout);
 }
 
+void TopBar::repeatSearch() {
+	requestSearch(false);
+}
+
 rpl::producer<SearchRequest> TopBar::searchRequests() const {
 	return _searchRequests.events();
 }
@@ -658,7 +664,9 @@ public:
 	[[nodiscard]] rpl::producer<> showCalendarRequests() const;
 	[[nodiscard]] rpl::producer<> showBoxFromRequests() const;
 	[[nodiscard]] rpl::producer<> showListRequests() const;
+	[[nodiscard]] rpl::producer<> showTypeRequests() const;
 
+	void setTypeText(const QString &text);
 	void buttonFromToggleOn(rpl::producer<bool> &&visible);
 	void buttonCalendarToggleOn(rpl::producer<bool> &&visible);
 
@@ -683,6 +691,7 @@ private:
 
 	base::unique_qptr<Ui::IconButton> _jumpToDate;
 	base::unique_qptr<Ui::IconButton> _chooseFromUser;
+	base::unique_qptr<Ui::LinkButton> _typeButton;
 	base::unique_qptr<Ui::FlatLabel> _counter;
 
 	int _total = -1;
@@ -701,6 +710,9 @@ BottomBar::BottomBar(not_null<Ui::RpWidget*> parent, bool fastShowChooseFrom)
 , _jumpToDate(base::make_unique_q<Ui::IconButton>(this, st::dialogCalendar))
 , _chooseFromUser(
 	base::make_unique_q<Ui::IconButton>(this, st::dialogSearchFrom))
+, _typeButton(base::make_unique_q<Ui::LinkButton>(
+	this,
+	QString::fromUtf8("Все типы")))
 , _counter(base::make_unique_q<Ui::FlatLabel>(
 	this,
 	st::defaultSettingsRightLabel)) {
@@ -719,6 +731,7 @@ BottomBar::BottomBar(not_null<Ui::RpWidget*> parent, bool fastShowChooseFrom)
 	rpl::merge(
 		_jumpToDate->shownValue() | mapSize,
 		_chooseFromUser->shownValue() | mapSize,
+		_typeButton->sizeValue() | mapSize,
 		_counter->sizeValue() | mapSize,
 		sizeValue()
 	) | rpl::on_next([=](const QSize &s) {
@@ -732,13 +745,16 @@ BottomBar::BottomBar(not_null<Ui::RpWidget*> parent, bool fastShowChooseFrom)
 		const auto list = std::vector<not_null<Ui::RpWidget*>>{
 			_jumpToDate.get(),
 			_chooseFromUser.get(),
+			_typeButton.get(),
 			_counter.get() };
 		for (const auto &w : list) {
 			if (w->isHidden()) {
 				continue;
 			}
 			w->moveToLeft(left, (s.height() - w->height()) / 2);
-			left += w->width();
+			left += w->width() + (w == _typeButton.get()
+				? st::topBarActionSkip
+				: 0);
 		}
 	}, lifetime());
 
@@ -843,6 +859,14 @@ rpl::producer<> BottomBar::showBoxFromRequests() const {
 	return _chooseFromUser->clicks() | rpl::to_empty;
 }
 
+rpl::producer<> BottomBar::showTypeRequests() const {
+	return _typeButton->clicks() | rpl::to_empty;
+}
+
+void BottomBar::setTypeText(const QString &text) {
+	_typeButton->setText(text);
+}
+
 rpl::producer<> BottomBar::showListRequests() const {
 	return _showList->clicks() | rpl::to_empty;
 }
@@ -909,6 +933,9 @@ private:
 
 	MsgId _topMsgId;
 	Api::SearchFilter _searchFilter = Api::SearchFilter::NoFilter;
+	Api::SearchFilter _typeFilter = Api::SearchFilter::NoFilter;
+	int _periodSeconds = 0;
+	base::unique_qptr<Ui::PopupMenu> _typeMenu;
 	rpl::variable<bool> _filterAllowsFrom = true;
 	Dialogs::Key _calendarChat;
 	Fn<void(FullMsgId, Fn<void()>)> _calendarJump;
@@ -957,13 +984,20 @@ ComposeSearch::Inner::Inner(
 
 	_topBar->searchRequests(
 	) | rpl::on_next([=](SearchRequest search) {
-		if (search.query.isEmpty() && search.tags.empty()) {
+		const auto typed = (_typeFilter != Api::SearchFilter::NoFilter)
+			|| (_periodSeconds > 0);
+		if (search.query.isEmpty() && search.tags.empty() && !typed) {
 			if (!search.from || _history->peer->isSelf()) {
 				return;
 			}
 		}
 		search.topMsgId = _topMsgId;
-		search.filter = _searchFilter;
+		search.filter = (_searchFilter != Api::SearchFilter::NoFilter)
+			? _searchFilter
+			: _typeFilter;
+		if (_periodSeconds > 0) {
+			search.minDate = int(base::unixtime::now()) - _periodSeconds;
+		}
 		_apiSearch.clear();
 
 		_list.controller->addItems({}, true);
@@ -1072,6 +1106,62 @@ ComposeSearch::Inner::Inner(
 			crl::guard(_bottomBar.get(), [=] { setInnerFocus(); }));
 
 		_window->show(std::move(box));
+	}, _bottomBar->lifetime());
+
+	_bottomBar->showTypeRequests(
+	) | rpl::on_next([=] {
+		using F = Api::SearchFilter;
+		_typeMenu = base::make_unique_q<Ui::PopupMenu>(
+			_bottomBar.get(),
+			st::popupMenuWithIcons);
+		const auto mark = [](bool on) {
+			return QString::fromUtf8(on ? "● " : "    ");
+		};
+		const auto types = std::vector<std::pair<F, const char*>>{
+			{ F::NoFilter, "Все типы" },
+			{ F::Photos, "Фото" },
+			{ F::Videos, "Видео" },
+			{ F::Files, "Файлы" },
+			{ F::Music, "Музыка" },
+			{ F::Voice, "Голосовые" },
+			{ F::RoundVideo, "Кружки" },
+			{ F::Gifs, "GIF" },
+			{ F::Links, "Ссылки" },
+		};
+		const auto apply = [=] {
+			auto text = QString::fromUtf8("Все типы");
+			for (const auto &[f, name] : types) {
+				if (f == _typeFilter) {
+					text = QString::fromUtf8(name);
+				}
+			}
+			if (_periodSeconds > 0) {
+				text += QString::fromUtf8(" · период");
+			}
+			_bottomBar->setTypeText(text);
+			_topBar->repeatSearch();
+		};
+		for (const auto &[f, name] : types) {
+			const auto filter = f;
+			_typeMenu->addAction(
+				mark(_typeFilter == filter) + QString::fromUtf8(name),
+				[=] { _typeFilter = filter; apply(); });
+		}
+		_typeMenu->addSeparator();
+		const auto periods = std::vector<std::pair<int, const char*>>{
+			{ 0, "За всё время" },
+			{ 86400, "За сутки" },
+			{ 7 * 86400, "За неделю" },
+			{ 30 * 86400, "За месяц" },
+			{ 365 * 86400, "За год" },
+		};
+		for (const auto &[seconds, name] : periods) {
+			const auto value = seconds;
+			_typeMenu->addAction(
+				mark(_periodSeconds == value) + QString::fromUtf8(name),
+				[=] { _periodSeconds = value; apply(); });
+		}
+		_typeMenu->popup(QCursor::pos());
 	}, _bottomBar->lifetime());
 
 	_bottomBar->showListRequests(

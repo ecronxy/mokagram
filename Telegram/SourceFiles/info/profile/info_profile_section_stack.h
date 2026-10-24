@@ -20,6 +20,7 @@ namespace Info::Profile {
 struct Section {
 	object_ptr<Ui::RpWidget> widget = { nullptr };
 	rpl::producer<bool> shown;
+	bool bare = false; // Без общей карточки: строки сами рисуют капсулы.
 };
 
 class SectionStack final {
@@ -46,6 +47,7 @@ private:
 		RowType type = RowType::Block;
 		object_ptr<Ui::RpWidget> widget = { nullptr };
 		rpl::producer<bool> shown;
+		bool bare = false;
 		rpl::producer<TextWithEntities> text;
 		Fn<void(not_null<Ui::FlatLabel*>)> textSetup;
 	};

@@ -14,6 +14,27 @@
 #include "main/main_session.h"
 #include "apiwrap.h"
 #include "mtproto/sender.h"
+#include "base/flat_set.h"
+#include "base/timer.h"
+#include "data/data_channel.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
+#include "window/window_controller.h"
+#include "window/window_session_controller.h"
+#include "ui/layers/generic_box.h"
+#include "ui/painter.h"
+#include "ui/rect.h"
+#include "ui/effects/animations.h"
+#include "ui/effects/animation_value.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "ui/widgets/time_input.h"
+#include "ui/wrap/vertical_layout.h"
+#include "ui/rp_widget.h"
+#include "styles/style_boxes.h"
+#include "styles/style_layers.h"
+#include "styles/style_passcode_box.h"
+#include "styles/style_widgets.h"
+#include <QtCore/QTime>
 
 #include <rpl/producer.h>
 
@@ -30,11 +51,211 @@ struct Flags {
 	bool hideBlocked = false;
 };
 
+[[nodiscard]] QString U(const char *text) {
+	return QString::fromUtf8(text);
+}
+
+// Карточка с закруглением, как в окне «Плагины».
+[[nodiscard]] not_null<Ui::VerticalLayout*> AddScheduleCard(
+		not_null<Ui::VerticalLayout*> parent) {
+	const auto slot = parent->add(
+		object_ptr<Ui::VerticalLayout>(parent),
+		QMargins(14, 6, 14, 6),
+		style::al_justify);
+	const auto card = slot->add(
+		object_ptr<Ui::VerticalLayout>(slot),
+		QMargins(),
+		style::al_justify);
+	card->paintRequest(
+	) | rpl::on_next([=](QRect clip) {
+		auto p = QPainter(card);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(card->rect(), 22, 22);
+	}, card->lifetime());
+	return card;
+}
+
+// Строка-переключатель: подпись слева, пилюля справа.
+void AddScheduleToggle(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &title,
+		const QString &key) {
+	const auto row = card->add(
+		object_ptr<Ui::AbstractButton>(card),
+		QMargins(),
+		style::al_justify);
+	row->resize(row->width(), 52);
+	row->setPointerCursor(true);
+	const auto anim = row->lifetime().make_state<Ui::Animations::Simple>();
+	row->setClickedCallback([=] {
+		const auto now = !Settings::Bool(key);
+		Settings::SetBool(key, now);
+		anim->start(
+			[=] { row->update(); },
+			now ? 0. : 1.,
+			now ? 1. : 0.,
+			180,
+			anim::easeOutCubic);
+	});
+	row->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(row);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(st::windowFg);
+		p.setFont(st::normalFont);
+		p.drawText(
+			QRect(18, 0, row->width() - 90, row->height()),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			title);
+		const auto t = anim->value(Settings::Bool(key) ? 1. : 0.);
+		const auto pill = QRectF(row->width() - 18 - 46, (row->height() - 28) / 2., 46, 28);
+		p.setPen(Qt::NoPen);
+		p.setBrush(anim::color(QColor(0x3A, 0x3A, 0x3C), QColor(0x0A, 0x84, 0xFF), t));
+		p.drawRoundedRect(pill, 14, 14);
+		p.setBrush(Qt::white);
+		const auto x = pill.left() + 3 + (pill.width() - 28) * t;
+		p.drawEllipse(QRectF(x, pill.top() + 3, 22, 22));
+	}, row->lifetime());
+}
+
+// Строка со временем: подпись слева, поле ЧЧ:ММ справа.
+void AddScheduleTime(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &title,
+		const QString &key) {
+	const auto row = card->add(
+		object_ptr<Ui::RpWidget>(card),
+		QMargins(),
+		style::al_justify);
+	row->resize(row->width(), 56);
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		row,
+		title,
+		st::defaultFlatLabel);
+	const auto input = Ui::CreateChild<Ui::TimeInput>(
+		row,
+		Settings::String(key),
+		st::autolockTimeField,
+		st::autolockDateField,
+		st::scheduleTimeSeparator,
+		st::scheduleTimeSeparatorPadding);
+	input->resizeToWidth(st::autolockTimeWidth);
+	input->value(
+	) | rpl::on_next([=](const QString &value) {
+		const auto parsed = QTime::fromString(value, u"HH:mm"_q);
+		if (parsed.isValid()) {
+			Settings::SetString(key, parsed.toString(u"HH:mm"_q));
+		}
+	}, input->lifetime());
+	row->widthValue(
+	) | rpl::on_next([=](int width) {
+		label->moveToLeft(18, (row->height() - label->height()) / 2);
+		input->moveToRight(18, (row->height() - input->height()) / 2);
+	}, row->lifetime());
+}
+
+void AddScheduleNote(
+		not_null<Ui::VerticalLayout*> content,
+		const QString &text) {
+	content->add(
+		object_ptr<Ui::FlatLabel>(
+			content,
+			text,
+			st::boxDividerLabel),
+		QMargins(32, 4, 32, 6));
+}
+
+void ScheduleBox(not_null<Ui::GenericBox*> box) {
+	Plugins::RoundedWindow(box);
+	box->setWidth(440);
+	const auto content = box->verticalLayout();
+	const auto header = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		QMargins(10, 10, 10, 6));
+	header->resize(header->width(), 40);
+	const auto close = Plugins::MakeHeaderButton(
+		header,
+		true,
+		[=] { box->closeBox(); });
+	const auto title = Ui::CreateChild<Ui::FlatLabel>(
+		header,
+		U("Расписание призрака"),
+		st::boxTitle);
+	header->widthValue(
+	) | rpl::on_next([=](int width) {
+		close->move(0, (header->height() - close->height()) / 2);
+		title->resizeToNaturalWidth(width - 2 * (close->width() + 8));
+		title->move(
+			(width - title->width()) / 2,
+			(header->height() - title->height()) / 2);
+	}, header->lifetime());
+
+	const auto main = AddScheduleCard(content);
+	AddScheduleToggle(main, U("Включать по расписанию"), u"ghost.schedule"_q);
+	AddScheduleTime(main, U("С"), u"ghost.schedule_from"_q);
+	AddScheduleTime(main, U("До"), u"ghost.schedule_to"_q);
+	AddScheduleNote(
+		content,
+		U("Вне этих часов действуют обычные настройки Призрака."));
+
+	AddScheduleNote(content, U("ЧТО ВКЛЮЧАЕТСЯ В ЭТО ВРЕМЯ"));
+	const auto what = AddScheduleCard(content);
+	AddScheduleToggle(what, U("Не отмечать прочитанным"), u"ghost.sched_read"_q);
+	AddScheduleToggle(what, U("Скрыть «в сети»"), u"ghost.sched_online"_q);
+	AddScheduleToggle(what, U("Не показывать «печатает»"), u"ghost.sched_typing"_q);
+	AddScheduleToggle(what, U("Скрыть просмотры историй"), u"ghost.sched_stories"_q);
+	content->add(object_ptr<Ui::RpWidget>(content))->resize(0, 14);
+}
+
 struct State {
 	Flags flags;
 	bool loaded = false;
+	base::flat_set<uint64> exceptions;
 	rpl::lifetime lifetime;
 };
+
+void LoadExceptions(State &data) {
+	data.exceptions.clear();
+	const auto list = Settings::String(u"ghost.exceptions"_q).split(
+		u","_q,
+		Qt::SkipEmptyParts);
+	for (const auto &id : list) {
+		data.exceptions.emplace(id.trimmed().toULongLong());
+	}
+}
+
+// Сейчас ли время, на которое назначено расписание.
+[[nodiscard]] bool ScheduleInside() {
+	if (!Settings::Bool(u"ghost.schedule"_q)) {
+		return false;
+	}
+	const auto from = QTime::fromString(
+		Settings::String(u"ghost.schedule_from"_q).trimmed(),
+		u"HH:mm"_q);
+	const auto to = QTime::fromString(
+		Settings::String(u"ghost.schedule_to"_q).trimmed(),
+		u"HH:mm"_q);
+	if (!from.isValid() || !to.isValid() || from == to) {
+		return false;
+	}
+	const auto now = QTime::currentTime();
+	return (from < to)
+		? (now >= from && now < to)
+		: (now >= from || now < to);
+}
+
+void UpdateScheduleLabel() {
+	const auto label = Settings::Bool(u"ghost.schedule"_q)
+		? (Settings::String(u"ghost.schedule_from"_q)
+			+ QString::fromUtf8(" – ")
+			+ Settings::String(u"ghost.schedule_to"_q))
+		: QString::fromUtf8("Выключено");
+	if (Settings::String(u"ghost.schedule_label"_q) != label) {
+		Settings::SetString(u"ghost.schedule_label"_q, label);
+	}
+}
 
 [[nodiscard]] State &Data() {
 	static auto result = State();
@@ -42,7 +263,7 @@ struct State {
 }
 
 [[nodiscard]] Flags ReadFlags() {
-	return {
+	auto result = Flags{
 		.enabled = Settings::Bool(u"ghost.enabled"_q),
 		.read = Settings::Bool(u"ghost.read"_q),
 		.online = Settings::Bool(u"ghost.online"_q),
@@ -51,6 +272,31 @@ struct State {
 		.offlineOnEnable = Settings::Bool(u"ghost.offline_on_enable"_q),
 		.hideBlocked = Settings::Bool(u"filters.hide_blocked"_q),
 	};
+	if (ScheduleInside()) {
+		// В часы расписания к обычным настройкам добавляется выбранное.
+		if (!result.enabled) {
+			result.read = result.online = result.typing = result.stories
+				= false;
+		}
+		result.enabled = true;
+		result.read |= Settings::Bool(u"ghost.sched_read"_q);
+		result.online |= Settings::Bool(u"ghost.sched_online"_q);
+		result.typing |= Settings::Bool(u"ghost.sched_typing"_q);
+		result.stories |= Settings::Bool(u"ghost.sched_stories"_q);
+	}
+	return result;
+}
+
+void Refresh();
+
+// Расписание: смена «внутри / снаружи» пересчитывает флаги.
+void ApplySchedule() {
+	static auto was = false;
+	const auto now = ScheduleInside();
+	if (now != was) {
+		was = now;
+		Refresh();
+	}
 }
 
 // Ленивая загрузка: первый вызов читает реестр, дальше работает кэш.
@@ -165,6 +411,67 @@ void RegisterSettings() {
 		"online",
 		true);
 	Settings::Register({
+		.key = u"ghost.schedule_label"_q,
+		.section = ghost,
+		.title = QString::fromUtf8("Расписание"),
+		.description = QString::fromUtf8(
+			"Часы и то, что включается в это время."),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString::fromUtf8("Выключено"),
+		.category = u"privacy"_q,
+		.sectionIcon = u"ghost"_q,
+		.icon = u"online"_q,
+		.action = [] {
+			if (const auto window = Core::App().activePrimaryWindow()) {
+				if (const auto controller = window->sessionController()) {
+					controller->show(Box(ScheduleBox));
+				}
+			}
+		},
+	});
+	const auto hidden = [&](const char *key, bool value) {
+		Settings::Register({
+			.key = QString::fromUtf8(key),
+			.section = ghost,
+			.title = QString::fromUtf8(key),
+			.kind = Settings::Kind::Bool,
+			.defaultValue = value,
+			.category = u"privacy"_q,
+			.hidden = true,
+		});
+	};
+	hidden("ghost.schedule", false);
+	hidden("ghost.sched_read", true);
+	hidden("ghost.sched_online", true);
+	hidden("ghost.sched_typing", true);
+	hidden("ghost.sched_stories", false);
+	for (const auto &[key, value] : {
+		std::pair{ "ghost.schedule_from", "23:00" },
+		std::pair{ "ghost.schedule_to", "07:00" },
+	}) {
+		Settings::Register({
+			.key = QString::fromUtf8(key),
+			.section = ghost,
+			.title = QString::fromUtf8(key),
+			.kind = Settings::Kind::String,
+			.defaultValue = QString::fromUtf8(value),
+			.category = u"privacy"_q,
+			.hidden = true,
+		});
+	}
+	Settings::Register({
+		.key = u"ghost.exceptions"_q,
+		.section = ghost,
+		.title = QString::fromUtf8("Чаты-исключения (id через запятую)"),
+		.description = QString::fromUtf8(
+			"В них Призрак не мешает отмечать прочитанным. "
+			"Проще добавлять через меню чата."),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.category = u"privacy"_q,
+		.hidden = true,
+	});
+	Settings::Register({
 		.key = u"filters.hide_blocked"_q,
 		.section = QString::fromUtf8("Заблокированные"),
 		.title = QString::fromUtf8("Прятать заблокированных в группах"),
@@ -184,12 +491,24 @@ void RegisterSettings() {
 	data.loaded = true;
 	data.flags = ReadFlags();
 	data.lifetime.destroy();
+	LoadExceptions(data);
 	Settings::Changed(
 	) | rpl::on_next([](const QString &key) {
+		if (key == u"ghost.exceptions"_q) {
+			LoadExceptions(Data());
+		}
+		if (key.startsWith(u"ghost.schedule"_q)) {
+			UpdateScheduleLabel();
+			ApplySchedule();
+		}
 		if (key.startsWith(u"ghost."_q) || key == u"filters.hide_blocked"_q) {
 			Refresh();
 		}
 	}, data.lifetime);
+	static auto timer = base::Timer([] { ApplySchedule(); });
+	timer.callEach(30 * crl::time(1000));
+	UpdateScheduleLabel();
+	ApplySchedule();
 }
 
 bool ShouldSendRead() {
@@ -209,6 +528,61 @@ bool ShouldSendTyping() {
 bool ShouldSendStoryView() {
 	const auto &flags = Current();
 	return !(flags.enabled && flags.stories);
+}
+
+bool HidesRead() {
+	const auto &flags = Current();
+	return flags.enabled && flags.read;
+}
+
+bool ReadAllowedFor(not_null<::History*> history) {
+	if (!HidesRead()) {
+		return true;
+	}
+	return Data().exceptions.contains(history->peer->id.value);
+}
+
+bool IsReadException(not_null<PeerData*> peer) {
+	return Data().exceptions.contains(peer->id.value);
+}
+
+void ToggleReadException(not_null<PeerData*> peer) {
+	auto &data = Data();
+	const auto id = peer->id.value;
+	if (data.exceptions.contains(id)) {
+		data.exceptions.remove(id);
+	} else {
+		data.exceptions.emplace(id);
+	}
+	auto list = QStringList();
+	for (const auto value : data.exceptions) {
+		list.push_back(QString::number(value));
+	}
+	Settings::SetString(u"ghost.exceptions"_q, list.join(u","_q));
+}
+
+void ReadNow(not_null<::History*> history) {
+	const auto peer = history->peer;
+	const auto last = history->lastServerMessage();
+	const auto till = last ? last->id : history->maxMsgId();
+	if (!till) {
+		return;
+	}
+	auto &api = peer->session().api();
+	history->inboxRead(till);
+	if (const auto channel = peer->asChannel()) {
+		api.request(MTPchannels_ReadHistory(
+			channel->inputChannel(),
+			MTP_int(till)
+		)).send();
+	} else {
+		api.request(MTPmessages_ReadHistory(
+			peer->input(),
+			MTP_int(till)
+		)).done([=](const MTPmessages_AffectedMessages &result) {
+			peer->session().api().applyAffectedMessages(peer, result);
+		}).send();
+	}
 }
 
 bool HideBlockedEnabled() {

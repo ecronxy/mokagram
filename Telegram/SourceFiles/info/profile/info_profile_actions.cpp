@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_actions.h"
+#include "ui/text/text_options.h"
 
 #include "api/api_blocked_peers.h"
 #include "api/api_chat_participants.h"
@@ -124,6 +125,7 @@ namespace {
 
 constexpr auto kDay = Data::WorkingInterval::kDay;
 constexpr auto kPeerIdLinkIndex = uint16(1);
+constexpr auto kBubbleRadius = 26.;
 
 // Режим стримера: настоящий ник берём из данных, а не из показанного текста.
 [[nodiscard]] QString PrimaryUsername(not_null<PeerData*> peer) {
@@ -267,7 +269,7 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 		AboutValue(peer),
 		Mokagram::Streamer::ActiveValue(Mokagram::Streamer::Field::Id)
 	) | rpl::map([=](TextWithEntities &&value, bool hideId) {
-		if (ShowPeerIdBelowAbout.value()) {
+		if (false && ShowPeerIdBelowAbout.value()) {
 			using namespace Ui::Text;
 			if (!value.empty()) {
 				value.append("\n\n");
@@ -313,7 +315,9 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 void SetupAboutPeerIdDrag(
 		not_null<Ui::FlatLabel*> label,
 		not_null<PeerData*> peer) {
-	if (!ShowPeerIdBelowAbout.value()) {
+	// Mokagram: ID вынесен в отдельную строку, а эта ссылка перехватывала
+	// первое упоминание (@юзернейм) в тексте о себе.
+	if (true || !ShowPeerIdBelowAbout.value()) {
 		return;
 	}
 	const auto id = QString::number(peer->id.value & PeerId::kChatTypeMask);
@@ -1619,6 +1623,10 @@ Section DetailsFiller::makeInfo() {
 		});
 	};
 
+	// Mokagram: строки профиля одной карточкой, без разделителей.
+	const auto paintSeparator = [](not_null<Ui::RpWidget*>) {};
+
+	Ui::SlideWrap<Ui::RpWidget> *lastLineOuter = nullptr;
 	const auto addInfoLineGeneric = [&](
 			v::text::data &&label,
 			rpl::producer<TextWithEntities> &&text,
@@ -1631,9 +1639,27 @@ Section DetailsFiller::makeInfo() {
 			std::move(text),
 			st::infoLabel,
 			textSt,
-			padding,
+			QMargins(
+				18,
+				padding.top() - 2,
+				padding.right(),
+				padding.bottom() - 2),
 			stMenu);
-		tracker.track(result->add(std::move(line.wrap)));
+		{
+			const auto raw = line.wrap.data();
+			const auto outer = result->add(
+				object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
+					result,
+					object_ptr<Ui::RpWidget>(std::move(line.wrap)),
+					QMargins()),
+				{},
+				style::al_justify);
+			paintSeparator(outer);
+			outer->toggleOn(raw->toggledValue());
+			outer->finishAnimating();
+			tracker.track(outer);
+			lastLineOuter = outer;
+		}
 
 		line.text->setClickHandlerFilter(infoClickFilter);
 		return line;
@@ -1803,6 +1829,52 @@ Section DetailsFiller::makeInfo() {
 			};
 			phoneLabel->setContextMenuHook(hook);
 		}
+		if (ShowPeerIdBelowAbout.value()) {
+			const auto raw = QString::number(
+				_peer->id.value & PeerId::kChatTypeMask);
+			const auto idLine = addInfoOneLine(
+				rpl::single(QString::fromUtf8("ID")),
+				Mokagram::Streamer::ActiveValue(
+					Mokagram::Streamer::Field::Id
+				) | rpl::map([=](bool hide) {
+					return tr::marked((hide && user->isSelf())
+						? Mokagram::Streamer::Mask(
+							Mokagram::Streamer::Field::Id,
+							raw)
+						: raw);
+				}),
+				QString::fromUtf8("Копировать ID"));
+			{
+				// Mokagram: клик ловит только строка ID, а не вся карточка.
+				const auto holder = idLine.text->parentWidget();
+				const auto button = Ui::CreateChild<Ui::AbstractButton>(holder);
+				button->setPointerCursor(true);
+				rpl::combine(
+					idLine.text->geometryValue(),
+					idLine.subtext->geometryValue()
+				) | rpl::on_next([=](QRect a, QRect b) {
+					button->setGeometry(a.united(b));
+				}, button->lifetime());
+				const auto copyId = [=, weak = base::make_weak(
+						_controller->parentController())] {
+					if (user->isSelf()
+						&& Mokagram::Streamer::Active(
+							Mokagram::Streamer::Field::Id)) {
+						if (!Mokagram::Streamer::SetClipboard(
+								Mokagram::Streamer::Field::Id,
+								raw)) {
+							return;
+						}
+					} else {
+						TextUtilities::SetClipboardText({ raw });
+					}
+					if (const auto strong = weak.get()) {
+						strong->showToast(QString::fromUtf8("ID скопирован"));
+					}
+				};
+				button->setClickedCallback(copyId);
+			}
+		}
 		auto label = user->isBot()
 			? tr::lng_info_about_label()
 			: tr::lng_info_bio_label();
@@ -1879,15 +1951,44 @@ Section DetailsFiller::makeInfo() {
 		qrButton->setClickedCallback(showQr);
 
 		if (!user->isBot()) {
-			tracker.track(result->add(
-				CreateBirthday(result, controller, user),
-				{},
-				style::al_justify));
-			tracker.track(result->add(
-				CreateWorkingHours(result, user), {}, style::al_justify));
-
-			tracker.track(result->add(
-				CreateNotes(result, controller, user), {}, style::al_justify));
+			// Mokagram: день рождения, часы работы и заметки тоже в капсулах.
+			const auto addBubble = [&](auto widget) {
+				const auto raw = widget.data();
+				const auto outer = result->add(
+					object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
+						result,
+						std::move(widget),
+						QMargins(-5, 0, -5, 0)),
+					{},
+					style::al_justify);
+				paintSeparator(outer);
+				outer->toggleOn(raw->toggledValue());
+				outer->finishAnimating();
+				tracker.track(outer);
+			};
+			// День рождения оформлен как строка «юзернейм», клик как раньше.
+			{
+				auto birthday = BirthdayValue(
+					user
+				) | rpl::start_spawning(result->lifetime());
+				addInfoLine(
+					BirthdayLabelText(rpl::duplicate(birthday)),
+					BirthdayValueMarkedText(user, rpl::duplicate(birthday)));
+				if (const auto outer = lastLineOuter) {
+					const auto button = Ui::CreateChild<Ui::AbstractButton>(
+						outer);
+					button->setPointerCursor(true);
+					outer->sizeValue(
+					) | rpl::on_next([=](QSize size) {
+						button->setGeometry(0, 0, size.width(), size.height());
+					}, button->lifetime());
+					button->setClickedCallback([=] {
+						Ui::ShowStarGiftBox(controller, user);
+					});
+				}
+			}
+			addBubble(CreateWorkingHours(result, user));
+			addBubble(CreateNotes(result, controller, user));
 
 			auto locationText = user->session().changes().peerFlagsValue(
 				user,
@@ -2004,6 +2105,7 @@ Section DetailsFiller::makeInfo() {
 	return Section{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
+		.bare = false,
 	};
 }
 
@@ -2138,8 +2240,8 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 				anim::type animated) {
 			static const auto stUserpic = [] {
 				auto result = st::infoPersonalChannelUserpic;
-				result.size = QSize(56, 56);
-				result.photoSize = 56;
+				result.size = QSize(48, 48);
+				result.photoSize = 48;
 				return result;
 			}();
 			const auto &stLabeled = st::infoProfilePersonalChannelPadding;
@@ -2150,19 +2252,20 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 			const auto inner = messageChannelWrap->entity()->add(
 				object_ptr<Ui::VerticalLayout>(messageChannelWrap->entity()));
 
-			// Mokagram: три строки (название, пост, «Канал • N») с равными
-			// промежутками, аватарка по центру всего блока.
-			constexpr auto kVPad = 14;
-			constexpr auto kRowGap = 6;
+			// Mokagram: сверху «Канал [N подписчиков]», ниже аватарка
+			// по центру блока, название, дата и текст поста в две строки.
+			constexpr auto kVPad = 10;
+			constexpr auto kHeadHeight = 20;
+			constexpr auto kHeadGap = 0;
+			constexpr auto kLineGap = 3;
 			const auto nameHeight
 				= st::infoPersonalChannelNameLabel.style.font->height;
-			const auto previewHeight = st::infoLabeled.style.font->height;
-			const auto labelHeight = st::infoLabel.style.font->height;
-			const auto blockHeight = kVPad
-				+ nameHeight + kRowGap
-				+ previewHeight + kRowGap
-				+ labelHeight
-				+ kVPad;
+			const auto lineHeight = st::infoLabeled.style.font->height;
+			const auto bodyHeight = std::max(
+				int(stUserpic.photoSize),
+				nameHeight + kLineGap + 2 * lineHeight);
+			const auto bodyTop = kVPad + kHeadHeight + kHeadGap;
+			const auto blockHeight = bodyTop + bodyHeight + kVPad;
 			const auto line = inner->add(
 				object_ptr<Ui::FixedHeightWidget>(inner, blockHeight));
 			const auto userpic = Ui::CreateChild<Ui::UserpicButton>(
@@ -2170,9 +2273,6 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 				item->history()->peer,
 				stUserpic);
 
-			userpic->moveToLeft(
-				16,
-				(blockHeight - stUserpic.photoSize) / 2);
 			userpic->setAttribute(Qt::WA_TransparentForMouseEvents);
 
 			const auto date = Ui::CreateChild<Ui::FlatLabel>(
@@ -2185,86 +2285,122 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 				NameValue(item->history()->peer),
 				st::infoPersonalChannelNameLabel);
 
+			static const auto kindStyle = [] {
+				auto result = st::infoLabel;
+				result.style = st::semiboldTextStyle;
+				result.style.font = style::font(14, style::FontFlag::Bold, 0);
+				result.textFg = st::windowActiveTextFg;
+				return result;
+			}();
+			const auto kind = Ui::CreateChild<Ui::FlatLabel>(
+				line,
+				tr::lng_info_personal_channel_label(tr::now),
+				kindStyle);
+			const auto channel = item->history()->peer->asChannel();
+			const auto members = channel ? channel->membersCount() : 0;
+			const auto chipText = (members > 1)
+				? tr::lng_chat_status_subscribers(
+					tr::now,
+					lt_count_decimal,
+					members)
+				: QString();
+			const auto chip = Ui::CreateChild<Ui::RpWidget>(line);
+			chip->setAttribute(Qt::WA_TransparentForMouseEvents);
+			const auto chipFont = style::font(11, 0, 0);
+			constexpr auto kChipHeight = 18;
+			chip->resize(
+				chipText.isEmpty() ? 0 : chipFont->width(chipText) + 16,
+				kChipHeight);
+			chip->paintRequest(
+			) | rpl::on_next([=] {
+				if (chipText.isEmpty()) {
+					return;
+				}
+				auto p = QPainter(chip);
+				auto hq = PainterHighQualityEnabler(p);
+				auto bg = st::windowActiveTextFg->c;
+				bg.setAlpha(36);
+				p.setPen(Qt::NoPen);
+				p.setBrush(bg);
+				p.drawRoundedRect(
+					chip->rect(),
+					chip->height() / 2.,
+					chip->height() / 2.);
+				p.setPen(st::windowActiveTextFg);
+				p.setFont(chipFont);
+				p.drawText(chip->rect(), Qt::AlignCenter, chipText);
+			}, chip->lifetime());
+
 			const auto preview = Ui::CreateChild<Ui::RpWidget>(line);
 			auto &lifetime = preview->lifetime();
-			using namespace Dialogs::Ui;
 			struct State {
-				MessageView view;
+				Ui::Text::String text;
 				HistoryItem *item = nullptr;
 				rpl::lifetime lifetime;
 			};
 			const auto state = lifetime.make_state<State>();
 			state->item = item;
+			state->text.setText(
+				st::infoLabeled.style,
+				item->originalText().text.isEmpty()
+					? item->notificationText().text
+					: item->originalText().text,
+				::Ui::DialogTextOptions());
 			item->history()->session().changes().realtimeMessageUpdates(
 				Data::MessageUpdate::Flag::Destroyed
 			) | rpl::on_next([=](const Data::MessageUpdate &update) {
 				if (update.item == state->item) {
 					state->lifetime.destroy();
 					state->item = nullptr;
+					state->text.setText(
+						st::infoLabeled.style,
+						tr::lng_deleted_message(tr::now),
+						::Ui::DialogTextOptions());
 					preview->update();
 				}
 			}, state->lifetime);
 
-			preview->resize(0, st::infoLabeled.style.font->height);
+			preview->resize(0, 2 * lineHeight);
 			preview->paintRequest(
 			) | rpl::on_next([=] {
 				auto p = Painter(preview);
-				const auto item = state->item;
-				if (!item) {
-					p.setPen(st::infoPersonalChannelDateLabel.textFg);
-					p.setBrush(Qt::NoBrush);
-					p.setFont(st::infoPersonalChannelDateLabel.style.font);
-					p.drawText(
-						preview->rect(),
-						tr::lng_deleted_message(tr::now),
-						style::al_left);
-					return;
-				}
-				if (!state->view.prepared(item, nullptr, nullptr)) {
-					const auto repaint = [=] { preview->update(); };
-					state->view.prepare(
-						item,
-						nullptr,
-						nullptr,
-						repaint,
-						{});
-				}
-				state->view.paint(p, preview->rect(), {
-					.st = &st::defaultDialogRow,
-					.currentBg = st::boxBg->b,
-				});
+				p.setPen(st::windowSubTextFg);
+				state->text.drawElided(p, 0, 0, preview->width(), 2);
 			}, preview->lifetime());
-
-			const auto channelLabel = Ui::CreateChild<Ui::FlatLabel>(
-				line,
-				channelLabelFactory(
-					rpl::single(item->history()->peer->asChannel())),
-				st::infoLabel);
 
 			line->sizeValue() | rpl::filter_size(
 			) | rpl::on_next([=](const QSize &size) {
-				const auto left = stLabeled.left();
-				const auto right = st::infoPersonalChannelDateSkip;
-				const auto top = kVPad;
-				date->moveToRight(right, top, size.width());
+				constexpr auto kSide = 18;
+				const auto left = kSide + 48 + 12;
+				const auto right = kSide;
+				const auto textWidth = size.width() - left - right;
+				kind->moveToLeft(
+					kSide,
+					kVPad + (kHeadHeight - kind->height()) / 2);
+				chip->moveToLeft(
+					kSide + kind->textMaxWidth() + 8,
+					kind->y() + (kind->height() - chip->height()) / 2 + 2);
+				date->moveToRight(right, bodyTop, size.width());
 
 				name->resizeToWidth(size.width()
 					- left
 					- date->width()
 					- st::defaultVerticalListSkip
 					- right);
-				name->moveToLeft(left, top);
-
-				preview->resize(
-					size.width() - left - right,
-					st::infoLabeled.style.font->height);
+				const auto textHeight = std::min(
+					state->text.countHeight(std::max(textWidth, 1)),
+					2 * lineHeight);
+				const auto block = name->height() + kLineGap + textHeight;
+				const auto shift = (bodyHeight - block) / 2;
+				name->moveToLeft(left, bodyTop + shift);
+				date->moveToRight(right, bodyTop + shift, size.width());
+				preview->resize(textWidth, textHeight);
 				preview->moveToLeft(
 					left,
-					top + nameHeight + kRowGap);
-				channelLabel->resizeToWidth(size.width() - left - right);
-				channelLabel->moveToLeft(
-					left,
-					top + nameHeight + kRowGap + previewHeight + kRowGap);
+					bodyTop + shift + name->height() + kLineGap);
+				userpic->moveToLeft(
+					kSide,
+					bodyTop + (bodyHeight - stUserpic.photoSize) / 2);
 			}, preview->lifetime());
 
 			{

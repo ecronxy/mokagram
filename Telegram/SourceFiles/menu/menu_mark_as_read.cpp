@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "menu/menu_mark_as_read.h"
+#include "mokagram/ghost/mokagram_ghost.h"
 
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -93,6 +94,10 @@ void MarkAsReadThread(
 		MarkAsReadMuted muted) {
 	const auto readHistory = [&](not_null<History*> history) {
 		history->owner().histories().readInbox(history);
+		// Явное «прочитать» работает и в режиме Призрака.
+		if (Mokagram::Ghost::HidesRead()) {
+			Mokagram::Ghost::ReadNow(history);
+		}
 	};
 	if (!IsUnreadThread(thread)
 		|| ((muted == MarkAsReadMuted::Skip) && SkipMutedThread(thread))) {

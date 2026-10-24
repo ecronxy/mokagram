@@ -879,7 +879,7 @@ inlineBotsScroll: ScrollArea(defaultSolidScroll) {
 gifsPadding: margins(9px, 5px, 3px, 9px);
 
 emojiSuggestionsDropdown: InnerDropdown(defaultInnerDropdown) {
-	scrollMargin: margins(0px, emojiColorsPadding, 0px, emojiColorsPadding);
+	scrollMargin: margins(10px, 10px, 10px, 10px);
 	scrollPadding: margins(0px, 0px, 0px, 0px);
 }
 emojiSuggestionSize: 40px;
@@ -892,8 +892,8 @@ defaultEmojiSuggestions: EmojiSuggestions {
 	bg: menuBg;
 	overBg: emojiPanHover;
 	textFg: windowFg;
-	fadeLeft: icon {{ "fade_horizontal-flip_horizontal", boxBg }};
-	fadeRight: icon {{ "fade_horizontal", boxBg }};
+	fadeLeft: icon {{ "fade_horizontal-flip_horizontal", menuBg }};
+	fadeRight: icon {{ "fade_horizontal", menuBg }};
 }
 
 mentionHeight: 40px;

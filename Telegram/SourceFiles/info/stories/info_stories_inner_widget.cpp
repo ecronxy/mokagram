@@ -735,6 +735,9 @@ void InnerWidget::refreshEmpty() {
 		});
 		empty->show();
 		_empty = std::move(empty);
+	} else if (knownEmpty && _peer->isSelf()) {
+		// Mokagram: пустую заглушку «Ваши истории» не показываем.
+		_empty = nullptr;
 	} else {
 		_empty = object_ptr<Ui::FlatLabel>(
 			this,

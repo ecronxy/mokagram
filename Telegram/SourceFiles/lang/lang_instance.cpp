@@ -733,7 +733,11 @@ void Instance::applyValue(
 		const QByteArray &key,
 		const QByteArray &originalValue) {
 	// Mokagram: единственная точка подмены названия клиента в строках.
-	const auto value = Mokagram::Misc::BrandRewrite(originalValue);
+	// Ссылки на официальные FAQ и описание возможностей ведут в Telegram.
+	const auto value = (key == "lng_settings_faq"
+		|| key == "lng_settings_features")
+		? originalValue
+		: Mokagram::Misc::BrandRewrite(originalValue);
 	_nonDefaultValues[key] = value;
 	ParseKeyValue(key, value, [&](ushort key, QString &&value) {
 		_nonDefaultSet[key] = 1;

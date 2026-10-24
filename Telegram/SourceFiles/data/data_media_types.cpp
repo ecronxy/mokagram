@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_media_types.h"
+#include "mokagram/history/mokagram_history.h"
 
 #include "base/random.h"
 #include "boxes/send_credits_box.h" // CreditsEmoji.
@@ -860,6 +861,13 @@ MediaPhoto::MediaPhoto(
 , _spoiler(args.spoiler) {
 	parent->history()->owner().registerPhotoItem(_photo, parent);
 
+	if (_ttlSeconds && Mokagram::History::KeepSelfDestruct()) {
+		const auto id = parent->fullId();
+		InvokeQueued(qApp, crl::guard(&parent->history()->session(), [=] {
+			photo->load(Data::PhotoSize::Large, id);
+		}));
+	}
+
 	if (_spoiler) {
 		Ui::PreloadImageSpoiler();
 	}
@@ -1009,7 +1017,7 @@ bool MediaPhoto::hasSpoiler() const {
 }
 
 crl::time MediaPhoto::ttlSeconds() const {
-	return _ttlSeconds;
+	return Mokagram::History::KeepSelfDestruct() ? 0 : _ttlSeconds;
 }
 
 bool MediaPhoto::allowsForward() const {
@@ -1096,7 +1104,13 @@ MediaFile::MediaFile(
 , _spoiler(args.spoiler) {
 	parent->history()->owner().registerDocumentItem(_document, parent);
 
-	if (_ttlSeconds) {
+	if (_ttlSeconds && Mokagram::History::KeepSelfDestruct()) {
+		const auto id = parent->fullId();
+		const auto raw = _document;
+		InvokeQueued(qApp, crl::guard(&parent->history()->session(), [=] {
+			raw->save(id, QString());
+		}));
+	} else if (_ttlSeconds) {
 		_document->setForbidsFileSave();
 	}
 
@@ -1425,7 +1439,7 @@ bool MediaFile::hasSpoiler() const {
 }
 
 crl::time MediaFile::ttlSeconds() const {
-	return _ttlSeconds;
+	return Mokagram::History::KeepSelfDestruct() ? 0 : _ttlSeconds;
 }
 
 bool MediaFile::allowsForward() const {

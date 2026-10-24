@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include <QtGui/QBitmap>
 
 #include "apiwrap.h"
 #include "base/event_filter.h"
@@ -77,6 +78,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_settings.h"
 #include "styles/style_wallet.h"
 #include "styles/style_window.h"
+#include "styles/style_layers.h"
+#include "styles/style_info.h"
 #include "styles/style_window_main_menu.h"
 #include "mokagram/streamer/mokagram_streamer.h"
 
@@ -317,7 +320,16 @@ MainMenu::MainMenu(
 , _userpicButton(
 	this,
 	_controller->session().user(),
-	st::mainMenuUserpic)
+	[] {
+		// Mokagram: аватарка в шапке крупнее.
+		static const auto result = [] {
+			auto copy = st::mainMenuUserpic;
+			copy.size = QSize(64, 64);
+			copy.photoSize = 64;
+			return copy;
+		}();
+		return std::cref(result);
+	}().get())
 , _toggleAccounts(this, &controller->session().account())
 , _setEmojiStatus(this, SetStatusLabel(&controller->session()))
 , _emojiStatusPanel(std::make_unique<Info::Profile::EmojiStatusPanel>())
@@ -348,7 +360,7 @@ MainMenu::MainMenu(
 , _telegram(
 	Ui::CreateChild<Ui::FlatLabel>(_footer.get(), st::mainMenuTelegramLabel))
 , _version(AddVersionLabel(_footer)) {
-	setAttribute(Qt::WA_OpaquePaintEvent);
+	setProperty("moka-main-menu", true);
 
 	// Режим стримера: имя в шапке рисуется без rpl, сбрасываем кэш текста.
 	Mokagram::Streamer::Changed(
@@ -360,16 +372,15 @@ MainMenu::MainMenu(
 	setupUserpicButton();
 	setupAccountsToggle();
 	setupSetEmojiStatus();
+	rpl::merge(
+		_userpicButton->sizeValue() | rpl::to_empty,
+		_setEmojiStatus->sizeValue() | rpl::to_empty
+	) | rpl::on_next([=] {
+		updateControlsGeometry();
+	}, lifetime());
 	setupAccounts();
 	setupArchive();
 	setupMenu();
-
-	const auto shadow = Ui::CreateChild<Ui::PlainShadow>(this);
-	widthValue(
-	) | rpl::on_next([=](int width) {
-		const auto line = st::lineWidth;
-		shadow->setGeometry(0, st::mainMenuCoverHeight - line, width, line);
-	}, shadow->lifetime());
 
 	_nightThemeSwitch.setCallback([this] {
 		Expects(_nightThemeToggle != nullptr);
@@ -397,7 +408,7 @@ MainMenu::MainMenu(
 	parentResized();
 
 	_telegram->setMarkedText(tr::link(
-		u"Telegram Desktop"_q,
+		u"mokaGram Desktop"_q,
 		u"https://desktop.telegram.org"_q));
 	_telegram->setLinksTrusted();
 	// The canary version is too long for the "Version {version}" form.
@@ -408,7 +419,7 @@ MainMenu::MainMenu(
 				: tr::lng_settings_current_version(
 					tr::now,
 					lt_version,
-					currentVersionShortText()),
+					u"Beta"_q),
 			1) // Link 1.
 		.append(QChar(' '))
 		.append(QChar(8211))
@@ -485,12 +496,12 @@ void MainMenu::moveBadge() {
 	if (!_badge->widget()) {
 		return;
 	}
-	const auto available = width()
-		- st::mainMenuCoverNameLeft
-		- _toggleAccounts->rightSkip()
-		- _badge->widget()->width();
-	const auto left = st::mainMenuCoverNameLeft
-		+ std::min(_name.maxWidth() + st::semiboldFont->spacew, available);
+	const auto nameWidth = std::min(
+		_name.maxWidth(),
+		width() - 2 * st::mainMenuCoverNameLeft
+			- 2 * (st::semiboldFont->spacew + _badge->widget()->width()));
+	const auto left = (width() + nameWidth) / 2
+		+ st::semiboldFont->spacew;
 	_badge->move(
 		left,
 		st::mainMenuCoverNameTop,
@@ -535,10 +546,11 @@ void MainMenu::setupArchive() {
 		auto result = st::mainMenuButton;
 		result.padding = style::margins(
 			result.padding.left() + 6,
-			result.padding.top() + 6,
+			result.padding.top() + 3,
 			result.padding.right(),
-			result.padding.bottom() + 6);
+			result.padding.bottom() + 3);
 		result.iconLeft += 4;
+		result.textBg = st::mainMenuBg;
 		return result;
 	}();
 	const auto button = inner->add(
@@ -547,7 +559,7 @@ void MainMenu::setupArchive() {
 			tr::lng_archived_name(),
 			archiveStyle,
 			{ &st::menuIconArchiveOpen }),
-		QMargins(12, 4, 12, 4));
+		QMargins(10, 1, 10, 1));
 	Mokagram::Plugins::MakePill(button, [] { return st::mainMenuBg->c; });
 	button->setAcceptBoth(true);
 	button->clicks(
@@ -638,7 +650,7 @@ void MainMenu::setupAccounts() {
 	_accounts->toggleOn(Core::App().settings().mainMenuAccountsShownValue());
 	_accounts->finishAnimating();
 
-	_shadow->setDuration(0)->toggleOn(_accounts->shownValue());
+	_shadow->toggle(false, anim::type::instant);
 }
 
 void MainMenu::setupAccountsToggle() {
@@ -682,13 +694,14 @@ void MainMenu::setupMenu() {
 		auto result = st::mainMenuButton;
 		result.padding = style::margins(
 			result.padding.left() + 6,
-			result.padding.top() + 6,
+			result.padding.top() + 3,
 			result.padding.right(),
-			result.padding.bottom() + 6);
+			result.padding.bottom() + 3);
 		result.iconLeft += 4;
+		result.textBg = st::mainMenuBg;
 		return result;
 	}();
-	const auto pillMargins = QMargins(12, 4, 12, 4);
+	const auto pillMargins = QMargins(10, 1, 10, 1);
 	const auto menuBg = [] { return st::mainMenuBg->c; };
 	const auto addAction = [&](
 			rpl::producer<QString> text,
@@ -846,13 +859,15 @@ void MainMenu::resizeEvent(QResizeEvent *e) {
 
 void MainMenu::updateControlsGeometry() {
 	_userpicButton->moveToLeft(
-		st::mainMenuUserpicLeft,
-		st::mainMenuUserpicTop);
+		(width() - 64) / 2,
+		st::mainMenuUserpicTop - 6);
 	if (_resetScaleButton) {
 		_resetScaleButton->moveToRight(0, 0);
 	}
 	_setEmojiStatus->moveToLeft(
-		st::mainMenuCoverStatusLeft,
+		std::max(
+			(width() - _setEmojiStatus->naturalWidth()) / 2,
+			st::mainMenuCoverStatusLeft),
 		st::mainMenuCoverStatusTop,
 		width());
 	_toggleAccounts->setGeometry(
@@ -928,7 +943,28 @@ void MainMenu::paintEvent(QPaintEvent *e) {
 	const auto clip = e->rect();
 	const auto cover = QRect(0, 0, width(), st::mainMenuCoverHeight);
 
-	p.fillRect(clip, st::mainMenuBg);
+	// Mokagram: правые углы меню скруглены, как у профиля.
+	constexpr auto kRadius = 32;
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	{
+		// Углы закрашены тем, что под меню, с тем же затемнением слоя.
+		auto corners = QPainterPath();
+		corners.addRect(QRectF(0, 0, width(), height()));
+		auto body = QPainterPath();
+		body.addRoundedRect(
+			QRectF(-kRadius, 0, width() + kRadius, height()),
+			kRadius,
+			kRadius);
+		corners = corners.subtracted(body);
+		p.setBrush(st::layerBg);
+		p.drawPath(corners);
+	}
+	p.setBrush(st::mainMenuBg);
+	p.drawRoundedRect(
+		QRectF(-kRadius, 0, width() + kRadius, height()),
+		kRadius,
+		kRadius);
 	if (cover.intersects(clip)) {
 		drawName(p);
 	}
@@ -952,16 +988,19 @@ void MainMenu::drawName(Painter &p) {
 			Ui::NameTextOptions());
 		moveBadge();
 	}
+	const auto badgeWidth = _badge->widget()
+		? (st::semiboldFont->spacew + _badge->widget()->width())
+		: 0;
+	const auto nameWidth = std::min(
+		_name.maxWidth(),
+		widthText - 2 * badgeWidth);
 	p.setFont(st::semiboldFont);
 	p.setPen(st::windowBoldFg);
 	_name.drawLeftElided(
 		p,
-		st::mainMenuCoverNameLeft,
+		(width() - nameWidth) / 2,
 		st::mainMenuCoverNameTop,
-		(widthText
-			- (_badge->widget()
-				? (st::semiboldFont->spacew + _badge->widget()->width())
-				: 0)),
+		nameWidth,
 		width());
 }
 

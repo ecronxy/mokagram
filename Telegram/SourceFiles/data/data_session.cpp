@@ -96,6 +96,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 #include "spellcheck/spellcheck_highlight_syntax.h"
 
+namespace Mokagram::Badges {
+void Apply(not_null<UserData*> user);
+} // namespace Mokagram::Badges
+
 namespace Data {
 namespace {
 
@@ -928,6 +932,7 @@ not_null<UserData*> Session::processUser(const MTPUser &data) {
 		}
 	}
 
+	Mokagram::Badges::Apply(result);
 	if (flags) {
 		session().changes().peerUpdated(result, flags);
 	}

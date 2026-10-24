@@ -280,8 +280,8 @@ infoLayerTopBarBack: IconButton(infoTopBarBack) {
 	iconPosition: point(10px, -1px);
 	icon: infoLayerTopBarBackIcon;
 	iconOver: infoLayerTopBarBackIconOver;
-	rippleAreaSize: 40px;
-	rippleAreaPosition: point(6px, 8px);
+	rippleAreaSize: 36px;
+	rippleAreaPosition: point(10px, 10px);
 }
 infoLayerTopBarMediaCancel: IconButton(infoLayerTopBarBack) {
 	width: 48px;
@@ -374,7 +374,7 @@ infoLayerTopBar: InfoTopBar(infoTopBar) {
 	storiesUnpin: infoLayerTopBarUnpinStories;
 	search: infoTopBarSearch;
 	searchRow: infoTopBarSearchRow;
-	radius: boxRadius;
+	radius: 32px;
 }
 
 infoLayerTopBarMenuPosition: point(48px, 37px);
@@ -615,8 +615,8 @@ infoProfileToggleOver: Toggle(infoProfileToggle) {
 infoProfileButton: SettingsButton(defaultSettingsButton) {
 	style: defaultTextStyle;
 
-	padding: margins(79px, 14px, 8px, 14px);
-	iconLeft: 22px;
+	padding: margins(62px, 14px, 8px, 14px);
+	iconLeft: 20px;
 
 	toggle: infoProfileToggle;
 	toggleOver: infoProfileToggleOver;
@@ -721,7 +721,7 @@ infoMediaTabsMinBodyWidth: infoMediaMinGridSize + infoMediaSkip + infoMediaSkip 
 
 infoProfileTabsStrip: ProfileTabsStrip {
 	height: 48px;
-	margin: margins(8px, 6px, 8px, 6px);
+	margin: margins(8px, 9px, 8px, 6px);
 	skip: 0px;
 	tabPadding: margins(16px, 0px, 16px, 0px);
 	activeSkip: 4px;

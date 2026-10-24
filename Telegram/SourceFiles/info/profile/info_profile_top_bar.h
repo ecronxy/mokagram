@@ -266,7 +266,7 @@ private:
 
 	const bool _hasActions;
 	const bool _hasBalance;
-	const int _balanceReserve;
+	int _balanceReserve = 0;
 	const int _minForProgress;
 	std::unique_ptr<BalancePill> _balancePill;
 

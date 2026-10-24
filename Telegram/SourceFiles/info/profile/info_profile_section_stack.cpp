@@ -39,18 +39,24 @@ namespace {
 		Fn<void(not_null<Ui::FlatLabel*>)> setup) {
 	auto inner = object_ptr<Ui::VerticalLayout>(layout);
 	Ui::AddSkip(inner.data(), st::infoProfileSkip);
+	// Mokagram: подпись под карточкой по центру.
+	static const auto centered = [] {
+		auto result = st::defaultDividerLabel.label;
+		result.align = style::al_top;
+		return result;
+	}();
 	auto label = object_ptr<Ui::FlatLabel>(
 		inner.data(),
 		std::move(text),
-		st::defaultDividerLabel.label);
+		centered);
 	const auto rawLabel = label.data();
-	inner->add(object_ptr<Ui::DividerLabel>(
-		inner.data(),
+	// Mokagram: без серой полосы-подложки, просто подпись под карточкой.
+	inner->add(
 		std::move(label),
-		st::defaultBoxDividerLabelPadding,
-		st::defaultDividerLabel.bar,
-		RectPart::Top | RectPart::Bottom));
-	Ui::AddSkip(inner.data(), st::infoProfileSkip);
+		style::margins(26, 0, 26, 0),
+		style::al_top);
+	// Mokagram: снизу запас больше, чтобы подпись стояла посередине между карточками.
+	Ui::AddSkip(inner.data(), st::infoProfileSkip + 14);
 	const auto wrap = layout->add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 			layout,
@@ -61,7 +67,7 @@ namespace {
 	return wrap;
 }
 
-constexpr auto kCardRadius = 22;
+constexpr auto kCardRadius = 28;
 
 // Mokagram: секция профиля как отдельная скруглённая таблетка.
 // Фон рисуется под содержимым, а углы закрывают четыре маленьких виджета
@@ -82,6 +88,7 @@ void MakeCard(not_null<Ui::RpWidget*> card) {
 	struct State {
 		std::vector<Corner> corners;
 		int radius = kCardRadius;
+		bool raiseScheduled = false;
 	};
 	const auto state = card->lifetime().make_state<State>();
 	for (const auto right : { false, true }) {
@@ -106,8 +113,8 @@ void MakeCard(not_null<Ui::RpWidget*> card) {
 			state->corners.push_back({ corner, right, bottom });
 		}
 	}
-	card->sizeValue(
-	) | rpl::on_next([=](QSize size) {
+	const auto sync = [=] {
+		const auto size = card->size();
 		const auto r = std::max(1, std::min(
 			kCardRadius,
 			std::min(size.width(), size.height()) / 2));
@@ -117,10 +124,37 @@ void MakeCard(not_null<Ui::RpWidget*> card) {
 			corner.widget->move(
 				corner.right ? size.width() - r : 0,
 				corner.bottom ? size.height() - r : 0);
+			corner.widget->show();
 			corner.widget->update();
 			corner.widget->raise();
 		}
+	};
+	// Строки секции создаются заново (например, после выхода из режима
+	// редактирования) и оказываются выше углов, а размер может прийти
+	// раньше показа: пересчитываем углы при любом таком событии.
+	card->events(
+	) | rpl::filter([](not_null<QEvent*> e) {
+		const auto type = e->type();
+		return (type == QEvent::Show) || (type == QEvent::Resize);
+	}) | rpl::on_next([=](not_null<QEvent*>) {
+		sync();
 	}, card->lifetime());
+	card->events(
+	) | rpl::filter([](not_null<QEvent*> e) {
+		const auto type = e->type();
+		return (type == QEvent::ChildAdded)
+			|| (type == QEvent::LayoutRequest);
+	}) | rpl::on_next([=](not_null<QEvent*>) {
+		if (state->raiseScheduled) {
+			return;
+		}
+		state->raiseScheduled = true;
+		Ui::PostponeCall(card, [=] {
+			state->raiseScheduled = false;
+			sync();
+		});
+	}, card->lifetime());
+	sync();
 }
 
 } // namespace
@@ -137,6 +171,7 @@ void SectionStack::add(Section section) {
 		.type = RowType::Block,
 		.widget = std::move(section.widget),
 		.shown = std::move(section.shown),
+		.bare = section.bare,
 	});
 }
 
@@ -241,7 +276,7 @@ void SectionStack::finalize() {
 
 	_finalized = true;
 
-	Ui::AddSkip(_layout, st::infoProfileSkip);
+	Ui::AddSkip(_layout, st::infoProfileSkip + 5);
 
 	const auto count = int(_rows.size());
 	auto kinds = std::vector<RowType>();
@@ -261,12 +296,19 @@ void SectionStack::finalize() {
 		case RowType::Block: {
 			auto shown = shownOrTrue(std::move(row.shown));
 			const auto inner = row.widget.data();
-			MakeCard(inner);
+			if (!row.bare) {
+				MakeCard(inner);
+			}
+			// Карточки разной природы дают разные внешние поля (0 или 5),
+			// выравниваем так, чтобы видимая ширина везде была одинаковой.
+			const auto side = 11 + inner->getMargins().left();
 			const auto wrap = _layout->add(
 				object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
 					_layout,
 					std::move(row.widget),
-					QMargins(14, 5, 14, 5)));
+					QMargins(side, 0, side, 12)),
+				QMargins(),
+				style::al_justify);
 			wrap->toggleOn(rpl::duplicate(shown), anim::type::instant);
 			intrinsic.push_back(std::move(shown));
 			break;
@@ -285,7 +327,11 @@ void SectionStack::finalize() {
 		}
 	}
 
-	Ui::AddSkip(_layout, st::infoProfileSkip);
+	// Mokagram: у последней карточки нижнее поле гасим, остаётся край панели.
+	_layout->add(
+		object_ptr<Ui::FixedHeightWidget>(_layout, 0),
+		QMargins(0, -12, 0, 0));
+
 
 	if (intrinsic.empty()) {
 		return;

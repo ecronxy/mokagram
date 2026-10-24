@@ -546,22 +546,69 @@ void SessionNavigation::resolveUsername(
 	}
 	_api.request(base::take(_resolveRequestId)).cancel();
 	using Flag = MTPcontacts_ResolveUsername::Flag;
-	_resolveRequestId = _api.request(MTPcontacts_ResolveUsername(
-		MTP_flags(referral.isEmpty() ? Flag() : Flag::f_referer),
+	const auto resolve = [=] {
+		_resolveRequestId = _api.request(MTPcontacts_ResolveUsername(
+			MTP_flags(referral.isEmpty() ? Flag() : Flag::f_referer),
+			MTP_string(username),
+			MTP_string(referral)
+		)).done([=](const MTPcontacts_ResolvedPeer &result) {
+			resolveDone(result, done);
+		}).fail([=](const MTP::Error &error) {
+			_resolveRequestId = 0;
+			if (error.type() == u"STARREF_EXPIRED"_q) {
+				parentController()->showToast(tr::lng_star_ref_stopped(tr::now));
+			} else if (error.code() == 400) {
+				parentController()->show(
+					Ui::MakeInformBox(
+						tr::lng_username_not_found(
+							tr::now,
+							lt_user,
+							username)),
+					Ui::LayerOption::CloseOther);
+			} else {
+				parentController()->showToast(error.type());
+			}
+		}).send();
+	};
+	if (!referral.isEmpty()) {
+		resolve();
+		return;
+	}
+	// Mokagram: ResolveUsername при FLOOD_WAIT висит в очереди часами и
+	// ссылки «не открываются». Сначала ищем юзернейм обычным поиском.
+	_resolveRequestId = _api.request(MTPcontacts_Search(
+		MTP_flags(0),
 		MTP_string(username),
-		MTP_string(referral)
-	)).done([=](const MTPcontacts_ResolvedPeer &result) {
-		resolveDone(result, done);
-	}).fail([=](const MTP::Error &error) {
-		_resolveRequestId = 0;
-		if (error.type() == u"STARREF_EXPIRED"_q) {
-			parentController()->showToast(tr::lng_star_ref_stopped(tr::now));
-		} else if (error.code() == 400) {
-			parentController()->show(
-				Ui::MakeInformBox(
-					tr::lng_username_not_found(tr::now, lt_user, username)),
-				Ui::LayerOption::CloseOther);
+		MTP_int(10)
+	)).done([=](const MTPcontacts_Found &result) {
+		auto found = (PeerData*)nullptr;
+		result.match([&](const MTPDcontacts_found &data) {
+			_session->data().processUsers(data.vusers());
+			_session->data().processChats(data.vchats());
+			const auto lower = username.toLower();
+			const auto check = [&](const MTPVector<MTPPeer> &list) {
+				for (const auto &peer : list.v) {
+					const auto loaded = _session->data().peerLoaded(
+						peerFromMTP(peer));
+					if (loaded
+						&& !found
+						&& loaded->username().toLower() == lower) {
+						found = loaded;
+					}
+				}
+			};
+			check(data.vmy_results());
+			check(data.vresults());
+		});
+		if (found) {
+			_resolveRequestId = 0;
+			parentController()->hideLayer();
+			done(found);
+		} else {
+			resolve();
 		}
+	}).fail([=](const MTP::Error &e) {
+		resolve();
 	}).send();
 }
 

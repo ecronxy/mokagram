@@ -1626,7 +1626,10 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 					: QString();
 				for (; from < to; ++from) {
 					const auto &result = _previewResults[from];
-					const auto active = isSearchResultActive(result.get(), activeEntry);
+					const auto picked = result->item()
+						&& _pickedResults.contains(result->item()->fullId());
+					const auto active = picked
+						|| isSearchResultActive(result.get(), activeEntry);
 					const auto selected = _menuRow.key
 						? isSearchResultActive(result.get(), _menuRow)
 						: _chatPreviewRow.key
@@ -1650,6 +1653,14 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 						.narrow = (fullWidth < st::columnMinimalWidthLeft / 2),
 						.displayUnreadInfo = showUnreadInSearchResults,
 					});
+					if (picked) {
+						p.fillRect(
+							0,
+							0,
+							fullWidth,
+							_st->height,
+							QColor(10, 132, 255, 70));
+					}
 					p.translate(0, _st->height);
 				}
 			}
@@ -1710,7 +1721,10 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 			if (from < _searchResults.size()) {
 				for (; from < to; ++from) {
 					const auto &result = _searchResults[from];
-					const auto active = isSearchResultActive(result.get(), activeEntry);
+					const auto picked = result->item()
+						&& _pickedResults.contains(result->item()->fullId());
+					const auto active = picked
+						|| isSearchResultActive(result.get(), activeEntry);
 					const auto selected = _menuRow.key
 						? isSearchResultActive(result.get(), _menuRow)
 						: _chatPreviewRow.key
@@ -1734,6 +1748,14 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 						.narrow = (fullWidth < st::columnMinimalWidthLeft / 2),
 						.displayUnreadInfo = showUnreadInSearchResults,
 					});
+					if (picked) {
+						p.fillRect(
+							0,
+							0,
+							fullWidth,
+							_st->height,
+							QColor(10, 132, 255, 70));
+					}
 					p.translate(0, _st->height);
 				}
 			}
@@ -3128,6 +3150,14 @@ void InnerWidget::mousePressReleased(
 				}
 			} else if (pressedRightButton && peerSearchPressed >= 0) {
 				showSponsoredMenu(peerSearchPressed, globalPosition);
+			} else if (searchedPressed >= 0
+				&& searchedPressed == _searchedSelected
+				&& pressButton == Qt::LeftButton
+				&& base::in_range(searchedPressed, 0, _searchResults.size())
+				&& _searchResults[searchedPressed]->item()
+				&& (!_pickedResults.empty()
+					|| (modifiers & (Qt::ControlModifier | Qt::ShiftModifier)))) {
+				togglePicked(_searchResults[searchedPressed]->item()->fullId());
 			} else {
 				chooseRow(
 					modifiers,
@@ -4042,6 +4072,21 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 		if (session().supportMode()) {
 			fillSupportSearchMenu(_menu.get());
 		}
+		const auto pickId = row.fullId;
+		_menu->addAction(
+			tr::lng_selected_forward(tr::now),
+			[=] {
+				Window::ShowForwardMessagesBox(
+					_controller,
+					MessageIdsList{ pickId });
+			},
+			&st::menuIconForward);
+		_menu->addAction(
+			_pickedResults.contains(pickId)
+				? tr::lng_cancel(tr::now)
+				: tr::lng_context_select_msg(tr::now),
+			[=] { togglePicked(pickId); },
+			&st::menuIconSelect);
 	} else {
 		const auto addAction = Ui::Menu::CreateAddActionCallback(_menu);
 		Window::FillDialogsEntryMenu(
@@ -4450,6 +4495,7 @@ void InnerWidget::clearSearchResults(bool alsoPeerSearchResults) {
 		clearPeerSearchResults();
 	}
 	_searchResults.clear();
+	clearPicked();
 	_searchedCount = _searchedMigratedCount = 0;
 }
 
@@ -4617,6 +4663,46 @@ rpl::producer<> InnerWidget::listBottomReached() const {
 
 rpl::producer<ChatSearchTab> InnerWidget::changeSearchTabRequests() const {
 	return _changeSearchTabRequests.events();
+}
+
+rpl::producer<int> InnerWidget::pickedCountValue() const {
+	return _pickedCount.value();
+}
+
+MessageIdsList InnerWidget::pickedItems() const {
+	auto result = MessageIdsList();
+	for (const auto &row : _searchResults) {
+		if (const auto item = row->item()) {
+			if (_pickedResults.contains(item->fullId())) {
+				result.push_back(item->fullId());
+			}
+		}
+	}
+	return result;
+}
+
+void InnerWidget::togglePicked(FullMsgId id) {
+	if (_pickedResults.contains(id)) {
+		_pickedResults.remove(id);
+	} else {
+		_pickedResults.emplace(id);
+	}
+	_pickedCount = int(_pickedResults.size());
+	update();
+}
+
+void InnerWidget::clearPicked() {
+	if (_pickedResults.empty()) {
+		return;
+	}
+	_pickedResults.clear();
+	_pickedCount = 0;
+	update();
+}
+
+auto InnerWidget::changeSearchMediaRequests() const
+-> rpl::producer<std::pair<int, int>> {
+	return _changeSearchMediaRequests.events();
 }
 
 auto InnerWidget::changeSearchFilterRequests() const
@@ -5258,6 +5344,9 @@ void InnerWidget::updateSearchIn() {
 		_searchIn->tabChanges() | rpl::start_to_stream(
 			_changeSearchTabRequests,
 			_searchIn->lifetime());
+		_searchIn->mediaChanges() | rpl::start_to_stream(
+			_changeSearchMediaRequests,
+			_searchIn->lifetime());
 	}
 
 	const auto sublist = _searchState.inChat.sublist();
@@ -5331,7 +5420,12 @@ void InnerWidget::updateSearchIn() {
 		{ ChatSearchTab::Archive, archiveIcon },
 		{ ChatSearchTab::MyMessages, myIcon },
 		{ ChatSearchTab::PublicPosts, publicIcon },
-	}, _searchState.tab, peerTabType, fromImage, fromName);
+	}, _searchState.tab, peerTabType, fromImage, fromName,
+		_searchState.media,
+		_searchState.period,
+		(peer && _searchState.inChat)
+			? Ui::MakeIconThumbnail(st::menuIconShowAll)
+			: nullptr);
 }
 
 void InnerWidget::repaintSearchResult(int index) {

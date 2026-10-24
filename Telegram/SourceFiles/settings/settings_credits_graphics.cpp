@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_credits_graphics.h"
+#include "ui/effects/ministar_particles.h"
+#include "ui/effects/animations.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 
 #include "api/api_chat_invite.h"
 #include "api/api_credits.h"
@@ -1471,14 +1474,14 @@ void GenericCreditsEntryCover(
 	const auto isStarGift = e.stargift || e.soldOutInfo;
 	const auto uniqueGift = e.uniqueGift.get();
 
-	box->setStyle(st.box ? *st.box : st::giveawayGiftCodeBox);
+	Mokagram::Plugins::RoundedKeepButtons(
+		box,
+		st.box ? *st.box : st::giveawayGiftCodeBox);
 	box->setWidth(st::boxWideWidth);
 	box->setNoContentMargin(true);
 
 	const auto content = box->verticalLayout();
 	if (!uniqueGift) {
-		Ui::AddSkip(content);
-		Ui::AddSkip(content);
 		Ui::AddSkip(content);
 	}
 
@@ -1661,11 +1664,53 @@ void GenericCreditsEntryCover(
 				}
 			}
 		}, icon->lifetime());
+		// Mokagram: вокруг подарка плывут золотые звёздочки.
+		const auto sparks = Ui::CreateChild<Ui::RpWidget>(content);
+		sparks->setAttribute(Qt::WA_TransparentForMouseEvents);
+		sparks->stackUnder(icon);
+		struct Sparks final {
+			std::optional<Ui::StarParticles> particles;
+			Ui::Animations::Basic animation;
+		};
+		const auto sp = sparks->lifetime().make_state<Sparks>();
+		sp->particles.emplace(Ui::StarParticles::Type::RadialInside, 36, 14);
+		sp->particles->setSpeed(0.05);
+		sp->particles->setColors({
+			QColor(255, 214, 102),
+			QColor(255, 190, 60),
+			QColor(255, 236, 170),
+		});
+		sp->animation.init([=] { sparks->update(); });
+		if (!anim::Disabled()) {
+			sp->animation.start();
+		}
+		sparks->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(sparks);
+			sp->particles->paint(p, sparks->rect(), crl::now(), false);
+		}, sparks->lifetime());
 		content->sizeValue(
 		) | rpl::on_next([=](const QSize &size) {
-			icon->move((size.width() - icon->width()) / 2, isStarGift
+			sparks->setGeometry(
+				(size.width() - icon->width() - 200) / 2,
+				icon->y() - 30,
+				icon->width() + 200,
+				icon->height() + 60);
+		}, sparks->lifetime());
+		icon->geometryValue(
+		) | rpl::on_next([=](QRect rect) {
+			sparks->setGeometry(
+				rect.center().x() - (rect.width() + 200) / 2,
+				rect.y() - 30,
+				rect.width() + 200,
+				rect.height() + 60);
+		}, sparks->lifetime());
+		content->sizeValue(
+		) | rpl::on_next([=](const QSize &size) {
+			// Mokagram: анимация ближе к заголовку.
+			icon->move((size.width() - icon->width()) / 2, 6 + (isStarGift
 				? st::creditsHistoryEntryStarGiftSkip
-				: st::creditsHistoryEntryGiftStickerSkip);
+				: st::creditsHistoryEntryGiftStickerSkip));
 		}, icon->lifetime());
 	} else if (!e.postsSearch) {
 		const auto widget = content->add(
@@ -2049,7 +2094,10 @@ void GenericCreditsEntryBody(
 	}
 
 	const auto arrow = Ui::Text::IconEmoji(&st::textMoreIconEmoji);
-	if (!uniqueGift && (starGiftCanManage || e.converted)) {
+	// Mokagram: пояснение про обмен на звёзды убрано, остаётся только возврат.
+	if (!uniqueGift
+		&& (starGiftCanManage || e.converted)
+		&& e.giftRefunded) {
 		Ui::AddSkip(content);
 		const auto about = box->addRow(
 			object_ptr<Ui::FlatLabel>(
@@ -2346,7 +2394,7 @@ void GenericCreditsEntryBody(
 
 	const auto showNextToUpgrade = e.nextToUpgradeShow;
 	if (!isStarGift && e.credits.stars() && e.credits.value()) {
-		box->addRow(CreateCreditsTermsLabel(box), style::al_top);
+		// Mokagram: подпись про пользовательское соглашение убрана.
 	} else if (starGiftCanManage) {
 		const auto hiddenPhrase = giftToChannelCanManage
 			? tr::lng_gift_hidden_hint_channel
@@ -2406,7 +2454,7 @@ void GenericCreditsEntryBody(
 			return false;
 		});
 	} else if (e.credits.stars() && e.credits.value()) {
-		box->addRow(CreateCreditsTermsLabel(box), style::al_top);
+		// Mokagram: подпись про пользовательское соглашение убрана.
 	} else {
 		addGiftLinkTON();
 	}

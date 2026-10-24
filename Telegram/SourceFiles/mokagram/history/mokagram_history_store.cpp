@@ -550,7 +550,13 @@ void Store::loadPage(
 		auto result = std::vector<Snapshot>();
 		auto sql = QByteArray(
 			"SELECT peer,topic,id,kind,date,event,from_id,text,ents,media,tl"
-			" FROM msg WHERE peer=?1 AND kind=?2");
+			" FROM msg WHERE (?1=0 OR peer=?1) AND kind=?2");
+		if (query.since) {
+			sql += " AND event>=?8";
+		}
+		if (!query.mediaLike.isEmpty()) {
+			sql += " AND media LIKE ?9";
+		}
 		if (query.id) {
 			sql += " AND id=?5";
 		}
@@ -571,6 +577,12 @@ void Store::loadPage(
 			stmt.bind(6, int64(query.limit));
 			if (query.minId) {
 				stmt.bind(7, query.minId);
+			}
+			if (query.since) {
+				stmt.bind(8, int64(query.since));
+			}
+			if (!query.mediaLike.isEmpty()) {
+				stmt.bind(9, query.mediaLike);
 			}
 			while (stmt.step()) {
 				auto &row = result.emplace_back();

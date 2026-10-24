@@ -431,6 +431,9 @@ private:
 	std::vector<Data::ReactionId> _searchQueryTags;
 	ChatSearchTab _searchQueryTab = {};
 	ChannelData *_searchQueryCommunity = nullptr;
+	int _searchQueryMedia = 0;
+	int _searchQueryPeriod = 0;
+	int _searchPeriodShown = 0;
 	ChatTypeFilter _searchQueryFilter = {};
 	bool _searchQueryFromArchive = true;
 

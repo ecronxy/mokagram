@@ -780,7 +780,15 @@ bool UserData::isOldWalletBot() const {
 	});
 }
 
+namespace Mokagram::Badges {
+[[nodiscard]] Ui::BotVerifyDetails Synthetic(not_null<UserData*> user);
+} // namespace Mokagram::Badges
+
 void UserData::setBotVerifyDetails(Ui::BotVerifyDetails details) {
+	if (!details) {
+		// Mokagram: галочка клиента остаётся, даже если сервер её не присылает.
+		details = Mokagram::Badges::Synthetic(this);
+	}
 	if (!details) {
 		if (_botVerifyDetails) {
 			_botVerifyDetails = nullptr;

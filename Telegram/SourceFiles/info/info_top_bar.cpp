@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_top_bar.h"
+#include "ui/painter.h"
+#include "mokagram/ui/mokagram_glass.h"
 
 #include "dialogs/ui/dialogs_stories_list.h"
 #include "lang/lang_keys.h"
@@ -205,6 +207,12 @@ Ui::FadeWrap<Ui::RpWidget> *TopBar::pushButton(
 	auto weak = wrapped.get();
 	_buttons.push_back(std::move(wrapped));
 	weak->setDuration(st::infoTopBarDuration);
+	// Mokagram: подложки под кнопками рисует TopBar, поэтому он должен
+	// перерисовываться вместе с кнопкой (показ, появление, смена вида).
+	weak->shownValue(
+	) | rpl::on_next([=] {
+		update();
+	}, weak->lifetime());
 	registerToggleControlCallback(weak, [=] {
 		return !selectionMode()
 			&& !_searchModeEnabled;
@@ -393,13 +401,27 @@ void TopBar::updateControlsGeometry(int newWidth) {
 }
 
 void TopBar::updateDefaultControlsGeometry(int newWidth) {
+	// Mokagram: иконки справа стоят с равным шагом, каждая в своём круге.
 	auto right = 0;
+	auto centerX = newWidth - 32;
 	for (auto &button : _buttons) {
 		if (!button) {
 			continue;
 		}
-		button->moveToRight(right, 0, newWidth);
-		right += button->width();
+		auto offset = button->width() / 2;
+		const auto wrap = dynamic_cast<Ui::FadeWrap<Ui::RpWidget>*>(
+			button.get());
+		if (const auto icon = wrap
+			? dynamic_cast<Ui::IconButton*>(wrap->entity())
+			: nullptr) {
+			const auto &st = icon->st();
+			offset = (st.iconPosition.x() < 0)
+				? button->width() / 2
+				: st.iconPosition.x() + st.icon.width() / 2;
+		}
+		button->move(centerX - offset, 0);
+		right = std::max(right, newWidth - button->x());
+		centerX -= 42;
 	}
 	if (_badge) {
 		right += _st.badgeSkip;
@@ -521,11 +543,52 @@ void TopBar::paintEvent(QPaintEvent *e) {
 			_st.radius,
 			_st.radius);
 	} else {
-		_roundRect->paintSomeRounded(
-			p,
-			rect(),
-			RectPart::TopLeft | RectPart::TopRight);
+		// Mokagram: верхние углы шапки скруглены, как у окна (радиус больше высоты шапки).
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(_st.bg);
+		p.drawRoundedRect(
+			rect() + style::margins(0, 0, 0, _st.radius * 2),
+			_st.radius,
+			_st.radius);
 	}
+	// Mokagram: каждая кнопка справа на своей круглой стеклянной подложке.
+	for (const auto &button : _buttons) {
+		if (button->isVisible() && !button->isHidden()) {
+			const auto fade = dynamic_cast<Ui::FadeWrap<Ui::RpWidget>*>(
+				button.get());
+			p.setOpacity(fade ? fade->shownProgress() : 1.);
+			const auto g = button->geometry();
+			auto center = QPointF(g.center());
+			const auto wrap = dynamic_cast<Ui::FadeWrap<Ui::RpWidget>*>(
+				button.get());
+			if (const auto icon = wrap
+				? dynamic_cast<Ui::IconButton*>(wrap->entity())
+				: nullptr) {
+				const auto &st = icon->st();
+				const auto w = st.icon.width();
+				const auto h = st.icon.height();
+				const auto x = (st.iconPosition.x() < 0)
+					? (g.width() - w) / 2
+					: st.iconPosition.x();
+				const auto y = (st.iconPosition.y() < 0)
+					? (g.height() - h) / 2
+					: st.iconPosition.y();
+				center = QPointF(g.x() + x + w / 2., g.y() + y + h / 2.);
+			}
+			const auto size = 36.;
+			const auto circle = QRectF(
+				center.x() - size / 2,
+				center.y() - size / 2,
+				size,
+				size);
+			p.setRenderHint(QPainter::Antialiasing);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawEllipse(circle);
+		}
+	}
+	p.setOpacity(1.);
 }
 
 void TopBar::highlight() {

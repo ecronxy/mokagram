@@ -236,10 +236,7 @@ void RevertAction::resizeToMenuWidth(int width) {
 
 void RevertAction::paint(Painter &p) {
 	const auto selected = isSelected();
-	if (selected && _st.itemBgOver->c.alpha() < 255) {
-		p.fillRect(0, 0, width(), _height, _st.itemBg);
-	}
-	p.fillRect(0, 0, width(), _height, selected ? _st.itemBgOver : _st.itemBg);
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
 	if (isEnabled()) {
 		paintRipple(p, 0, 0);
 	}
@@ -1913,6 +1910,13 @@ void FillContextMenuItems(
 								HistoryItemText(item),
 								HistoryItemRichBlocks(item),
 								&item->history()->session());
+						}
+					}
+				}, &st::menuIconCopy);
+				result->addAction(QString::fromUtf8("Копировать с датой и автором"), [=] {
+					if (const auto item = owner->message(itemId)) {
+						if (!list->showCopyRestriction(item)) {
+							Mokagram::Misc::CopyWithAuthor(item);
 						}
 					}
 				}, &st::menuIconCopy);

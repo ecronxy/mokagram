@@ -481,7 +481,7 @@ dialogsSearchInDown: icon {{ "intro_country_dropdown", windowBoldFg }};
 dialogsSearchInDownSkip: 4px;
 dialogsSearchInMenu: PopupMenu(defaultPopupMenu) {
 	scrollPadding: margins(0px, 0px, 0px, 0px);
-	radius: 8px;
+	radius: 26px;
 	menu: menuWithIcons;
 }
 dialogsSearchInCheck: icon {{ "player/player_check", mediaPlayerActiveFg }};
@@ -967,4 +967,22 @@ restoreWindowsOfferClose: IconButton(dialogsCancelSearchInPeer) {
 	iconPosition: point(5px, 6px);
 	rippleAreaPosition: point(0px, 1px);
 	rippleAreaSize: 28px;
+}
+
+dialogsPickButton: RoundButton(defaultActiveButton) {
+	height: 38px;
+	radius: 19px;
+	textTop: 9px;
+}
+dialogsPickCancel: RoundButton(dialogsPickButton) {
+	textFg: windowFg;
+	textFgOver: windowFg;
+	textBg: windowBgOver;
+	textBgOver: windowBgRipple;
+}
+dialogsPickDanger: RoundButton(dialogsPickButton) {
+	textBg: attentionButtonFg;
+	textBgOver: attentionButtonFgOver;
+	textFg: windowFgActive;
+	textFgOver: windowFgActive;
 }

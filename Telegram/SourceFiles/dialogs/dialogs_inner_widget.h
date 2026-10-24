@@ -210,6 +210,12 @@ public:
 		-> rpl::producer<ChatSearchTab>;
 	[[nodiscard]] auto changeSearchFilterRequests() const
 		-> rpl::producer<ChatTypeFilter>;
+	[[nodiscard]] rpl::producer<int> pickedCountValue() const;
+	[[nodiscard]] MessageIdsList pickedItems() const;
+	void togglePicked(FullMsgId id);
+	void clearPicked();
+	[[nodiscard]] auto changeSearchMediaRequests() const
+		-> rpl::producer<std::pair<int, int>>;
 	[[nodiscard]] rpl::producer<bool> changeSearchFromArchiveRequests() const;
 	[[nodiscard]] rpl::producer<> resetSearchRestrictionsRequests() const;
 	[[nodiscard]] rpl::producer<> cancelSearchRequests() const;
@@ -748,6 +754,9 @@ private:
 	std::unique_ptr<ChatSearchIn> _searchIn;
 	rpl::event_stream<ChatSearchTab> _changeSearchTabRequests;
 	rpl::event_stream<ChatTypeFilter> _changeSearchFilterRequests;
+	rpl::event_stream<std::pair<int, int>> _changeSearchMediaRequests;
+	base::flat_set<FullMsgId> _pickedResults;
+	rpl::variable<int> _pickedCount = 0;
 	rpl::event_stream<bool> _changeSearchFromArchiveRequests;
 	rpl::event_stream<> _resetSearchRestrictionsRequests;
 	rpl::event_stream<> _cancelSearchRequests;

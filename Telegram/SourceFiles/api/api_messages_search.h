@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/qt/qt_compare.h"
 #include "data/data_message_reaction_id.h"
+#include "mtproto/mtproto_response.h"
 
 class HistoryItem;
 class History;
@@ -23,7 +24,17 @@ namespace Api {
 enum class SearchFilter {
 	NoFilter,
 	Pinned,
+	Photos,
+	Videos,
+	Files,
+	Music,
+	Voice,
+	RoundVideo,
+	Gifs,
+	Links,
 };
+
+[[nodiscard]] MTPMessagesFilter PrepareFilter(SearchFilter filter);
 
 struct FoundMessages {
 	int total = -1;
@@ -39,6 +50,8 @@ public:
 		std::vector<Data::ReactionId> tags;
 		MsgId topMsgId;
 		SearchFilter filter = SearchFilter::NoFilter;
+		int minDate = 0;
+		int maxDate = 0;
 
 		friend inline bool operator==(
 			const Request &,

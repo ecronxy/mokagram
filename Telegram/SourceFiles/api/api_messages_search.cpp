@@ -61,21 +61,35 @@ constexpr auto kSearchPerPage = 50;
 	switch (request.filter) {
 	case SearchFilter::NoFilter: break;
 	case SearchFilter::Pinned: result += u"\npinned"_q; break;
+	default: result += u"\nf"_q + QString::number(int(request.filter)); break;
 	}
+	result += u"\nd"_q
+		+ QString::number(request.minDate)
+		+ ','
+		+ QString::number(request.maxDate);
 	return result;
 }
 
-[[nodiscard]] MTPMessagesFilter PrepareFilter(SearchFilter filter) {
+
+} // namespace
+
+MTPMessagesFilter PrepareFilter(SearchFilter filter) {
 	switch (filter) {
 	case SearchFilter::Pinned:
 		return MTP_inputMessagesFilterPinned();
+	case SearchFilter::Photos: return MTP_inputMessagesFilterPhotos();
+	case SearchFilter::Videos: return MTP_inputMessagesFilterVideo();
+	case SearchFilter::Files: return MTP_inputMessagesFilterDocument();
+	case SearchFilter::Music: return MTP_inputMessagesFilterMusic();
+	case SearchFilter::Voice: return MTP_inputMessagesFilterVoice();
+	case SearchFilter::RoundVideo: return MTP_inputMessagesFilterRoundVideo();
+	case SearchFilter::Gifs: return MTP_inputMessagesFilterGif();
+	case SearchFilter::Links: return MTP_inputMessagesFilterUrl();
 	case SearchFilter::NoFilter:
 		return MTP_inputMessagesFilterEmpty();
 	}
 	return MTP_inputMessagesFilterEmpty();
 }
-
-} // namespace
 
 MessagesSearch::MessagesSearch(not_null<History*> history)
 : _history(history) {
@@ -128,8 +142,8 @@ void MessagesSearch::searchRequest() {
 			)),
 			MTP_int(_request.topMsgId), // top_msg_id
 			PrepareFilter(_request.filter),
-			MTP_int(0), // min_date
-			MTP_int(0), // max_date
+			MTP_int(_request.minDate),
+			MTP_int(_request.maxDate),
 			MTP_int(_offsetId), // offset_id
 			MTP_int(0), // add_offset
 			MTP_int(kSearchPerPage),

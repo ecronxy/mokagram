@@ -64,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_web_page.h"
 #include "storage/storage_account.h"
 #include "styles/style_chat.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "styles/style_chat_style.h"
 
 #include <QSvgRenderer>
@@ -370,9 +371,9 @@ QSize Gif::countThumbSize(int &inOutWidthMax) const {
 		} else if (_data->isVideoFile()) {
 			return st::maxMediaSize;
 		} else if (_data->isVideoMessage()) {
-			return st::maxVideoMessageSize;
+			return Mokagram::Settings::Int(u"look.round_size"_q);
 		}
-		return st::maxGifSize;
+		return Mokagram::Settings::Int(u"look.gif_size"_q);
 	}();
 	const auto size = style::ConvertScale(videoSize());
 	if (hostedInstantView) {

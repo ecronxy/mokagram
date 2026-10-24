@@ -5,8 +5,11 @@
 #pragma once
 
 #include "base/basic_types.h"
+#include "base/basic_types.h"
 
 class HistoryItem;
+class History;
+class PeerData;
 
 namespace Mokagram::Ghost {
 
@@ -22,6 +25,17 @@ void RegisterSettings();
 [[nodiscard]] bool ShouldSendTyping();
 // Слать ли просмотры историй.
 [[nodiscard]] bool ShouldSendStoryView();
+
+// Слать ли «прочитано» в этом чате: false только если Призрак скрывает
+// прочтение и чат не в списке исключений.
+[[nodiscard]] bool ReadAllowedFor(not_null<::History*> history);
+// Исключения: в этих чатах Призрак не мешает отмечать прочитанным.
+[[nodiscard]] bool IsReadException(not_null<PeerData*> peer);
+void ToggleReadException(not_null<PeerData*> peer);
+// Явное «прочитать»: отправляет серверу прочтение чата, даже при Призраке.
+void ReadNow(not_null<::History*> history);
+// Скрывает ли сейчас Призрак прочтение (нужно ли показывать «прочитать»).
+[[nodiscard]] bool HidesRead();
 
 // Включено ли скрытие сообщений заблокированных.
 [[nodiscard]] bool HideBlockedEnabled();

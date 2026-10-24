@@ -55,7 +55,8 @@ struct Stores {
 		: u"history.save_edited"_q;
 	if (!Settings::Bool(key)) {
 		return false;
-	} else if (item->isService()
+	} else if ((kind == Kind::Deleted && item->out())
+		|| item->isService()
 		|| item->isLocal()
 		|| item->isEmpty()
 		|| !item->isRegular()) {
@@ -312,6 +313,10 @@ void StartGhostSettings() {
 
 } // namespace
 
+bool KeepSelfDestruct() {
+	return Settings::Bool(u"history.keep_ttl"_q);
+}
+
 bool WantsMediaTl() {
 	return Settings::Bool(u"history.save_deleted"_q);
 }
@@ -360,6 +365,15 @@ void RegisterSettings() {
 		.defaultValue = true,
 		.dependsOn = u"history.show_ghosts"_q,
 		.icon = u"trash"_q,
+	});
+	add({
+		.key = u"history.keep_ttl"_q,
+		.title = U("Не терять самоуничтожающиеся сообщения"),
+		.description = U("Голосовые, кружки, фото и видео с таймером "
+			"открываются на ПК как обычные и сохраняются у вас."),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = true,
+		.icon = u"history"_q,
 	});
 	add({
 		.key = u"history.save_edited"_q,
