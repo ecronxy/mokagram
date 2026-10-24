@@ -2,6 +2,7 @@
 
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/music/mokagram_music_library.h"
+#include "mokagram/music/mokagram_lyrics.h"
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "base/unixtime.h"
@@ -50,6 +51,8 @@
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
+#include <QtGui/QLinearGradient>
+#include <QtGui/QRadialGradient>
 #include <QtGui/QGuiApplication>
 #include <QtCore/QPointer>
 
@@ -949,12 +952,27 @@ namespace {
 				continue;
 			}
 			const auto bin = std::clamp(int(std::max(c.hsvHueF(), 0.f) * kBins), 0, kBins - 1);
-			const auto w = (0.15 + s) * (0.3 + v);
+			const auto w = (0.05 + s * s) * (0.3 + v);
 			weight[bin] += w;
 			sumR[bin] += w * c.redF();
 			sumG[bin] += w * c.greenF();
 			sumB[bin] += w * c.blueF();
 		}
+	}
+	auto totalS = 0., totalV = 0., total = 0.;
+	for (auto y = 0; y != small.height(); ++y) {
+		for (auto x = 0; x != small.width(); ++x) {
+			const auto c = QColor(small.pixel(x, y));
+			totalS += c.hsvSaturationF();
+			totalV += c.valueF();
+			total += 1.;
+		}
+	}
+	const auto avgS = totalS / total;
+	const auto avgV = totalV / total;
+	// Почти чёрно-белая обложка: нейтральный серый, без случайного оттенка.
+	if (avgS < 0.16) {
+		return QColor::fromHsvF(0., 0., std::clamp(avgV, 0.3, 0.5));
 	}
 	auto best = 0;
 	for (auto i = 1; i != kBins; ++i) {
@@ -969,11 +987,190 @@ namespace {
 		sumR[best] / weight[best],
 		sumG[best] / weight[best],
 		sumB[best] / weight[best]);
-	// Тёмный насыщенный оттенок: ложится на тёмную тему без выжигания.
 	auto h = 0.f, s = 0.f, v = 0.f;
 	result.getHsvF(&h, &s, &v);
-	return QColor::fromHsvF(h < 0 ? 0.f : h, std::clamp(s, 0.35f, 0.85f), std::clamp(v, 0.45f, 0.7f));
+	return QColor::fromHsvF(
+		h < 0 ? 0.f : h,
+		std::clamp(s, 0.25f, 0.8f),
+		std::clamp(v, 0.4f, 0.7f));
 }
+
+class LyricsView final : public Ui::RpWidget {
+public:
+	explicit LyricsView(QWidget *parent)
+	: RpWidget(parent) {
+		resize(width(), 280);
+		_timer.setInterval(40);
+		connect(&_timer, &QTimer::timeout, this, [=] { tick(); });
+		_timer.start();
+	}
+
+	void setPlasma(bool on) {
+		_plasma = on;
+		update();
+	}
+	void setLoading() {
+		_lyrics = {};
+		_status = QString::fromUtf8("Ищу текст…");
+		_current = -1;
+		_scroll = 0.;
+		update();
+	}
+	void setLyrics(Lyrics lyrics) {
+		_lyrics = std::move(lyrics);
+		_status = _lyrics.found
+			? QString()
+			: QString::fromUtf8("Текст этой песни не найден");
+		_current = -1;
+		_scroll = 0.;
+		_heights.clear();
+		update();
+	}
+	void setPosition(qint64 ms) {
+		_position = ms;
+	}
+
+private:
+	void tick() {
+		if (!isVisible()) {
+			return;
+		}
+		_phase += 0.012;
+		auto target = _scroll;
+		if (_lyrics.synced) {
+			auto index = -1;
+			for (auto i = 0; i != int(_lyrics.lines.size()); ++i) {
+				if (_lyrics.lines[i].timeMs <= _position) {
+					index = i;
+				} else {
+					break;
+				}
+			}
+			_current = index;
+			target = offsetOf(std::max(index, 0));
+		}
+		_scroll += (target - _scroll) * 0.18;
+		update();
+	}
+
+	[[nodiscard]] int textWidth() const {
+		return width() - 48;
+	}
+	[[nodiscard]] QFont fontFor(bool current) const {
+		auto font = st::semiboldFont->f;
+		font.setPixelSize(current ? 21 : 17);
+		return font;
+	}
+	[[nodiscard]] int heightOf(int index, bool current) {
+		const auto key = index * 2 + (current ? 1 : 0);
+		if (int(_heights.size()) <= key) {
+			_heights.resize(key + 1, -1);
+		}
+		if (_heights[key] < 0) {
+			const auto text = _lyrics.lines[index].text.isEmpty()
+				? u" "_q
+				: _lyrics.lines[index].text;
+			_heights[key] = QFontMetrics(fontFor(current)).boundingRect(
+				QRect(0, 0, textWidth(), 10000),
+				Qt::TextWordWrap | Qt::AlignHCenter,
+				text).height() + 16;
+		}
+		return _heights[key];
+	}
+	// Центр строки index в координатах содержимого.
+	[[nodiscard]] double offsetOf(int index) {
+		auto y = 0.;
+		for (auto i = 0; i != index; ++i) {
+			y += heightOf(i, false);
+		}
+		return y + heightOf(index, true) / 2.;
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		auto path = QPainterPath();
+		path.addRoundedRect(QRectF(rect()), 20, 20);
+		p.setClipPath(path);
+		p.fillRect(rect(), st::windowBgOver);
+		const auto accent = CurrentCoverAccent();
+		if (_plasma && accent.isValid()) {
+			const auto w = width();
+			const auto h = height();
+			for (auto i = 0; i != 3; ++i) {
+				auto color = QColor::fromHsvF(
+					std::fmod(accent.hsvHueF() + 0.09 * (i - 1) + 1., 1.),
+					accent.hsvSaturationF() < 0.05
+						? 0.
+						: std::min(1., accent.hsvSaturationF() + 0.1),
+					std::min(1., accent.valueF() + 0.1 * i));
+				const auto cx = w * (0.5 + 0.38 * std::sin(_phase * (1. + 0.4 * i) + i * 2.1));
+				const auto cy = h * (0.5 + 0.34 * std::cos(_phase * (0.8 + 0.3 * i) + i * 1.3));
+				auto gradient = QRadialGradient(cx, cy, w * 0.55);
+				color.setAlpha(120);
+				gradient.setColorAt(0., color);
+				color.setAlpha(0);
+				gradient.setColorAt(1., color);
+				p.fillRect(rect(), gradient);
+			}
+			p.fillRect(rect(), QColor(0, 0, 0, 90));
+		}
+		if (!_lyrics.found) {
+			p.setPen(st::windowSubTextFg);
+			p.setFont(st::normalFont);
+			p.drawText(rect(), Qt::AlignCenter, _status);
+			return;
+		}
+		const auto count = int(_lyrics.lines.size());
+		auto y = height() / 2. - _scroll;
+		if (!_lyrics.synced) {
+			y = 12.;
+		}
+		for (auto i = 0; i != count; ++i) {
+			const auto current = _lyrics.synced && (i == _current);
+			const auto lineHeight = heightOf(i, current);
+			if (y + lineHeight >= 0 && y <= height()) {
+				const auto distance = _lyrics.synced
+					? std::abs(i - std::max(_current, 0))
+					: 1;
+				auto color = QColor(255, 255, 255);
+				color.setAlphaF(current
+					? 1.
+					: std::max(0.22, 0.62 - 0.1 * distance));
+				p.setPen(color);
+				p.setFont(fontFor(current));
+				p.drawText(
+					QRectF(24, y + 8, textWidth(), lineHeight - 8),
+					Qt::TextWordWrap | Qt::AlignHCenter | Qt::AlignTop,
+					_lyrics.lines[i].text);
+			}
+			y += lineHeight;
+			if (y > height() + 400) {
+				break;
+			}
+		}
+		// Мягкое затухание сверху и снизу.
+		auto fadeTop = QLinearGradient(0, 0, 0, 44);
+		fadeTop.setColorAt(0., QColor(0, 0, 0, 110));
+		fadeTop.setColorAt(1., QColor(0, 0, 0, 0));
+		p.fillRect(QRect(0, 0, width(), 44), fadeTop);
+		auto fadeBottom = QLinearGradient(0, height() - 44, 0, height());
+		fadeBottom.setColorAt(0., QColor(0, 0, 0, 0));
+		fadeBottom.setColorAt(1., QColor(0, 0, 0, 110));
+		p.fillRect(QRect(0, height() - 44, width(), 44), fadeBottom);
+	}
+
+	Lyrics _lyrics;
+	QString _status;
+	QTimer _timer;
+	std::vector<int> _heights;
+	qint64 _position = 0;
+	double _scroll = 0.;
+	double _phase = 0.;
+	int _current = -1;
+	bool _plasma = true;
+
+};
 
 } // namespace
 
@@ -1321,6 +1518,45 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		CoversChanged() | rpl::on_next(refresh, box->lifetime());
 		LikesChanged() | rpl::on_next(refresh, box->lifetime());
 		refresh();
+
+		// Текст песни (LRCLIB), под кнопками.
+		const auto lyricsView = content->add(
+			object_ptr<LyricsView>(content),
+			QMargins(24, 8, 24, 4));
+		lyricsView->setVisible(Mokagram::Settings::Bool(u"lyrics.enabled"_q));
+		lyricsView->setPlasma(Mokagram::Settings::Bool(u"lyrics.plasma"_q));
+		const auto lyricsFor = std::make_shared<QString>();
+		const auto updateLyrics = [=] {
+			const auto &track = QueueState().current;
+			if (!Mokagram::Settings::Bool(u"lyrics.enabled"_q)
+				|| track.id.isEmpty()
+				|| *lyricsFor == track.id) {
+				return;
+			}
+			*lyricsFor = track.id;
+			lyricsView->setLoading();
+			const auto id = track.id;
+			FetchLyrics(
+				id,
+				track.title,
+				track.artist,
+				track.durationMs,
+				crl::guard(lyricsView, [=](Lyrics lyrics) {
+					if (*lyricsFor == id) {
+						lyricsView->setLyrics(std::move(lyrics));
+					}
+				}));
+		};
+		instance->updatedNotifier(
+		) | rpl::on_next([=] {
+			const auto state = instance->getState(AudioMsgId::Type::Song);
+			lyricsView->setPosition(
+				state.position * 1000 / std::max<int64>(state.frequency, 1));
+			updateLyrics();
+		}, lyricsView->lifetime());
+		QueueState().changes.events(
+		) | rpl::on_next(updateLyrics, lyricsView->lifetime());
+		updateLyrics();
 
 		// Очередь: живой список, меняется при добавлении, перемещении и смене трека.
 		Ui::AddSubsectionTitle(content, rpl::single(QString::fromUtf8("Очередь")));
