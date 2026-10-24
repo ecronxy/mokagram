@@ -101,9 +101,7 @@ void PrepareVolumeDropdown(
 			inner.width(),
 			(inner.height()
 				+ st::lineWidth
-				- ((st::mediaPlayerVolumeSize.width()
-					- st::mediaPlayerPanelPlayback.width) / 2)
-				- 16));
+				- 14));
 	}, volume->lifetime());
 
 	std::move(
