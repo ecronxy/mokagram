@@ -375,10 +375,10 @@ void Widget::updateDropdownsGeometry() {
 		_volumeToggle->mapToGlobal(
 			QPoint(
 				(_volumeToggle->width() - dropdownWidth) / 2,
-				height())));
+				_volumeToggle->height())));
 	const auto playerMargins = _volume->getMargin();
 	const auto shift = QPoint(playerMargins.left(), playerMargins.top());
-	_volume->move(position - shift + QPoint(0, 6));
+	_volume->move(position - shift + QPoint(0, 4));
 
 	_orderController->updateDropdownGeometry();
 	_speedController->updateDropdownGeometry();
