@@ -115,10 +115,15 @@ index ec3171e..ee18c18 100644
  		p.setOpacity(specialLayerOpacity);
  		auto cacheLeft = specialLayerBox.x() - st::boxRoundShadow.extend.left();
 diff --git i/ui/widgets/box_content_divider.cpp w/ui/widgets/box_content_divider.cpp
-index 948271f..a158d5c 100644
+index 948271f..f7b7b24 100644
 --- i/ui/widgets/box_content_divider.cpp
 +++ w/ui/widgets/box_content_divider.cpp
-@@ -27,6 +27,8 @@ BoxContentDivider::BoxContentDivider(
+@@ -23,10 +23,13 @@ BoxContentDivider::BoxContentDivider(
+ : RpWidget(parent)
+ , _st(st)
+ , _parts(parts) {
++	setProperty("moka-break", true);
+ 	resize(width(), height);
  }
  
  void BoxContentDivider::paintEvent(QPaintEvent *e) {
@@ -270,10 +275,35 @@ index df0dc58..ceadaf2 100644
  	auto innerDiameter = _st->diameter - 2 * _st->shift;
  	auto innerRadius = float64(innerDiameter) / 2.;
 diff --git i/ui/widgets/fields/input_field.cpp w/ui/widgets/fields/input_field.cpp
-index d57ac56..1465cfa 100644
+index d57ac56..01682ae 100644
 --- i/ui/widgets/fields/input_field.cpp
 +++ w/ui/widgets/fields/input_field.cpp
-@@ -2882,10 +2882,12 @@ void InputField::paintRoundSurrounding(
+@@ -1925,6 +1925,15 @@ InputField::InputField(
+ 		}
+ 	}
+ 
++	// Mokagram: у скруглённого поля текст не липнет к краю.
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
++		_additionalMargins = QMargins(
++			std::max(0, 14 - _st.textMargins.left()),
++			0,
++			std::max(0, 10 - _st.textMargins.right()),
++			0);
++	}
++
+ 	if (_st.textBg->c.alphaF() >= 1. && !_st.borderRadius) {
+ 		setAttribute(Qt::WA_OpaquePaintEvent);
+ 	}
+@@ -2868,7 +2877,7 @@ void InputField::paintSurrounding(
+ 		QRect clip,
+ 		float64 errorDegree,
+ 		float64 focusedDegree) {
+-	if (_st.borderRadius > 0) {
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
+ 		paintRoundSurrounding(p, clip, errorDegree, focusedDegree);
+ 	} else {
+ 		paintFlatSurrounding(p, clip, errorDegree, focusedDegree);
+@@ -2882,10 +2891,14 @@ void InputField::paintRoundSurrounding(
  		float64 focusedDegree) {
  	const auto divide = _st.borderDenominator ? _st.borderDenominator : 1;
  	const auto border = _st.border / float64(divide);
@@ -283,12 +313,26 @@ index d57ac56..1465cfa 100644
 -	pen.setWidthF(border);
 -	p.setPen(pen);
 +	// Mokagram: без рамки в покое, при фокусе тонкое акцентное кольцо.
-+	const auto lineWidth = (border > 0.) ? border : (1.5 * focusedDegree);
++	const auto lineWidth = (border > 0.)
++		? border
++		: (_st.borderActive ? (1.5 * focusedDegree) : 0.);
 +	pen.setWidthF(lineWidth);
 +	p.setPen((lineWidth > 0.) ? pen : QPen(Qt::NoPen));
  	p.setBrush(anim::brush(_st.textBg, _st.textBgActive, focusedDegree));
  
  	PainterHighQualityEnabler hq(p);
+diff --git i/ui/widgets/labels.cpp w/ui/widgets/labels.cpp
+index ceed27c..8bfe1c6 100644
+--- i/ui/widgets/labels.cpp
++++ w/ui/widgets/labels.cpp
+@@ -1151,6 +1151,7 @@ DividerLabel::DividerLabel(
+ 	RectParts parts)
+ : PaddingWrap(parent, std::move(child), padding)
+ , _background(this, st::boxDividerHeight, st, parts) {
++	setProperty("moka-break", true);
+ 	setNaturalWidth(-1);
+ }
+ 
 diff --git i/ui/widgets/menu/menu_action.cpp w/ui/widgets/menu/menu_action.cpp
 index 4c16b67..2ded2eb 100644
 --- i/ui/widgets/menu/menu_action.cpp

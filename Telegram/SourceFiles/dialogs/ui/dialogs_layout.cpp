@@ -490,7 +490,7 @@ void PaintRow(
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(bg);
-		const auto inner = geometry.marginsRemoved({ 6, 1, 6, 1 });
+		const auto inner = geometry.marginsRemoved({ 2, 1, 2, 1 });
 		p.drawRoundedRect(inner, 18, 18);
 	} else {
 		p.fillRect(geometry, bg);
