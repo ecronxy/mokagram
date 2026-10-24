@@ -98,6 +98,10 @@ Widget::Widget(
 	) | rpl::on_next([=] {
 		update();
 	}, lifetime());
+	Mokagram::Music::QueueChanges(
+	) | rpl::on_next([=] {
+		handlePlaylistUpdate();
+	}, lifetime());
 
 	setupRightControls();
 

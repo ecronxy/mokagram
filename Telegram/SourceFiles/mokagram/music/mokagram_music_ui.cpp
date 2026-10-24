@@ -3,6 +3,9 @@
 #include "mokagram/music/mokagram_soundcloud.h"
 
 #include "base/unixtime.h"
+#include "base/random.h"
+#include "core/application.h"
+#include "core/core_settings.h"
 #include "api/api_common.h"
 #include "apiwrap.h"
 #include "data/data_media_types.h"
@@ -135,9 +138,24 @@ void Subscribe() {
 				+ uint64(queue.currentId.toULongLong()))) {
 			return;
 		}
-		if (Media::Player::IsStoppedAtEnd(state.state)
-			&& queue.index + 1 < int(queue.tracks.size())) {
-			PlayIndex(queue.index + 1);
+		if (Media::Player::IsStoppedAtEnd(state.state)) {
+			const auto count = int(queue.tracks.size());
+			const auto &settings = Core::App().settings();
+			if (settings.playerRepeatMode() == Media::RepeatMode::One) {
+				PlayIndex(queue.index);
+			} else if (settings.playerOrderMode() == Media::OrderMode::Shuffle
+				&& count > 1) {
+				auto next = queue.index;
+				while (next == queue.index) {
+					next = base::RandomIndex(count);
+				}
+				PlayIndex(next);
+			} else if (queue.index + 1 < count) {
+				PlayIndex(queue.index + 1);
+			} else if (settings.playerRepeatMode() == Media::RepeatMode::All
+				&& count > 0) {
+				PlayIndex(0);
+			}
 		}
 	}, queue.lifetime);
 }
@@ -685,6 +703,55 @@ private:
 
 } // namespace
 
+bool OwnsTrack(const AudioMsgId &id) {
+	return id.audio()
+		&& (id.audio()->id & 0xFFFFFF0000000000ULL) == 0x4D4F4B0000000000ULL;
+}
+
+bool NextAvailable() {
+	const auto &queue = QueueState();
+	const auto &settings = Core::App().settings();
+	return !queue.tracks.empty()
+		&& (queue.index + 1 < int(queue.tracks.size())
+			|| settings.playerRepeatMode() == Media::RepeatMode::All
+			|| settings.playerOrderMode() == Media::OrderMode::Shuffle);
+}
+
+bool PreviousAvailable() {
+	const auto &queue = QueueState();
+	return !queue.tracks.empty()
+		&& (queue.index > 0
+			|| Core::App().settings().playerRepeatMode()
+				== Media::RepeatMode::All);
+}
+
+void Step(int delta) {
+	auto &queue = QueueState();
+	const auto count = int(queue.tracks.size());
+	if (!count) {
+		return;
+	}
+	auto target = queue.index + delta;
+	if (delta > 0
+		&& Core::App().settings().playerOrderMode()
+			== Media::OrderMode::Shuffle
+		&& count > 1) {
+		target = queue.index;
+		while (target == queue.index) {
+			target = base::RandomIndex(count);
+		}
+	} else if (target >= count) {
+		target = 0;
+	} else if (target < 0) {
+		target = count - 1;
+	}
+	PlayIndex(target);
+}
+
+rpl::producer<> QueueChanges() {
+	return QueueState().changes.events();
+}
+
 void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 	QueueState().controller = base::make_weak(controller);
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
@@ -817,10 +884,8 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		}, controls->lifetime());
 
 		const auto step = [=](int delta) {
-			auto &queue = QueueState();
-			const auto target = queue.index + delta;
-			if (queue.index >= 0 && target >= 0 && target < int(queue.tracks.size())) {
-				PlayIndex(target);
+			if (!QueueState().tracks.empty()) {
+				Step(delta);
 			} else if (delta > 0) {
 				instance->next(AudioMsgId::Type::Song);
 			} else {
@@ -888,6 +953,10 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		) | rpl::on_next(rebuild, box->lifetime());
 		Ui::AddSkip(content, 10);
 	}));
+}
+
+void DebugPlay(int index) {
+	PlayFromResults(index);
 }
 
 void DebugSaveTrack(int index) {
