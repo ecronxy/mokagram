@@ -396,6 +396,22 @@ void ShowMenu(
 	menu->popup(QCursor::pos());
 }
 
+// Mokagram: группа строк лежит на одной скруглённой подложке.
+[[nodiscard]] not_null<Ui::VerticalLayout*> AddCard(
+		not_null<Ui::VerticalLayout*> outer) {
+	const auto card = outer->add(
+		object_ptr<Ui::VerticalLayout>(outer),
+		QMargins(12, 0, 12, 0));
+	card->paintRequest() | rpl::on_next([=](QRect clip) {
+		auto p = QPainter(card);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBgOver);
+		p.drawRoundedRect(card->rect(), 16, 16);
+	}, card->lifetime());
+	return card;
+}
+
 not_null<Ui::SettingsButton*> AddRow(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<QString> label,
@@ -458,13 +474,14 @@ not_null<Ui::SettingsButton*> AddRow(
 }
 
 void SetupBirthday(
-		not_null<Ui::VerticalLayout*> container,
+		not_null<Ui::VerticalLayout*> outer,
 		not_null<Window::SessionController*> controller,
 		not_null<UserData*> self,
 		InformationHighlightTargets *targets) {
 	const auto session = &self->session();
 
-	Ui::AddSkip(container);
+	Ui::AddSkip(outer);
+	const auto container = AddCard(outer);
 
 	auto value = rpl::combine(
 		Info::Profile::BirthdayValue(self),
@@ -502,8 +519,8 @@ void SetupBirthday(
 			&& value.never.peers.empty();
 	}) | rpl::distinct_until_changed();
 
-	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::conditional(
+	Ui::AddSkip(outer);
+	Ui::AddDividerText(outer, rpl::conditional(
 		std::move(isExactlyContacts),
 		tr::lng_settings_birthday_contacts(
 			lt_link,
@@ -557,11 +574,12 @@ void SetupChatAutomation(
 }
 
 void SetupPersonalChannel(
-		not_null<Ui::VerticalLayout*> container,
+		not_null<Ui::VerticalLayout*> outer,
 		not_null<Window::SessionController*> controller,
 		not_null<UserData*> self,
 		InformationHighlightTargets *targets) {
-	Ui::AddSkip(container);
+	Ui::AddSkip(outer);
+	const auto container = AddCard(outer);
 
 	auto value = rpl::combine(
 		Info::Profile::PersonalChannelValue(self),
@@ -596,18 +614,20 @@ void SetupPersonalChannel(
 		targets->colorButton = colorButton;
 	}
 
-	Ui::AddSkip(container);
-	Ui::AddDivider(container);
+	Ui::AddSkip(outer);
+	Ui::AddDivider(outer);
 }
 
 void SetupRows(
-		not_null<Ui::VerticalLayout*> container,
+		not_null<Ui::VerticalLayout*> outer,
 		not_null<Window::SessionController*> controller,
 		not_null<UserData*> self,
 		InformationHighlightTargets *targets) {
 	const auto session = &self->session();
 
-	Ui::AddSkip(container);
+	Ui::AddSkip(outer);
+
+	const auto container = AddCard(outer);
 
 	const auto showEditName = [=] {
 		if (controller->showFrozenError()) {
@@ -733,8 +753,8 @@ void SetupRows(
 		targets->username = usernameButton;
 	}
 
-	Ui::AddSkip(container);
-	Ui::AddDividerText(container, tr::lng_settings_username_about());
+	Ui::AddSkip(outer);
+	Ui::AddDividerText(outer, tr::lng_settings_username_about());
 }
 
 void SetupBio(

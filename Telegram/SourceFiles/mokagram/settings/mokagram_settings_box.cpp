@@ -2167,7 +2167,7 @@ namespace {
 	static const auto map = base::flat_map<const void*, QString>{
 		{ &st::menuIconProfile, QString::fromUtf8("👤") },
 		{ &st::menuIconPhone, QString::fromUtf8("📞") },
-		{ &st::menuIconUsername, QString::fromUtf8("📧") },
+		{ &st::menuIconUsername, QString::fromUtf8("🔗") },
 		{ &st::settingsIconChatAutomation, QString::fromUtf8("🤖") },
 		{ &st::menuIconNotifications, QString::fromUtf8("🔔") },
 		{ &st::menuIconLock, QString::fromUtf8("🔑") },
