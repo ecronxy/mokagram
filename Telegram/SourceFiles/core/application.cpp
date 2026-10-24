@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
 #include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/streamer/mokagram_streamer.h"
@@ -337,6 +338,7 @@ void Application::run() {
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();
 	Mokagram::Misc::RegisterSettings();
+	Mokagram::Appearance::RegisterSettings();
 	Mokagram::Settings::StartDebugCommands();
 	Mokagram::Plugins::Start([](const std::string &line) {
 		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
@@ -587,6 +589,7 @@ void Application::startDomain() {
 void Application::startSettingsAndBackground() {
 	Local::rewriteSettingsIfNeeded();
 	Window::Theme::Background()->start();
+	Mokagram::Appearance::Start();
 	// Mokagram: тёмная нейтральная тема по умолчанию (один раз, дальше выбор за пользователем).
 	{
 		const auto marker = cWorkingDir() + u"tdata/mokagram_night_default"_q;
