@@ -15,6 +15,7 @@
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 
+#include <map>
 #include <memory>
 
 namespace Mokagram::Music {
@@ -287,6 +288,29 @@ void DownloadHls(
 }
 
 } // namespace
+
+void LoadImage(const QString &url, Fn<void(QImage)> done) {
+	static auto cache = std::map<QString, QImage>();
+	const auto i = cache.find(url);
+	if (i != cache.end()) {
+		done(i->second);
+		return;
+	}
+	if (url.isEmpty()) {
+		done(QImage());
+		return;
+	}
+	const auto reply = Get(QUrl(url));
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		auto image = QImage::fromData(reply->readAll());
+		reply->deleteLater();
+		if (cache.size() > 300) {
+			cache.clear();
+		}
+		cache[url] = image;
+		done(image);
+	});
+}
 
 QString CacheDir() {
 	return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)

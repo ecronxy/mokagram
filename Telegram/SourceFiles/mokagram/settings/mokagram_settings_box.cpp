@@ -23,6 +23,7 @@
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_music_ui.h"
 #include "data/data_user.h"
 #include "dialogs/dialogs_row.h"
 #include "dialogs/dialogs_main_list.h"
@@ -1838,6 +1839,8 @@ void StartDebugCommands() {
 					}
 				}
 			}
+		} else if (cmd.startsWith(u"music"_q)) {
+			Mokagram::Music::ShowMusicBox(controller, cmd.mid(6));
 		} else if (cmd.startsWith(u"scsearch:"_q)) {
 			Mokagram::Music::Search(cmd.mid(9), 0, [](Mokagram::Music::SearchResult result) {
 				LOG(("[music] search: %1 tracks, error '%2', next %3").arg(result.tracks.size()).arg(result.error).arg(result.nextOffset));

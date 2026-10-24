@@ -5,6 +5,7 @@
 #include "base/basic_types.h"
 
 #include <QtCore/QString>
+#include <QtGui/QImage>
 #include <vector>
 
 namespace Mokagram::Music {
@@ -38,6 +39,9 @@ void Search(
 void Download(
 	const Track &track,
 	Fn<void(const QString &path, const QString &error)> done);
+
+// Картинка по ссылке (обложки). Результат кэшируется в памяти.
+void LoadImage(const QString &url, Fn<void(QImage)> done);
 
 // Папка кэша скачанных треков.
 [[nodiscard]] QString CacheDir();
