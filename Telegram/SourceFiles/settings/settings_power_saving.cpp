@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_power_saving.h"
+#include "settings/settings_builder.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 
 #include "base/battery_saving.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
@@ -14,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
 #include "ui/power_saving.h"
 #include "ui/vertical_list.h"
 #include "settings/settings_common.h"
@@ -43,10 +46,10 @@ void PowerSavingBox(
 	box->setPinnedToTopContent(
 		object_ptr<Ui::FixedHeightWidget>(box, st::lineWidth));
 
-	const auto subtitle = Ui::AddSubsectionTitle(
+	const auto subtitle = Settings::Builder::MokaCardTitle(
 		container,
-		tr::lng_settings_power_subtitle(),
-		st::powerSavingSubtitlePadding);
+		tr::lng_settings_power_subtitle());
+	const auto card = Settings::Builder::MokaCard(container, st::boxBg);
 
 	struct State {
 		rpl::variable<QString> forceDisabledMessage;
@@ -64,20 +67,25 @@ void PowerSavingBox(
 
 	const auto controlsRaw = checkboxes.data();
 	const auto highlightWidgetRaw = highlightWidget.data();
-	box->addRow(std::move(checkboxes), style::margins());
+	card->add(std::move(checkboxes));
 
 	auto automatic = (Ui::SettingsButton*)nullptr;
 	if (batterySaving.has_value()) {
-		Ui::AddSkip(container);
-		Ui::AddDivider(container);
-		Ui::AddSkip(container);
-		automatic = container->add(object_ptr<Ui::SettingsButton>(
-			container,
+		const auto autoCard = Settings::Builder::MokaCard(container, st::boxBg);
+		automatic = autoCard->add(object_ptr<Ui::SettingsButton>(
+			autoCard,
 			tr::lng_settings_power_auto(),
 			st::powerSavingButtonNoIcon
 		))->toggleOn(rpl::single(!ignore));
-		Ui::AddSkip(container);
-		Ui::AddDividerText(container, tr::lng_settings_power_auto_about());
+		Mokagram::Plugins::MakePill(
+			automatic,
+			[] { return st::windowBg->c; });
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				tr::lng_settings_power_auto_about(),
+				st::boxDividerLabel),
+			style::margins(26, 6, 26, 8));
 
 		state->forceDisabledMessage = rpl::combine(
 			automatic->toggledValue(),
@@ -104,8 +112,11 @@ void PowerSavingBox(
 		rpl::combine(
 			subtitle->geometryValue(),
 			controlsRaw->geometryValue()
-		) | rpl::on_next([=](QRect subtitle, QRect controls) {
-			disabler->setGeometry(subtitle.united(controls));
+		) | rpl::on_next([=](QRect, QRect) {
+			const auto top = subtitle->mapTo(container, QPoint()).y();
+			const auto bottom = controlsRaw->mapTo(container, QPoint()).y()
+				+ controlsRaw->height();
+			disabler->setGeometry(0, top, container->width(), bottom - top);
 		}, disabler->lifetime());
 		disabler->showOn(state->forceDisabledMessage.value(
 		) | rpl::map([=](const QString &value) {

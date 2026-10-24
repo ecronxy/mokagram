@@ -60,6 +60,46 @@ constexpr auto kGroupInset = 4;
 		"moka-group-outer",
 		QVariant::fromValue<quintptr>(reinterpret_cast<quintptr>(outer.get())));
 
+	struct Segment {
+		int top = 0;
+		int bottom = 0;
+	};
+	// Карточка режется на куски заголовками и разделителями: между кусками
+	// виден фон страницы, как между карточками в «Кастомизации».
+	const auto segments = [=] {
+		auto cuts = std::vector<std::pair<int, int>>();
+		for (const auto child : pad->findChildren<QWidget*>()) {
+			const auto title = child->property("moka-title").toBool();
+			if (!title && !child->property("moka-break").toBool()) {
+				continue;
+			}
+			if (!child->isVisibleTo(pad) || !child->height()) {
+				continue;
+			}
+			const auto top = child->mapTo(pad, QPoint()).y();
+			cuts.emplace_back(
+				top - (title ? 14 : 0),
+				top + child->height() + (title ? 6 : 0));
+		}
+		std::sort(cuts.begin(), cuts.end());
+		const auto card = pad->rect() - kGroupMargins;
+		auto result = std::vector<Segment>();
+		auto from = card.y();
+		const auto flush = [&](int to) {
+			if (to - from >= 30) {
+				result.push_back({ from, to });
+			}
+		};
+		for (const auto &cut : cuts) {
+			if (cut.first > from) {
+				flush(std::min(cut.first, card.y() + card.height()));
+			}
+			from = std::max(from, cut.second);
+		}
+		flush(card.y() + card.height());
+		return result;
+	};
+
 	pad->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(pad);
@@ -68,69 +108,60 @@ constexpr auto kGroupInset = 4;
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
 		const auto card = pad->rect() - kGroupMargins;
-		const auto r = std::min(kGroupRadius, card.height() / 2);
-		p.drawRoundedRect(card, r, r);
+		for (const auto &seg : segments()) {
+			const auto height = seg.bottom - seg.top;
+			const auto r = std::min(kGroupRadius, height / 2);
+			p.drawRoundedRect(
+				QRect(card.x(), seg.top, card.width(), height),
+				r,
+				r);
+		}
 	}, pad->lifetime());
 
-	struct Corner {
-		not_null<Ui::RpWidget*> widget;
-		bool right;
-		bool bottom;
-	};
-	struct State {
-		std::vector<Corner> corners;
-		int radius = kGroupRadius;
-	};
-	const auto state = pad->lifetime().make_state<State>();
-	for (const auto right : { false, true }) {
-		for (const auto bottom : { false, true }) {
-			const auto corner = Ui::CreateChild<Ui::RpWidget>(pad);
-			corner->setAttribute(Qt::WA_TransparentForMouseEvents);
-			corner->paintRequest(
-			) | rpl::on_next([=] {
-				auto p = QPainter(corner);
-				auto hq = PainterHighQualityEnabler(p);
-				const auto r = state->radius;
-				auto path = QPainterPath();
-				path.addRect(corner->rect());
-				auto circle = QPainterPath();
-				circle.addEllipse(QRectF(
-					right ? -r : 0,
-					bottom ? -r : 0,
-					2 * r,
-					2 * r));
-				p.fillPath(path.subtracted(circle), outerBg);
-			}, corner->lifetime());
-			state->corners.push_back({ corner, right, bottom });
+	// Поверх строк: срезаем квадратные углы подсветки у каждого куска.
+	const auto shape = Ui::CreateChild<Ui::RpWidget>(pad);
+	shape->setAttribute(Qt::WA_TransparentForMouseEvents);
+	shape->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(shape);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto card = pad->rect() - kGroupMargins;
+		for (const auto &seg : segments()) {
+			const auto height = seg.bottom - seg.top;
+			const auto r = std::min(kGroupRadius, height / 2);
+			if (r < 1) {
+				continue;
+			}
+			for (const auto right : { false, true }) {
+				for (const auto bottom : { false, true }) {
+					const auto x = right ? (card.x() + card.width() - r) : card.x();
+					const auto y = bottom ? (seg.bottom - r) : seg.top;
+					auto path = QPainterPath();
+					path.addRect(QRectF(x, y, r, r));
+					auto circle = QPainterPath();
+					circle.addEllipse(QRectF(
+						right ? (x - r) : x,
+						bottom ? (y - r) : y,
+						2 * r,
+						2 * r));
+					p.fillPath(path.subtracted(circle), outerBg);
+				}
+			}
 		}
-	}
-
-	const auto lines = Ui::CreateChild<Ui::RpWidget>(pad);
-	lines->setAttribute(Qt::WA_TransparentForMouseEvents);
-	lines->hide();
+	}, shape->lifetime());
 
 	pad->sizeValue(
 	) | rpl::on_next([=](QSize size) {
-		const auto card = QRect(QPoint(), size) - kGroupMargins;
-		const auto r = std::max(1, std::min(
-			kGroupRadius,
-			std::min(card.width(), card.height()) / 2));
-		state->radius = r;
-		for (const auto &corner : state->corners) {
-			corner.widget->resize(r, r);
-			corner.widget->move(
-				card.x() + (corner.right ? card.width() - r : 0),
-				card.y() + (corner.bottom ? card.height() - r : 0));
-			corner.widget->raise();
-		}
-		lines->setGeometry(card);
-		lines->raise();
-		lines->update();
+		shape->setGeometry(QRect(QPoint(), size));
+		shape->raise();
+		shape->update();
+		pad->update();
 	}, pad->lifetime());
 	inner->heightValue(
 	) | rpl::on_next([=](int) {
-		lines->update();
-	}, lines->lifetime());
+		shape->update();
+		pad->update();
+	}, pad->lifetime());
 	return inner;
 }
 
