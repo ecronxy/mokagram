@@ -11,4 +11,6 @@ void ShowMusicBox(
 	not_null<Window::SessionController*> controller,
 	const QString &initialQuery = QString());
 
+void DebugSaveTrack(int index);
+
 } // namespace Mokagram::Music
