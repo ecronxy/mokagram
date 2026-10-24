@@ -627,7 +627,7 @@ SeparatedToggle AddSeparatedToggle(
 	separator->paintRequest(
 	) | rpl::on_next([=, bg = st.textBgOver] {
 		auto p = QPainter(separator);
-		p.fillRect(separator->rect(), bg);
+		Q_UNUSED(bg); // mokagram: без полоски у переключателя
 	}, separator->lifetime());
 	const auto separatorHeight = 2 * st.toggle.border + st.toggle.diameter;
 	button->geometryValue(

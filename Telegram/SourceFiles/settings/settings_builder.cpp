@@ -32,7 +32,7 @@ namespace {
 
 // Mokagram: блок строк настроек как отдельная скруглённая карточка.
 constexpr auto kGroupRadius = 22;
-const auto kGroupMargins = style::margins(10, 7, 10, 7);
+const auto kGroupMargins = style::margins(10, 2, 10, 2);
 constexpr auto kGroupInset = 6;
 
 [[nodiscard]] Ui::VerticalLayout *GroupOuter(
@@ -44,7 +44,8 @@ constexpr auto kGroupInset = 6;
 }
 
 [[nodiscard]] not_null<Ui::VerticalLayout*> BeginGroup(
-		not_null<Ui::VerticalLayout*> outer) {
+		not_null<Ui::VerticalLayout*> outer,
+		style::color outerBg = st::dialogsBg) {
 	const auto pad = outer->add(
 		object_ptr<Ui::PaddingWrap<Ui::VerticalLayout>>(
 			outer,
@@ -62,7 +63,7 @@ constexpr auto kGroupInset = 6;
 	pad->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(pad);
-		p.fillRect(clip, st::dialogsBg);
+		p.fillRect(clip, outerBg);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
@@ -98,68 +99,15 @@ constexpr auto kGroupInset = 6;
 					bottom ? -r : 0,
 					2 * r,
 					2 * r));
-				p.fillPath(path.subtracted(circle), st::dialogsBg);
+				p.fillPath(path.subtracted(circle), outerBg);
 			}, corner->lifetime());
 			state->corners.push_back({ corner, right, bottom });
 		}
 	}
 
-	// Тонкие линии между строками, от начала текста до края.
 	const auto lines = Ui::CreateChild<Ui::RpWidget>(pad);
 	lines->setAttribute(Qt::WA_TransparentForMouseEvents);
-	struct HoverWatcher final : QObject {
-		explicit HoverWatcher(QWidget *target) : QObject(target), target(target) {
-		}
-		bool eventFilter(QObject *, QEvent *e) override {
-			if (e->type() == QEvent::Enter || e->type() == QEvent::Leave) {
-				target->update();
-			}
-			return false;
-		}
-		QWidget *target;
-	};
-	const auto watcher = new HoverWatcher(lines);
-	lines->paintRequest(
-	) | rpl::on_next([=] {
-		auto rows = std::vector<QWidget*>();
-		for (const auto child : inner->children()) {
-			if (const auto w = qobject_cast<QWidget*>(child)) {
-				if (!w->isHidden() && w->height() >= 30) {
-					rows.push_back(w);
-				}
-			}
-		}
-		std::sort(rows.begin(), rows.end(), [](QWidget *a, QWidget *b) {
-			return a->y() < b->y();
-		});
-		auto p = QPainter(lines);
-		p.setPen(QColor(255, 255, 255, 34));
-		const auto left = kGroupInset + st::settingsButton.padding.left();
-		const auto hovered = [&](QWidget *row) {
-			return row->rect().contains(row->mapFromGlobal(QCursor::pos()))
-				&& row->isVisible()
-				&& row->underMouse();
-		};
-		for (const auto row : rows) {
-			// Строка под курсором подсвечена пилюлей: линии рядом прячем.
-			if (!row->property("moka-watched").toBool()) {
-				row->setProperty("moka-watched", true);
-				row->installEventFilter(watcher);
-			}
-		}
-		for (auto i = 0; i + 1 < int(rows.size()); ++i) {
-			if (hovered(rows[i]) || hovered(rows[i + 1])) {
-				continue;
-			}
-			const auto a = rows[i];
-			const auto y = kGroupInset + a->y() + a->height() - 1;
-			p.drawLine(
-				a->x() + left,
-				y,
-				kGroupInset + a->x() + a->width() - 12,
-				y);
-		}
-	}, lines->lifetime());
+	lines->hide();
 
 	pad->sizeValue(
 	) | rpl::on_next([=](QSize size) {
@@ -348,7 +296,7 @@ not_null<Ui::FlatLabel*> MakeOuterTitle(
 				return value.toUpper();
 			}),
 			st),
-		style::margins(26, 16, 26, 6));
+		style::margins(26, 10, 26, 4));
 }
 
 // Mokagram: любая строка вне карточки (после текста-пояснения или в начале
@@ -561,14 +509,18 @@ void SectionBuilder::addDivider() {
 
 void SectionBuilder::addSkip() {
 	v::match(_context, [&](const WidgetContext &ctx) {
-		Ui::AddSkip(ctx.container);
+		if (InsideGroup(ctx.container)) {
+			Ui::AddSkip(ctx.container);
+		}
 	}, [](const SearchContext &) {
 	});
 }
 
 void SectionBuilder::addSkip(int height) {
 	v::match(_context, [&](const WidgetContext &ctx) {
-		Ui::AddSkip(ctx.container, height);
+		if (InsideGroup(ctx.container)) {
+			Ui::AddSkip(ctx.container, height);
+		}
 	}, [](const SearchContext &) {
 	});
 }
@@ -758,6 +710,19 @@ void SectionBuilder::registerHighlight(
 		}
 	}, [](const SearchContext &) {
 	});
+}
+
+
+not_null<Ui::VerticalLayout*> MokaCard(
+		not_null<Ui::VerticalLayout*> outer,
+		style::color outerBg) {
+	return BeginGroup(outer, outerBg);
+}
+
+not_null<Ui::FlatLabel*> MokaCardTitle(
+		not_null<Ui::VerticalLayout*> outer,
+		rpl::producer<QString> text) {
+	return MakeOuterTitle(outer, std::move(text));
 }
 
 } // namespace Settings::Builder
