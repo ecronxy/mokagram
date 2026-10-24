@@ -7,6 +7,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
 #include <QtNetwork/QNetworkAccessManager>
@@ -95,6 +96,7 @@ std::set<quint64> &Pending() {
 	return result;
 }
 
+void Fetch(quint64 userId);
 void Fetch(quint64 userId) {
 	if (!Pending().insert(userId).second) {
 		return;
@@ -112,6 +114,14 @@ void Fetch(quint64 userId) {
 		const auto object = QJsonDocument::fromJson(body).object();
 		if (reply->error() != QNetworkReply::NoError) {
 			const auto detail = object.value("detail").toString();
+			static auto retried = std::set<quint64>();
+			if (!detail.contains(u"balance"_q, Qt::CaseInsensitive)
+				&& retried.insert(userId).second) {
+				// Временный сбой сети: пробуем ещё раз, не запоминая ошибку.
+				QTimer::singleShot(1500, [=] { Fetch(userId); });
+				return;
+			}
+			retried.erase(userId);
 			Errors()[userId] = detail.contains(u"balance"_q, Qt::CaseInsensitive)
 				? QString::fromUtf8("пополните баланс API")
 				: QString::fromUtf8("не получилось узнать");
