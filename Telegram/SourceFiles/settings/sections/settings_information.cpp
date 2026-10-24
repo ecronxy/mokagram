@@ -406,8 +406,8 @@ void ShowMenu(
 		auto p = QPainter(card);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBgOver);
-		p.drawRoundedRect(card->rect(), 16, 16);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(card->rect(), 22, 22);
 	}, card->lifetime());
 	return card;
 }

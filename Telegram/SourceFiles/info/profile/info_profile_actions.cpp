@@ -1907,7 +1907,7 @@ Section DetailsFiller::makeInfo() {
 				) | rpl::on_next([=](int w, QRect a, QRect b) {
 					Q_UNUSED(b);
 					icon->move(
-						w - icon->width() + 4,
+						w - icon->width() + 3,
 						a.y() + (a.height() - icon->height()) / 2);
 				}, icon->lifetime());
 
