@@ -880,6 +880,14 @@ void Document::draw(
 						: stm->historyFilePlay)
 					: _data->isImage()
 					? stm->historyFileImage
+					: _data->filename().endsWith(u".plugin"_q, Qt::CaseInsensitive)
+					? (context.outbg
+						? (context.selected()
+							? st::historyFileOutPluginSelected
+							: st::historyFileOutPlugin)
+						: (context.selected()
+							? st::historyFileInPluginSelected
+							: st::historyFileInPlugin))
 					: stm->historyFileDocument;
 			} else {
 				return _data->isSongWithCover()

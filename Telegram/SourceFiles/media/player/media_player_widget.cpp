@@ -661,6 +661,19 @@ int Widget::songTextWidth() const {
 	return std::clamp(natural, 40, std::max(available, 40));
 }
 
+int Widget::songButtonsLeft() const {
+	// По центру между названием и таймером.
+	const auto fade = st::mediaPlayerControlsFade.width();
+	const auto controls = getTimeRight() + _timeLabel->width() + fade;
+	const auto textEnd = getNameLeft() + songTextWidth();
+	const auto controlsLeft = width()
+		- st::mediaPlayerCloseRight
+		- _close->width()
+		- controls;
+	const auto block = buttonsBlockWidth() - st::mediaPlayerPadding;
+	return textEnd + std::max(12, (controlsLeft - textEnd - block) / 2);
+}
+
 int Widget::buttonsBlockWidth() const {
 	if (_type != AudioMsgId::Type::Song) {
 		return 0;
@@ -682,7 +695,7 @@ void Widget::movePlayPrevNext() {
 	const auto song = (_type == AudioMsgId::Type::Song);
 	// Mokagram: у песен кнопки справа, название рядом с обложкой.
 	auto left = song
-		? (getNameLeft() + songTextWidth() + 12)
+		? songButtonsLeft()
 		: st::mediaPlayerPlayLeft;
 	auto top = (st::mediaPlayerHeight - _playPause->height()) / 2;
 	if (_previousTrack) {
