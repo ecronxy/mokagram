@@ -355,8 +355,41 @@ def _register_events(entry):
         names = []
     elif names:
         _audit(entry, 'events.subscribe', ','.join(names), 'allowed')
+    base_fn = getattr(base, 'message_filter_hook', None)
+    wants_filter = getattr(type(inst), 'message_filter_hook', None) is not base_fn
+    if wants_filter and not _granted(entry['id'], 'messages.read'):
+        _say('[%s] message_filter_hook: нет права messages.read' % entry['id'])
+        wants_filter = False
+    entry['filter'] = wants_filter
+    _moka_native('filter_subscribe', json.dumps({'pid': entry['id'], 'on': wants_filter}))
     entry['events'] = set(names)
     _moka_native('events_subscribe', json.dumps({'pid': entry['id'], 'events': names}))
+
+
+def _moka_filter(message_json):
+    """Главный поток: скрывают ли сообщение плагины. '1' скрыть."""
+    try:
+        message = json.loads(message_json)
+    except Exception:
+        return '0'
+    for entry in list(_plugins.values()):
+        inst = entry.get('plugin')
+        if inst is None or not entry.get('filter') or 'message_filter_hook' in entry.get('hooks_off', ()):
+            continue
+        started = time.monotonic()
+        try:
+            res = inst.message_filter_hook(dict(message))
+            strategy = getattr(getattr(res, 'strategy', None), 'value', None)
+            hide = (strategy == 'CANCEL') if strategy else bool(res)
+        except BaseException as e:
+            _hook_error(entry, 'message_filter_hook', e)
+            continue
+        if time.monotonic() - started > 0.05:
+            _hook_slow(entry, 'message_filter_hook', time.monotonic() - started, 0.05)
+            continue
+        if hide:
+            return '1'
+    return '0'
 
 
 def _moka_event(name, payload_json):

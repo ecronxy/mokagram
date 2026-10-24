@@ -57,6 +57,10 @@ class BasePlugin:
     def pre_request_hook(self, request: Any) -> HookResult: return HookResult()
     def post_request_hook(self, response: Any, error: Any = None) -> HookResult: return HookResult()
 
+    # скрыть сообщение в чате (только у вас, на сервере ничего не меняется): верните True или HookResult(CANCEL).
+    # Зовётся один раз на сообщение (результат кэшируется), нужно право messages.read.
+    def message_filter_hook(self, message: dict) -> Any: return False
+
     # события клиента (нужно право messages.read): message это dict
     # {id, peer, peer_title, from, text, out, date, has_media, reply_to}
     def on_new_message(self, message: dict) -> None: ...

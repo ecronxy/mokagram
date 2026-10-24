@@ -56,6 +56,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <mutex>
 #include <atomic>
 #include <chrono>
@@ -884,6 +885,26 @@ std::string MarkRead(const QJsonObject &args) {
 	});
 }
 
+// ---- фильтр скрытия сообщений ----
+
+std::atomic<int> FilterCount = 0;
+std::set<std::string> FilterPlugins;
+std::map<FullMsgId, bool> FilterCache;
+
+std::string FilterSubscribe(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto pid = args.value("pid").toString().toStdString();
+		if (args.value("on").toBool()) {
+			FilterPlugins.insert(pid);
+		} else {
+			FilterPlugins.erase(pid);
+		}
+		FilterCount = int(FilterPlugins.size());
+		FilterCache.clear();
+		return Reply(true);
+	});
+}
+
 std::string Bridge(const std::string &op, const std::string &argsJson) {
 	const auto args = QJsonDocument::fromJson(
 		QByteArray::fromStdString(argsJson)).object();
@@ -901,7 +922,12 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		EventsSubscribe(QJsonObject{
 			{ "pid", args.value("pid") },
 			{ "events", QJsonArray() } });
+		FilterSubscribe(QJsonObject{
+			{ "pid", args.value("pid") },
+			{ "on", false } });
 		return PluginUnloaded(args);
+	} else if (op == "filter_subscribe") {
+		return FilterSubscribe(args);
 	} else if (op == "get_dialogs") {
 		return GetDialogs(args);
 	} else if (op == "get_history") {
@@ -972,6 +998,27 @@ void InstallBridge() {
 				LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
 			});
 	}, BridgeLifetime);
+}
+
+bool HasMessageFilter() {
+	return FilterCount.load(std::memory_order_relaxed) > 0;
+}
+
+bool HiddenByPlugin(not_null<const HistoryItem*> item) {
+	if (FilterCount.load(std::memory_order_relaxed) <= 0 || !IsMainThread()) {
+		return false;
+	}
+	const auto id = item->fullId();
+	const auto i = FilterCache.find(id);
+	if (i != FilterCache.end()) {
+		return i->second;
+	}
+	if (FilterCache.size() > 5000) {
+		FilterCache.clear();
+	}
+	const auto result = CallMessageFilter(Json(ItemBrief(item)), PluginLog);
+	FilterCache[id] = result;
+	return result;
 }
 
 void RunUpdateHook(const MTPUpdate &update) {

@@ -482,6 +482,16 @@ std::string CallHook(
 	return result;
 }
 
+bool CallMessageFilter(const std::string &messageJson, LogFn log) {
+	if (!_started) {
+		return false;
+	}
+	const auto gil = Gil();
+	const auto result = CallStr("_moka_filter", { messageJson });
+	Drain(log);
+	return result == "1";
+}
+
 bool Invoke(
 		const std::string &pid,
 		const std::string &token,
