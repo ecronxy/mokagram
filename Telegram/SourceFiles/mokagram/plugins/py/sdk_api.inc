@@ -379,6 +379,55 @@ def copy_text(text):
     return True if _native('copy_text', {'text': text[:10000]}).get('ok') else None
 
 
+def get_dialogs(limit=50):
+    """Список чатов из загруженных: [{peer, title, username, kind, unread}]."""
+    entry = _gate('get_dialogs', 'messages.read')
+    if entry is None or not _limit(entry, 'read', 120, 60):
+        return None
+    res = _native('get_dialogs', {'limit': int(limit)})
+    return res.get('dialogs') if res.get('ok') else None
+
+
+def get_history(peer, limit=30):
+    """Последние загруженные сообщения чата (старые первыми): [{id, peer, from, text, out, date, has_media}]."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('get_history', 'messages.read', peer)
+    if entry is None or not ok or not _limit(entry, 'read', 120, 60):
+        return None
+    res = _native('get_history', {'peer': peer, 'limit': int(limit)})
+    return res.get('messages') if res.get('ok') else None
+
+
+def current_chat():
+    """Открытый сейчас чат: {peer, title, username, kind} или None."""
+    entry = _gate('current_chat', 'messages.read')
+    if entry is None or not _limit(entry, 'read', 120, 60):
+        return None
+    res = _native('current_chat', {})
+    return {k: v for k, v in res.items() if k != 'ok'} if res.get('ok') else None
+
+
+def mark_read(peer):
+    peer, _, ok = _ids(peer)
+    entry = _gate('mark_read', 'messages.read', peer)
+    if entry is None or not ok:
+        return None
+    return True if _native('mark_read', {'peer': peer}).get('ok') else None
+
+
+def register_command(name, handler, description=''):
+    """Команда в композере: пользователь пишет /name аргументы, сообщение не уходит, зовётся
+    handler(ctx) с ctx = {'args': 'аргументы', 'peer': id чата, 'text': весь текст}."""
+    entry = _gate('register_command', 'ui')
+    if entry is None or not callable(handler):
+        return None
+    name = str(name).strip().lower().lstrip('/')
+    if not name or not name.replace('_', '').isalnum() or len(name) > 32:
+        return None
+    entry.setdefault('commands', {})[name] = (handler, str(description)[:100])
+    return True
+
+
 # ---- хранилище плагина: plugin_data/<id>/store.json, квота 1 МБ, ключ до 128 знаков ----
 
 _QUOTA = 1024 * 1024

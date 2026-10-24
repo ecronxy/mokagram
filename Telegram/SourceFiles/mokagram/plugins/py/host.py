@@ -52,7 +52,7 @@ def _moka_parse(source):
                     detected.add('native')
                 if f.attr in ('send_message', 'send_file'):
                     detected.add('messages.send')
-                if f.attr in ('get_message', 'chat_info'):
+                if f.attr in ('get_message', 'chat_info', 'get_dialogs', 'get_history', 'current_chat', 'mark_read'):
                     detected.add('messages.read')
                 if f.attr == 'edit_message':
                     detected.add('messages.edit')
@@ -425,6 +425,7 @@ def _deactivate(entry):
     except BaseException:
         pass
     entry['cbs'] = {}
+    entry['commands'] = {}
     for t in list(entry.get('timers', {}).values()):
         t.cancel()
     entry['timers'] = {}
@@ -841,8 +842,28 @@ def _moka_hook_observe(kind, ctor, hexdata):
 _HOOK_BUDGETS = {'send_message_hook': 0.15}   # секунд, перехват в главном потоке
 
 
+def _run_command(cur):
+    text = str(cur.get('text', '')).strip()
+    if not text.startswith('/'):
+        return False
+    head, _, rest = text[1:].partition(' ')
+    cmd = head.split('@')[0].lower()
+    for entry in list(_plugins.values()):
+        item = entry.get('commands', {}).get(cmd)
+        if item is None or entry.get('plugin') is None:
+            continue
+        try:
+            item[0]({'args': rest.strip(), 'peer': cur.get('peer'), 'text': text})
+        except BaseException as e:
+            _hook_error(entry, 'command', e)
+        return True
+    return False
+
+
 def _moka_hook(name, params_json):
     cur = json.loads(params_json)
+    if name == 'send_message_hook' and _run_command(cur):
+        return json.dumps({'cancel': True})
     budget = _HOOK_BUDGETS.get(name, 0.15)
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')

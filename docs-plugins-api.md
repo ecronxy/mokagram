@@ -25,6 +25,8 @@
 ## Действия
 `send_message`, `send_file(peer, path, caption, as_photo)`, `edit_message(peer, id, text)`, `get_message(peer, id)`, `chat_info(peer)`,
 `open_chat(peer)`, `open_url(url)`, `copy_text(text)`.
+`get_dialogs(limit)`, `get_history(peer, limit)` (только загруженные), `current_chat()`, `mark_read(peer)`.
+Команды в композере: `api.register_command('name', handler, description)`: пишешь `/name аргументы`, сообщение не уходит, зовётся `handler({'args', 'peer', 'text'})`.
 
 ## Потоки и таймеры
 `set_timeout(fn, sec)`, `set_interval(fn, sec)`, `cancel_timer(id)`, `run_on_ui_thread(fn, delay_ms)`, `run_on_queue(fn, delay_ms)`.
