@@ -32,8 +32,8 @@ namespace {
 
 // Mokagram: блок строк настроек как отдельная скруглённая карточка.
 constexpr auto kGroupRadius = 22;
-const auto kGroupMargins = style::margins(10, 2, 10, 2);
-constexpr auto kGroupInset = 6;
+const auto kGroupMargins = style::margins(10, 5, 10, 5);
+constexpr auto kGroupInset = 4;
 
 [[nodiscard]] Ui::VerticalLayout *GroupOuter(
 		not_null<Ui::VerticalLayout*> container) {
@@ -296,7 +296,7 @@ not_null<Ui::FlatLabel*> MakeOuterTitle(
 				return value.toUpper();
 			}),
 			st),
-		style::margins(26, 10, 26, 4));
+		style::margins(26, 4, 26, 4));
 }
 
 // Mokagram: любая строка вне карточки (после текста-пояснения или в начале

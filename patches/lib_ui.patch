@@ -27,15 +27,16 @@ index fd2a4d4..755fbb2 100644
  		if (!corner.valid()) return;
  		if (_startWidth >= 0) Assert(corner.width <= _startWidth);
 diff --git i/ui/layers/box_layer_widget.cpp w/ui/layers/box_layer_widget.cpp
-index 7a9c2b7..ba951aa 100644
+index 7a9c2b7..3b17cec 100644
 --- i/ui/layers/box_layer_widget.cpp
 +++ w/ui/layers/box_layer_widget.cpp
-@@ -132,6 +132,17 @@ QRect BoxLayerWidget::loadingRect() const {
+@@ -132,6 +132,18 @@ QRect BoxLayerWidget::loadingRect() const {
  void BoxLayerWidget::paintEvent(QPaintEvent *e) {
  	Painter p(this);
  
 +	// Mokagram: окно может запросить своё скругление (свойство moka-radius).
-+	if (const auto custom = property("moka-radius").toInt(); custom > 0) {
++	if (const auto custom = std::max(property("moka-radius").toInt(), 28);
++		custom > 0) {
 +		auto hq = PainterHighQualityEnabler(p);
 +		p.setPen(Qt::NoPen);
 +		p.setBrush(st().bg);
@@ -126,6 +127,86 @@ index 948271f..a158d5c 100644
  	QPainter p(this);
  
  	p.fillRect(e->rect(), _st.bg);
+diff --git i/ui/widgets/buttons.cpp w/ui/widgets/buttons.cpp
+index 690ba6f..dd503ff 100644
+--- i/ui/widgets/buttons.cpp
++++ w/ui/widgets/buttons.cpp
+@@ -53,7 +53,7 @@ public:
+ 
+ protected:
+ 	QImage prepareRippleMask() const override final {
+-		return RippleAnimation::RoundRectMask(size(), st::buttonRadius);
++		return RippleAnimation::RoundRectMask(size(), std::max(st::buttonRadius, 16));
+ 	}
+ 
+ };
+@@ -303,8 +303,8 @@ RoundButton::RoundButton(
+ : RippleButton(parent, st.ripple)
+ , _textFull(std::move(text) | rpl::map(Text::WithEntities))
+ , _st(st)
+-, _roundRect(st.radius ? st.radius : st::buttonRadius, _st.textBg)
+-, _roundRectOver(st.radius ? st.radius : st::buttonRadius, _st.textBgOver)
++, _roundRect(st.radius ? st.radius : std::max(st::buttonRadius, 16), _st.textBg)
++, _roundRectOver(st.radius ? st.radius : std::max(st::buttonRadius, 16), _st.textBgOver)
+ , _fullRadius(st.fullRadius) {
+ 	_textFull.value(
+ 	) | rpl::on_next([=](const TextWithEntities &text) {
+@@ -506,7 +506,7 @@ void RoundButton::paintEvent(QPaintEvent *e) {
+ 			PainterHighQualityEnabler hq(p);
+ 			p.setPen(_penOverride ? *_penOverride : Qt::NoPen);
+ 			p.setBrush(*_brushOverride);
+-			const auto radius = _st.radius ? _st.radius : st::buttonRadius;
++			const auto radius = _st.radius ? _st.radius : std::max(st::buttonRadius, 16);
+ 			p.drawRoundedRect(fill, radius, radius);
+ 		} else {
+ 			rect.paint(p, fill);
+@@ -606,7 +606,7 @@ QImage RoundButton::prepareRippleMask() const {
+ 	}
+ 	return RippleAnimation::RoundRectMask(
+ 		rounded.size(),
+-		_st.radius ? _st.radius : st::buttonRadius);
++		_st.radius ? _st.radius : std::max(st::buttonRadius, 16));
+ }
+ 
+ QPoint RoundButton::prepareRippleStartPosition() const {
+@@ -990,8 +990,24 @@ void SettingsButton::paintEvent(QPaintEvent *e) {
+ 	}
+ }
+ 
++// Mokagram: подсветка строки и волна клика скруглены, как в карточках.
++QImage SettingsButton::prepareRippleMask() const {
++	return RippleAnimation::RoundRectMask(
++		size(),
++		std::min(height() / 2, 20));
++}
++
+ void SettingsButton::paintBg(Painter &p, const QRect &rect, bool over) const {
+-	p.fillRect(rect, over ? _st.textBgOver : _st.textBg);
++	if (_st.textBg->c.alphaF() > 0.) {
++		p.fillRect(rect, _st.textBg);
++	}
++	if (over) {
++		auto hq = PainterHighQualityEnabler(p);
++		p.setPen(Qt::NoPen);
++		p.setBrush(_st.textBgOver);
++		const auto radius = std::min(height() / 2, 20);
++		p.drawRoundedRect(QRectF(this->rect()), radius, radius);
++	}
+ }
+ 
+ void SettingsButton::paintText(Painter &p, bool over, int outerw) const {
+diff --git i/ui/widgets/buttons.h w/ui/widgets/buttons.h
+index 0801610..0bfab98 100644
+--- i/ui/widgets/buttons.h
++++ w/ui/widgets/buttons.h
+@@ -349,6 +349,7 @@ protected:
+ 
+ 	void paintEvent(QPaintEvent *e) override;
+ 
++	QImage prepareRippleMask() const override;
+ 	void paintBg(Painter &p, const QRect &rect, bool over) const;
+ 	void paintText(Painter &p, bool over, int outerw) const;
+ 	void paintToggle(Painter &p, int outerw) const;
 diff --git i/ui/widgets/checkbox.cpp w/ui/widgets/checkbox.cpp
 index df0dc58..ceadaf2 100644
 --- i/ui/widgets/checkbox.cpp
