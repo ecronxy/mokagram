@@ -95,6 +95,74 @@ def send_message(peer, text, reply_to=None, silent=False):
     return None
 
 
+# ---- чтение и действия в чатах ----
+
+def _ids(peer, msg_id=None):
+    peer, msg = str(peer), str(msg_id) if msg_id is not None else '0'
+    ok = peer.lstrip('-').isdigit() and msg.isdigit()
+    return peer, msg, ok
+
+
+def get_message(peer, msg_id):
+    """Сообщение из уже загруженных: dict(text, out, date, from, has_media, can_edit) или None."""
+    peer, msg, ok = _ids(peer, msg_id)
+    entry = _gate('get_message', 'messages.read', peer)
+    if entry is None or not ok:
+        return None
+    if not _limit(entry, 'read', 120, 60):
+        return None
+    res = _native('get_message', {'peer': peer, 'id': msg})
+    _h['audit'](entry, 'get_message', peer, 'allowed' if res.get('ok') else 'failed')
+    return {k: v for k, v in res.items() if k != 'ok'} if res.get('ok') else None
+
+
+def edit_message(peer, msg_id, text):
+    """Правка своего сообщения."""
+    peer, msg, ok = _ids(peer, msg_id)
+    entry = _gate('edit_message', 'messages.edit', peer)
+    if entry is None or not ok or not isinstance(text, str) or not text.strip() or len(text) > 4096:
+        return None
+    if not _limit(entry, 'edit', 20, 60):
+        _h['say']('[%s] edit_message: больше 20 правок в минуту, отказ' % entry['id'])
+        return None
+    res = _native('edit_message', {'peer': peer, 'id': msg, 'text': text})
+    _h['audit'](entry, 'edit_message', peer, 'allowed' if res.get('ok') else 'failed', len(text))
+    return True if res.get('ok') else None
+
+
+def chat_info(peer):
+    """dict(title, username, kind: user|bot|group|channel, members) для загруженного чата или None."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('chat_info', 'messages.read', peer)
+    if entry is None or not ok or not _limit(entry, 'read', 120, 60):
+        return None
+    res = _native('chat_info', {'peer': peer})
+    return {k: v for k, v in res.items() if k != 'ok'} if res.get('ok') else None
+
+
+def open_chat(peer):
+    peer, _, ok = _ids(peer)
+    entry = _gate('open_chat', 'ui', peer)
+    if entry is None or not ok or not _limit(entry, 'open', 20, 60):
+        return None
+    return True if _native('open_chat', {'peer': peer}).get('ok') else None
+
+
+def open_url(url):
+    """Открывает http(s)-ссылку так же, как клик по ссылке в чате (с подтверждением клиента)."""
+    entry = _gate('open_url', 'ui', str(url)[:200])
+    if entry is None or not isinstance(url, str) or not _limit(entry, 'open', 20, 60):
+        return None
+    return True if _native('open_url', {'url': url}).get('ok') else None
+
+
+def copy_text(text):
+    entry = _gate('copy_text', 'ui')
+    if entry is None or not isinstance(text, str) or not _limit(entry, 'copy', 20, 60):
+        return None
+    return True if _native('copy_text', {'text': text[:10000]}).get('ok') else None
+
+
 # ---- хранилище плагина: plugin_data/<id>/store.json, квота 1 МБ, ключ до 128 знаков ----
 
 _QUOTA = 1024 * 1024

@@ -5,6 +5,14 @@
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "api/api_common.h"
+#include "api/api_editing.h"
+#include "core/click_handler_types.h"
+#include "data/data_channel.h"
+#include "data/data_chat.h"
+#include "data/data_drafts.h"
+#include "data/data_user.h"
+#include "history/history_item.h"
+#include "ui/text/text_utilities.h"
 #include "apiwrap.h"
 #include "core/application.h"
 #include "data/data_peer.h"
@@ -231,6 +239,123 @@ std::string SetSetting(const QJsonObject &args) {
 	});
 }
 
+[[nodiscard]] HistoryItem *FindItem(const QJsonObject &args) {
+	const auto session = ActiveSession();
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto id = MsgId(args.value("id").toString().toLongLong());
+	if (!session || !peerId || !id) {
+		return nullptr;
+	}
+	return session->data().message(peerId, id);
+}
+
+std::string GetMessage(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto item = FindItem(args);
+		if (!item) {
+			return Reply(false, U("сообщение не загружено"));
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("text", item->originalText().text);
+		result.insert("out", item->out());
+		result.insert("date", double(item->date()));
+		result.insert("from", QString::number(item->from()->id.value));
+		result.insert("has_media", item->media() != nullptr);
+		result.insert("can_edit", item->canBeEdited());
+		return QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString();
+	});
+}
+
+std::string EditMessage(const QJsonObject &args) {
+	const auto text = args.value("text").toString();
+	if (text.isEmpty()) {
+		return Reply(false, U("пустой текст"));
+	}
+	return OnMain([=]() -> std::string {
+		const auto item = FindItem(args);
+		if (!item || !item->out() || !item->canBeEdited()) {
+			return Reply(false, U("это сообщение нельзя изменить"));
+		}
+		MarkFromPlugin(true);
+		Api::EditTextMessage(
+			item,
+			TextWithEntities{ text },
+			Data::WebPageDraft(),
+			Api::SendOptions(),
+			[](mtpRequestId) {},
+			[](const QString &error, mtpRequestId) {
+				LOG(("[mokagram] edit_message: %1").arg(error));
+			},
+			false);
+		MarkFromPlugin(false);
+		return Reply(true);
+	});
+}
+
+std::string ChatInfo(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto peer = (session && peerId)
+			? session->data().peerLoaded(peerId)
+			: nullptr;
+		if (!peer) {
+			return Reply(false, U("чата нет среди загруженных"));
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("title", peer->name());
+		result.insert("username", peer->username());
+		const auto user = peer->asUser();
+		result.insert("kind", user
+			? (user->isBot() ? "bot" : "user")
+			: (peer->isChannel() && !peer->isMegagroup() ? "channel" : "group"));
+		if (const auto channel = peer->asChannel()) {
+			result.insert("members", channel->membersCount());
+		} else if (const auto chat = peer->asChat()) {
+			result.insert("members", chat->count);
+		}
+		return QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString();
+	});
+}
+
+std::string OpenChat(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto peer = (session && peerId)
+			? session->data().peerLoaded(peerId)
+			: nullptr;
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!peer || !controller) {
+			return Reply(false, U("не удалось открыть чат"));
+		}
+		controller->showPeerHistory(peer);
+		return Reply(true);
+	});
+}
+
+std::string OpenUrl(const QJsonObject &args) {
+	const auto url = args.value("url").toString().left(2000);
+	if (!url.startsWith(U("https://")) && !url.startsWith(U("http://"))) {
+		return Reply(false, U("разрешены только http и https"));
+	}
+	return OnMain([=]() -> std::string {
+		UrlClickHandler::Open(url);
+		return Reply(true);
+	});
+}
+
+std::string CopyText(const QJsonObject &args) {
+	const auto text = args.value("text").toString().left(10000);
+	return OnMain([=]() -> std::string {
+		TextUtilities::SetClipboardText(TextForMimeData::Simple(text));
+		return Reply(true);
+	});
+}
+
 std::string Bridge(const std::string &op, const std::string &argsJson) {
 	const auto args = QJsonDocument::fromJson(
 		QByteArray::fromStdString(argsJson)).object();
@@ -238,6 +363,18 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return ShowToast(args);
 	} else if (op == "send_message") {
 		return SendMessage(args);
+	} else if (op == "get_message") {
+		return GetMessage(args);
+	} else if (op == "edit_message") {
+		return EditMessage(args);
+	} else if (op == "chat_info") {
+		return ChatInfo(args);
+	} else if (op == "open_chat") {
+		return OpenChat(args);
+	} else if (op == "open_url") {
+		return OpenUrl(args);
+	} else if (op == "copy_text") {
+		return CopyText(args);
 	} else if (op == "settings_register") {
 		return RegisterSettings(args);
 	} else if (op == "setting_get") {

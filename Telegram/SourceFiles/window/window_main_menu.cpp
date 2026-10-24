@@ -757,6 +757,12 @@ void MainMenu::setupMenu() {
 		)->setClickedCallback([=] {
 			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
 		});
+		for (auto &item : Mokagram::Plugins::DrawerMenuItems()) {
+			addAction(
+				rpl::single(item.text),
+				{ &st::menuIconBotCommands }
+			)->setClickedCallback(std::move(item.handler));
+		}
 		const auto session = &controller->session();
 		const auto wallet = _menu->add(
 			object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(

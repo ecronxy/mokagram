@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
 #include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/history/mokagram_history.h"
@@ -336,6 +337,7 @@ private:
 	void addExportChat();
 	void addMokagramHistory();
 	void addMokagramGhost();
+	void addMokagramPlugins(const QString &location);
 	void addMokagramGuard();
 	void addTranslate();
 	void addReport();
@@ -1127,6 +1129,18 @@ void Filler::addMokagramGhost() {
 			: QString::fromUtf8("Призрак: не скрывать прочтение здесь"),
 		[=] { Mokagram::Ghost::ToggleReadException(peer); },
 		&st::menuIconRestore);
+}
+
+void Filler::addMokagramPlugins(const QString &location) {
+	if (!_peer || (_thread && _thread->asTopic())) {
+		return;
+	}
+	Mokagram::Plugins::AddPeerMenuItems(
+		location,
+		_peer,
+		[&](const QString &text, Fn<void()> handler) {
+			_addAction(text, std::move(handler), &st::menuIconBotCommands);
+		});
 }
 
 void Filler::addMokagramGuard() {
@@ -1990,6 +2004,7 @@ void Filler::fillContextMenuActions() {
 	addToggleFolder();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPlugins(u"chat"_q);
 	if (const auto user = _peer->asUser()) {
 		if (!user->isContact()) {
 			addBlockUser();
@@ -2021,6 +2036,7 @@ void Filler::fillHistoryActions() {
 	addMokagramHistory();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPlugins(u"chat"_q);
 	addTranslate();
 	addReport();
 	addClearHistory();
@@ -2051,6 +2067,7 @@ void Filler::fillProfileActions() {
 	addMokagramHistory();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPlugins(u"profile"_q);
 	addToggleNoForwards();
 	addToggleFolder();
 	addBlockUser();

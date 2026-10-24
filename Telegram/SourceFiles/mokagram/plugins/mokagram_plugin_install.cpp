@@ -23,6 +23,7 @@
 #include "history/history.h"
 #include "history/history_item.h"
 #include "data/data_peer.h"
+#include "data/data_user.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
@@ -103,7 +104,8 @@ struct Info {
 
 [[nodiscard]] QString PermissionTitle(const QString &key) {
 	if (key == "messages.send") return U("отправка сообщений");
-	if (key == "messages.read") return U("чтение сообщений");
+	if (key == "messages.read") return U("чтение сообщений и сведений о чатах");
+	if (key == "messages.edit") return U("правка ваших сообщений");
 	if (key == "network") return U("доступ в интернет");
 	if (key == "files") return U("доступ к файлам");
 	if (key == "native") return U("запуск программ и нативного кода");
@@ -1234,6 +1236,59 @@ void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item) {
 			},
 			&st::menuIconBotCommands);
 	}
+}
+
+namespace {
+
+void LogLine(const std::string &line) {
+	LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+}
+
+void FillMenuEntries(
+		const std::string &location,
+		const std::string &ctxJson,
+		const Fn<void(const QString &, Fn<void()>)> &add) {
+	const auto list = QJsonDocument::fromJson(QByteArray::fromStdString(
+		MenuItemsJson(location, ctxJson))).array();
+	for (const auto &value : list) {
+		const auto entry = value.toObject();
+		const auto pid = entry.value("pid").toString().toStdString();
+		const auto index = entry.value("index").toInt();
+		add(entry.value("text").toString(), [=] {
+			MenuItemClick(pid, index, ctxJson, LogLine);
+		});
+	}
+}
+
+} // namespace
+
+void AddPeerMenuItems(
+		const QString &location,
+		PeerData *peer,
+		const Fn<void(const QString &, Fn<void()>)> &add) {
+	if (!peer) {
+		return;
+	}
+	auto ctx = QJsonObject();
+	ctx.insert("peer", QString::number(peer->id.value));
+	ctx.insert("title", peer->name());
+	const auto user = peer->asUser();
+	ctx.insert("kind", user
+		? (user->isBot() ? "bot" : "user")
+		: (peer->isChannel() && !peer->isMegagroup() ? "channel" : "group"));
+	ctx.insert("username", peer->username());
+	FillMenuEntries(
+		location.toStdString(),
+		QJsonDocument(ctx).toJson(QJsonDocument::Compact).toStdString(),
+		add);
+}
+
+std::vector<DrawerItem> DrawerMenuItems() {
+	auto result = std::vector<DrawerItem>();
+	FillMenuEntries("drawer", "{}", [&](const QString &text, Fn<void()> handler) {
+		result.push_back({ text, std::move(handler) });
+	});
+	return result;
 }
 
 } // namespace Mokagram::Plugins

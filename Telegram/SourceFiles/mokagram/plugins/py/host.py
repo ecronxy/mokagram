@@ -52,6 +52,10 @@ def _moka_parse(source):
                     detected.add('native')
                 if f.attr == 'send_message':
                     detected.add('messages.send')
+                if f.attr in ('get_message', 'chat_info'):
+                    detected.add('messages.read')
+                if f.attr == 'edit_message':
+                    detected.add('messages.edit')
     out['meta'] = meta
     out['detected'] = sorted(detected)
     return json.dumps(out, ensure_ascii=False)

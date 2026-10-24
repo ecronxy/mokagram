@@ -25,6 +25,8 @@ namespace style {
 struct Box;
 } // namespace style
 
+class PeerData;
+
 namespace Mokagram::Plugins {
 
 [[nodiscard]] bool IsPluginDocument(not_null<DocumentData*> document);
@@ -46,6 +48,20 @@ void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg);
 
 // Пункты плагинов в контекстное меню сообщения.
 void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item);
+
+// Пункты плагинов для места "chat" (меню чата и строки списка) и "profile" (меню профиля).
+// ctx: peer, title, kind (user|bot|group|channel), username. add вызывается на каждый пункт.
+void AddPeerMenuItems(
+	const QString &location,
+	PeerData *peer,
+	const Fn<void(const QString &, Fn<void()>)> &add);
+
+// Пункты плагинов для бокового меню (drawer).
+struct DrawerItem {
+	QString text;
+	Fn<void()> handler;
+};
+[[nodiscard]] std::vector<DrawerItem> DrawerMenuItems();
 
 // Каркас окон в стиле «Плагины»: круглое окно без кнопок и круглые
 // кнопки шапки (закрыть или поиск). Все кастомные окна строим на них.

@@ -416,10 +416,10 @@ index ceed27c..8bfe1c6 100644
  }
  
 diff --git i/ui/widgets/menu/menu.cpp w/ui/widgets/menu/menu.cpp
-index 5421134..3b882da 100644
+index 5421134..0d84ad3 100644
 --- i/ui/widgets/menu/menu.cpp
 +++ w/ui/widgets/menu/menu.cpp
-@@ -48,14 +48,8 @@ void Menu::init() {
+@@ -48,10 +48,8 @@ void Menu::init() {
  
  	setMouseTracking(true);
  
@@ -427,15 +427,11 @@ index 5421134..3b882da 100644
 -		setAttribute(Qt::WA_OpaquePaintEvent);
 -	}
 -
--	paintRequest(
--	) | rpl::on_next([=](const QRect &clip) {
--		QPainter(this).fillRect(clip, _st.itemBg);
--	}, lifetime());
-+	// Mokagram: фон меню даёт контейнер со скруглением, а сам список
-+	// не закрашивает углы квадратом.
- 
- 	positionValue(
- 	) | rpl::on_next([=] {
++	// Mokagram: углы скругляет слой поверх меню (PopupMenu::_roundingOverlay),
++	// поэтому квадратная заливка тут нужна: без неё меню прозрачное.
+ 	paintRequest(
+ 	) | rpl::on_next([=](const QRect &clip) {
+ 		QPainter(this).fillRect(clip, _st.itemBg);
 diff --git i/ui/widgets/menu/menu_action.cpp w/ui/widgets/menu/menu_action.cpp
 index 4c16b67..2ded2eb 100644
 --- i/ui/widgets/menu/menu_action.cpp
