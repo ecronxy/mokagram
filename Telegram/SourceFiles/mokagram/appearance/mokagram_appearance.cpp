@@ -169,8 +169,8 @@ void RegisterSettings() {
 		});
 		chatEntry({
 			.key = u"chats.edited_pencil"_q,
-			.title = QString::fromUtf8("Карандаш вместо «изменено»"),
-			.description = QString::fromUtf8("У изменённого сообщения возле времени стоит значок карандаша."),
+			.title = QString::fromUtf8("Короткая надпись «изм.»"),
+			.description = QString::fromUtf8("У изменённого сообщения возле времени стоит «изм.» вместо «изменено»."),
 			.kind = S::Kind::Bool,
 			.defaultValue = true,
 		});

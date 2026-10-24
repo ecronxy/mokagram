@@ -67,6 +67,7 @@
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
+#include "mokagram/misc/mokagram_ping.h"
 #include "styles/style_widgets.h"
 
 #include <rpl/event_stream.h>
@@ -241,6 +242,7 @@ struct Category {
 		{ "player.autoplay_next", "▶️" },
 		{ "chats.edited_pencil", "✏️" },
 		{ "chats.select_3000", "☑️" },
+		{ "misc.ping_dc", "📈" },
 		{ "lyrics.enabled", "🎵" },
 	};
 	for (const auto &item : items) {
@@ -2048,6 +2050,8 @@ void StartDebugCommands() {
 					}
 				}
 			}
+		} else if (cmd == u"ping"_q) {
+			Mokagram::Misc::ShowPingBox();
 		} else if (cmd == u"player"_q) {
 			Mokagram::Music::ShowPlayerBox(controller);
 		} else if (cmd.startsWith(u"musictab:"_q)) {
@@ -2162,6 +2166,7 @@ namespace {
 [[nodiscard]] const base::flat_map<const void*, QString> &RowIconMap() {
 	static const auto map = base::flat_map<const void*, QString>{
 		{ &st::menuIconProfile, QString::fromUtf8("👤") },
+		{ &st::settingsIconChatAutomation, QString::fromUtf8("🤖") },
 		{ &st::menuIconNotifications, QString::fromUtf8("🔔") },
 		{ &st::menuIconLock, QString::fromUtf8("🔑") },
 		{ &st::menuIconChatBubble, QString::fromUtf8("💬") },

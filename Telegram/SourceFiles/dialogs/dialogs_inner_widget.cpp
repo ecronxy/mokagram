@@ -1253,12 +1253,16 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		if (_bulkMode) {
 			if (const auto history = row->history()) {
 				auto hq = PainterHighQualityEnabler(p);
-				const auto size = 22;
+				// Отметка на углу аватарки, чтобы не лезть на время и счётчик.
+				const auto size = 20;
 				const auto rect = QRectF(
-					width() - 18 - size,
-					(_st->height - size) / 2.,
+					_st->padding.left() + _st->photoSize - size + 2,
+					_st->padding.top() + _st->photoSize - size + 2,
 					size,
 					size);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::dialogsBg);
+				p.drawEllipse(rect.adjusted(-2.5, -2.5, 2.5, 2.5));
 				if (_bulkSelected.contains(history)) {
 					p.setPen(Qt::NoPen);
 					p.setBrush(st::windowActiveTextFg);

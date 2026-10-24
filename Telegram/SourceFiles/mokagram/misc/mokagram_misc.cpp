@@ -1,5 +1,6 @@
 // Mokagram: мелочи (лимит аккаунтов, стикер из фото, владелец пака, название клиента).
 #include "mokagram/misc/mokagram_misc.h"
+#include "mokagram/misc/mokagram_ping.h"
 
 #include "api/api_stickers_creator.h"
 #include "base/unixtime.h"
@@ -108,6 +109,17 @@ void RegisterSettings() {
 	size("look.sticker_size", "Размер стикеров", 224, 80, 512);
 	size("look.gif_size", "Размер GIF", 320, 120, 640);
 	size("look.round_size", "Размер кружков", 240, 120, 480);
+	Settings::Register({
+		.key = u"misc.ping_dc"_q,
+		.section = QString::fromUtf8("Сеть"),
+		.title = QString::fromUtf8("Пинг дата-центров"),
+		.description = QString::fromUtf8("Показывает, за сколько отвечает каждый дата-центр Telegram."),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString::fromUtf8("Проверить"),
+		.category = u"other"_q,
+		.sectionIcon = u"storage"_q,
+		.action = [] { ShowPingBox(); },
+	});
 	Guard::RegisterSettings();
 }
 

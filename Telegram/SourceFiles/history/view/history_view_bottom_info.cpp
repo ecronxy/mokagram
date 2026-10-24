@@ -495,7 +495,7 @@ void BottomInfo::layoutDateText() {
 		? (tr::lng_ephemeral_updated(tr::now) + ' ')
 		: (_data.flags & Data::Flag::Edited)
 		? (Mokagram::Settings::Bool(u"chats.edited_pencil"_q)
-			? (QString::fromUtf8("\u270E") + ' ')
+			? (QString::fromUtf8("изм.") + ' ')
 			: (tr::lng_edited(tr::now) + ' '))
 		: (_data.flags & Data::Flag::EstimateDate)
 		? (tr::lng_approximate(tr::now) + ' ')
