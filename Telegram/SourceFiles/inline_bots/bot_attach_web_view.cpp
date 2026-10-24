@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "inline_bots/bot_attach_web_view.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 
 #include "api/api_blocked_peers.h"
 #include "api/api_common.h"
@@ -3134,6 +3135,12 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 		}, action->lifetime());
 		raw->addAction(std::move(action));
 	}
+	Mokagram::Plugins::AddPeerMenuItems(
+		u"attach"_q,
+		peer,
+		[&](const QString &text, Fn<void()> handler, const style::icon *icon) {
+			raw->addAction(text, std::move(handler), icon);
+		});
 	const auto actions = raw->actions().size();
 	const auto onclick = ChatHelpers::ShowPanelOnClick();
 	if (!actions) {

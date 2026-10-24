@@ -48,6 +48,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
+#include <map>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
@@ -1210,7 +1211,14 @@ void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg) {
 	}, widget->lifetime());
 }
 
-void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item) {
+namespace {
+[[nodiscard]] const style::icon *MenuIconByName(QString name);
+} // namespace
+
+void AddMessageMenuItems(
+		not_null<Ui::PopupMenu*> menu,
+		HistoryItem *item,
+		const QString &selected) {
 	if (!item) {
 		return;
 	}
@@ -1219,6 +1227,9 @@ void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item) {
 	ctx.insert("peer", QString::number(item->history()->peer->id.value));
 	ctx.insert("text", item->originalText().text);
 	ctx.insert("out", item->out());
+	ctx.insert("selected", selected);
+	ctx.insert("has_media", item->media() != nullptr);
+	ctx.insert("date", double(item->date()));
 	const auto ctxJson = QJsonDocument(ctx).toJson(
 		QJsonDocument::Compact).toStdString();
 	const auto list = QJsonDocument::fromJson(
@@ -1234,7 +1245,7 @@ void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item) {
 					LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
 				});
 			},
-			&st::menuIconBotCommands);
+			MenuIconByName(entry.value("icon").toString()));
 	}
 }
 
@@ -1244,10 +1255,99 @@ void LogLine(const std::string &line) {
 	LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
 }
 
+[[nodiscard]] const style::icon *MenuIconByName(QString name) {
+	static const auto table = std::map<QString, const style::icon*>{
+		{ u"reactions"_q, &st::menuIconReactions },
+		{ u"reply"_q, &st::menuIconReply },
+		{ u"edit"_q, &st::menuIconEdit },
+		{ u"draw"_q, &st::menuIconDraw },
+		{ u"pin"_q, &st::menuIconPin },
+		{ u"unpin"_q, &st::menuIconUnpin },
+		{ u"copy"_q, &st::menuIconCopy },
+		{ u"forward"_q, &st::menuIconForward },
+		{ u"delete"_q, &st::menuIconDelete },
+		{ u"select"_q, &st::menuIconSelect },
+		{ u"saveimage"_q, &st::menuIconSaveImage },
+		{ u"stickers"_q, &st::menuIconStickers },
+		{ u"emoji"_q, &st::menuIconEmoji },
+		{ u"cancel"_q, &st::menuIconCancel },
+		{ u"showinchat"_q, &st::menuIconShowInChat },
+		{ u"gif"_q, &st::menuIconGif },
+		{ u"download"_q, &st::menuIconDownload },
+		{ u"link"_q, &st::menuIconLink },
+		{ u"block"_q, &st::menuIconBlock },
+		{ u"report"_q, &st::menuIconReport },
+		{ u"fave"_q, &st::menuIconFave },
+		{ u"profile"_q, &st::menuIconProfile },
+		{ u"info"_q, &st::menuIconInfo },
+		{ u"invite"_q, &st::menuIconInvite },
+		{ u"share"_q, &st::menuIconShare },
+		{ u"archive"_q, &st::menuIconArchive },
+		{ u"markread"_q, &st::menuIconMarkRead },
+		{ u"markunread"_q, &st::menuIconMarkUnread },
+		{ u"clear"_q, &st::menuIconClear },
+		{ u"manage"_q, &st::menuIconManage },
+		{ u"stats"_q, &st::menuIconStats },
+		{ u"schedule"_q, &st::menuIconSchedule },
+		{ u"send"_q, &st::menuIconSend },
+		{ u"settings"_q, &st::menuIconSettings },
+		{ u"file"_q, &st::menuIconFile },
+		{ u"photo"_q, &st::menuIconPhoto },
+		{ u"search"_q, &st::menuIconSearch },
+		{ u"translate"_q, &st::menuIconTranslate },
+		{ u"channel"_q, &st::menuIconChannel },
+		{ u"groups"_q, &st::menuIconGroups },
+		{ u"savedmessages"_q, &st::menuIconSavedMessages },
+		{ u"nightmode"_q, &st::menuIconNightMode },
+		{ u"notifications"_q, &st::menuIconNotifications },
+		{ u"lock"_q, &st::menuIconLock },
+		{ u"bot"_q, &st::menuIconBot },
+		{ u"botcommands"_q, &st::menuIconBotCommands },
+		{ u"premium"_q, &st::menuIconPremium },
+		{ u"shop"_q, &st::menuIconShop },
+		{ u"add"_q, &st::menuIconAdd },
+		{ u"restore"_q, &st::menuIconRestore },
+		{ u"palette"_q, &st::menuIconPalette },
+		{ u"mute"_q, &st::menuIconMute },
+		{ u"unmute"_q, &st::menuIconUnmute },
+		{ u"timer"_q, &st::menuIconTimer },
+		{ u"topics"_q, &st::menuIconTopics },
+		{ u"links"_q, &st::menuIconLinks },
+		{ u"chats"_q, &st::menuIconChats },
+		{ u"phone"_q, &st::menuIconPhone },
+		{ u"chatbubble"_q, &st::menuIconChatBubble },
+		{ u"devices"_q, &st::menuIconDevices },
+		{ u"network"_q, &st::menuIconNetwork },
+		{ u"storage"_q, &st::menuIconStorage },
+		{ u"export"_q, &st::menuIconExport },
+		{ u"leave"_q, &st::menuIconLeave },
+		{ u"soundon"_q, &st::menuIconSoundOn },
+		{ u"soundoff"_q, &st::menuIconSoundOff },
+		{ u"expand"_q, &st::menuIconExpand },
+		{ u"collapse"_q, &st::menuIconCollapse },
+		{ u"replace"_q, &st::menuIconReplace },
+		{ u"remove"_q, &st::menuIconRemove },
+		{ u"like"_q, &st::menuIconLike },
+		{ u"hourglass"_q, &st::menuIconHourglass },
+		{ u"payment"_q, &st::menuIconPayment },
+		{ u"ton"_q, &st::menuIconTon },
+		{ u"reorder"_q, &st::menuIconReorder },
+		{ u"address"_q, &st::menuIconAddress },
+		{ u"faq"_q, &st::menuIconFaq },
+		{ u"username"_q, &st::menuIconUsername }
+	};
+	name = name.toLower();
+	if (name.startsWith(u"menuicon"_q)) {
+		name = name.mid(8);
+	}
+	const auto i = table.find(name);
+	return (i != end(table)) ? i->second : &st::menuIconBotCommands;
+}
+
 void FillMenuEntries(
 		const std::string &location,
 		const std::string &ctxJson,
-		const Fn<void(const QString &, Fn<void()>)> &add) {
+		const MenuAdd &add) {
 	const auto list = QJsonDocument::fromJson(QByteArray::fromStdString(
 		MenuItemsJson(location, ctxJson))).array();
 	for (const auto &value : list) {
@@ -1256,7 +1356,7 @@ void FillMenuEntries(
 		const auto index = entry.value("index").toInt();
 		add(entry.value("text").toString(), [=] {
 			MenuItemClick(pid, index, ctxJson, LogLine);
-		});
+		}, MenuIconByName(entry.value("icon").toString()));
 	}
 }
 
@@ -1265,7 +1365,7 @@ void FillMenuEntries(
 void AddPeerMenuItems(
 		const QString &location,
 		PeerData *peer,
-		const Fn<void(const QString &, Fn<void()>)> &add) {
+		const MenuAdd &add) {
 	if (!peer) {
 		return;
 	}
@@ -1285,8 +1385,11 @@ void AddPeerMenuItems(
 
 std::vector<DrawerItem> DrawerMenuItems() {
 	auto result = std::vector<DrawerItem>();
-	FillMenuEntries("drawer", "{}", [&](const QString &text, Fn<void()> handler) {
-		result.push_back({ text, std::move(handler) });
+	FillMenuEntries("drawer", "{}", [&](
+			const QString &text,
+			Fn<void()> handler,
+			const style::icon *icon) {
+		result.push_back({ text, std::move(handler), icon });
 	});
 	return result;
 }

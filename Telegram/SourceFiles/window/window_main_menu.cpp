@@ -760,7 +760,7 @@ void MainMenu::setupMenu() {
 		for (auto &item : Mokagram::Plugins::DrawerMenuItems()) {
 			addAction(
 				rpl::single(item.text),
-				{ &st::menuIconBotCommands }
+				{ item.icon }
 			)->setClickedCallback(std::move(item.handler));
 		}
 		const auto session = &controller->session();

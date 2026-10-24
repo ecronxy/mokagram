@@ -282,6 +282,34 @@ def send_message(peer, text, reply_to=None, silent=False):
     return None
 
 
+def send_file(peer, path, caption='', as_photo=False, silent=False):
+    """Отправка файла или фото от имени пользователя (право messages.send, те же лимиты, что у send_message)."""
+    target = str(peer)
+    entry = _gate('send_file', 'messages.send', target)
+    if entry is None:
+        return None
+    path = os.path.abspath(str(path))
+    if not target.isdigit() or not os.path.isfile(path) or len(str(caption)) > 1024:
+        _h['say']('[%s] send_file: неверные параметры' % entry['id'])
+        return None
+    if not _limit(entry, 'send_file', 5, 60):
+        _h['say']('[%s] send_file: больше 5 файлов в минуту, отказ' % entry['id'])
+        _h['audit'](entry, 'send_file', target, 'rate_limit')
+        return None
+    peers = entry.setdefault('peers', {})
+    now = time.monotonic()
+    if target not in peers and len(peers) >= 5:
+        _h['audit'](entry, 'send_file', target, 'rate_limit')
+        return None
+    peers[target] = now
+    res = _native('send_file', {'peer': target, 'path': path, 'caption': str(caption),
+                                'kind': 'photo' if as_photo else 'file', 'silent': bool(silent)})
+    _h['audit'](entry, 'send_file', target, 'allowed' if res.get('ok') else 'failed', os.path.getsize(path))
+    if not res.get('ok'):
+        _h['say']('[%s] send_file: %s' % (entry['id'], res.get('error', 'отказ')))
+    return True if res.get('ok') else None
+
+
 # ---- чтение и действия в чатах ----
 
 def _ids(peer, msg_id=None):

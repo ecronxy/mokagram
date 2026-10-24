@@ -51,7 +51,7 @@ def _moka_parse(source):
             elif isinstance(f, ast.Attribute):
                 if f.attr in ('system', 'popen'):
                     detected.add('native')
-                if f.attr == 'send_message':
+                if f.attr in ('send_message', 'send_file'):
                     detected.add('messages.send')
                 if f.attr in ('get_message', 'chat_info'):
                     detected.add('messages.read')
@@ -884,6 +884,8 @@ _LOCATIONS = {
     'DRAWER_MENU': 'drawer',
     'CHAT_ACTION_MENU': 'chat',
     'PROFILE_ACTION_MENU': 'profile',
+    'ATTACH_MENU': 'attach',
+    'MAIN_MENU': 'drawer',
 }
 
 
@@ -907,7 +909,7 @@ def _moka_menu_items(location, ctx_json):
         if inst is None:
             continue
         for index, item in enumerate(getattr(inst, '_menu_items', [])):
-            if _item_location(item) != location:
+            if _item_location(item) != location or getattr(item, '_removed', False):
                 continue
             cond = getattr(item, 'condition', None)
             if callable(cond):
@@ -917,7 +919,10 @@ def _moka_menu_items(location, ctx_json):
                 except BaseException as e:
                     _say('[%s] ошибка в condition: %s' % (entry['id'], e))
                     continue
-            out.append({'pid': entry['id'], 'index': index, 'text': str(getattr(item, 'text', ''))})
+            out.append({'pid': entry['id'], 'index': index, 'text': str(getattr(item, 'text', '')),
+                        'icon': str(getattr(item, 'icon', '') or ''),
+                        'priority': int(getattr(item, 'priority', 0) or 0)})
+    out.sort(key=lambda e: -e['priority'])
     return json.dumps(out, ensure_ascii=False)
 
 

@@ -1138,8 +1138,8 @@ void Filler::addMokagramPlugins(const QString &location) {
 	Mokagram::Plugins::AddPeerMenuItems(
 		location,
 		_peer,
-		[&](const QString &text, Fn<void()> handler) {
-			_addAction(text, std::move(handler), &st::menuIconBotCommands);
+		[&](const QString &text, Fn<void()> handler, const style::icon *icon) {
+			_addAction(text, std::move(handler), icon);
 		});
 }
 

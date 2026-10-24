@@ -5,6 +5,9 @@
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "api/api_common.h"
+#include "storage/storage_media_prepare.h"
+#include "ui/chat/attach/attach_prepare.h"
+#include "storage/localimageloader.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
@@ -42,6 +45,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QFileInfo>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 
@@ -719,6 +723,51 @@ void SubscribeSession(Main::Session *session) {
 	}, SessionLifetime);
 }
 
+std::string SendFile(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto path = args.value("path").toString();
+	const auto caption = args.value("caption").toString();
+	const auto asPhoto = args.value("kind").toString() == u"photo"_q;
+	const auto silent = args.value("silent").toBool();
+	const auto info = QFileInfo(path);
+	if (!peerId || !info.isFile() || info.size() <= 0 || info.size() > (qint64(2000) << 20)) {
+		return Reply(false, U("файл не найден или слишком большой"));
+	}
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto history = session ? session->data().historyLoaded(peerId) : nullptr;
+		if (!history) {
+			return Reply(false, U("чата нет среди загруженных диалогов"));
+		}
+		auto list = Storage::PrepareMediaList(
+			QStringList{ path },
+			st::sendMediaPreviewSize,
+			session->user()->isPremium());
+		if (list.files.empty() && list.filesToProcess.empty()) {
+			return Reply(false, U("файл нельзя отправить"));
+		}
+		if (!list.files.empty()) {
+			list.files.front().caption = TextWithTags{ caption };
+		}
+		auto action = Api::SendAction(history);
+		action.options.silent = silent;
+		action.clearDraft = false;
+		const auto weak = base::make_weak(session);
+		crl::on_main([=, list = std::move(list)]() mutable {
+			if (const auto strong = weak.get()) {
+				MarkFromPlugin(true);
+				strong->api().sendFiles(
+					std::move(list),
+					asPhoto ? SendMediaType::Photo : SendMediaType::File,
+					nullptr,
+					action);
+				MarkFromPlugin(false);
+			}
+		});
+		return Reply(true);
+	});
+}
+
 std::string Bridge(const std::string &op, const std::string &argsJson) {
 	const auto args = QJsonDocument::fromJson(
 		QByteArray::fromStdString(argsJson)).object();
@@ -737,6 +786,8 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 			{ "pid", args.value("pid") },
 			{ "events", QJsonArray() } });
 		return PluginUnloaded(args);
+	} else if (op == "send_file") {
+		return SendFile(args);
 	} else if (op == "run_main") {
 		const auto pid = args.value("pid").toString().toStdString();
 		const auto cb = args.value("cb").toString().toStdString();

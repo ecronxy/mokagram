@@ -31,6 +31,8 @@ class MenuItem:
     icon: Optional[str] = None
     condition: Optional[Callable[[Any], bool]] = None
     action: Optional[Callable[[Any], None]] = None
+    priority: int = 0                  # больше значит выше в меню
+    item_id: Optional[str] = None
 
 
 class BasePlugin:
@@ -67,6 +69,17 @@ class BasePlugin:
         if not hasattr(self, "_menu_items"):
             self._menu_items = []
         self._menu_items.append(item)
+        if not getattr(item, 'item_id', None):
+            try:
+                item.item_id = 'item%d' % len(self._menu_items)
+            except Exception:
+                pass
+        return item.item_id
+
+    def remove_menu_item(self, item_id) -> None:
+        for item in getattr(self, "_menu_items", []):
+            if getattr(item, 'item_id', None) == item_id:
+                item._removed = True
 
 
 # ---- элементы настроек плагина (хост кладёт их в реестр настроек клиента, ключ plugin.<id>.<key>) ----
@@ -126,6 +139,8 @@ class MenuItemType(str, Enum):
     DRAWER_MENU = "DRAWER_MENU"
     CHAT_ACTION_MENU = "CHAT_ACTION_MENU"
     PROFILE_ACTION_MENU = "PROFILE_ACTION_MENU"
+    ATTACH_MENU = "ATTACH_MENU"       # меню скрепки в композере
+    MAIN_MENU = "MAIN_MENU"
 
 
 @dataclass
