@@ -666,10 +666,9 @@ int Widget::songButtonsLeft() const {
 	const auto fade = st::mediaPlayerControlsFade.width();
 	const auto controls = getTimeRight() + _timeLabel->width() + fade;
 	const auto textEnd = getNameLeft() + songTextWidth();
-	const auto controlsLeft = width()
-		- st::mediaPlayerCloseRight
-		- _close->width()
-		- controls;
+	const auto controlsLeft = _rightControls->x()
+		+ _timeLabel->x()
+		- 12;
 	const auto block = buttonsBlockWidth() - st::mediaPlayerPadding;
 	return textEnd + std::max(12, (controlsLeft - textEnd - block) / 2);
 }

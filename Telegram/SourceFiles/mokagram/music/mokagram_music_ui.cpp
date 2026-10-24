@@ -882,18 +882,17 @@ private:
 			return;
 		}
 		if (_glyph == Glyph::Play) {
+			// Без подложки: просто синяя пауза или треугольник.
 			p.setBrush(isOver() ? st::windowActiveTextFg->c.lighter(115) : st::windowActiveTextFg->c);
-			p.drawEllipse(r);
-			p.setBrush(Qt::white);
 			const auto u = r.width() / 64.;
 			if (_playing) {
-				p.drawRoundedRect(QRectF(c.x() - 12 * u, c.y() - 13 * u, 8 * u, 26 * u), 2 * u, 2 * u);
-				p.drawRoundedRect(QRectF(c.x() + 4 * u, c.y() - 13 * u, 8 * u, 26 * u), 2 * u, 2 * u);
+				p.drawRoundedRect(QRectF(c.x() - 14 * u, c.y() - 17 * u, 10 * u, 34 * u), 3 * u, 3 * u);
+				p.drawRoundedRect(QRectF(c.x() + 4 * u, c.y() - 17 * u, 10 * u, 34 * u), 3 * u, 3 * u);
 			} else {
 				auto path = QPainterPath();
-				path.moveTo(c.x() - 8 * u, c.y() - 15 * u);
-				path.lineTo(c.x() + 15 * u, c.y());
-				path.lineTo(c.x() - 8 * u, c.y() + 15 * u);
+				path.moveTo(c.x() - 11 * u, c.y() - 19 * u);
+				path.lineTo(c.x() + 19 * u, c.y());
+				path.lineTo(c.x() - 11 * u, c.y() + 19 * u);
 				path.closeSubpath();
 				p.drawPath(path);
 			}
@@ -1159,9 +1158,9 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		) | rpl::on_next([=](int width) {
 			const auto top = (controls->height() - 72) / 2;
 			play->move((width - 72) / 2, top);
-			previous->move(play->x() - 28 - 56, top + 8);
-			next->move(play->x() + 72 + 28, top + 8);
-			heart->move(next->x() + 56 + 24, top + 12);
+			previous->move(play->x() - 16 - 56, top + 8);
+			next->move(play->x() + 72 + 16, top + 8);
+			heart->move(width - 48 - 12, top + 12);
 		}, controls->lifetime());
 
 		const auto step = [=](int delta) {
