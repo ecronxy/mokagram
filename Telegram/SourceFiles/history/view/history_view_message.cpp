@@ -73,8 +73,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_iv.h"
 #include "styles/style_polls.h"
 
+namespace Mokagram::Badges {
+[[nodiscard]] Ui::BotVerifyDetails Synthetic(not_null<UserData*> user);
+} // namespace Mokagram::Badges
+
 namespace HistoryView {
 namespace {
+
+base::flat_map<const void*, std::unique_ptr<Ui::Text::CustomEmoji>> MokaBadgeEmojis;
+
 
 base::options::toggle UnlimitedMessageWidth({
 	.id = kOptionUnlimitedMessageWidth,
@@ -639,6 +646,7 @@ Message::Message(
 }
 
 Message::~Message() {
+	MokaBadgeEmojis.erase(this);
 	if (_comments || (_fromNameStatus && _fromNameStatus->custom)) {
 		_comments = nullptr;
 		_fromNameStatus = nullptr;
@@ -2533,6 +2541,32 @@ void Message::paintFromName(
 		context,
 		colorIndex(),
 		colorCollectible());
+	// Mokagram: значок слева от имени у тех, кому выдана галочка.
+	if (from) {
+		if (const auto user = from->asUser()) {
+			const auto details = ::Mokagram::Badges::Synthetic(user);
+			if (details) {
+				auto &emoji = MokaBadgeEmojis[this];
+				if (!emoji) {
+					const auto that = const_cast<Message*>(this);
+					emoji = MakeWrappedEmoji<Ui::Text::FirstFrameEmoji>(
+						history()->owner().customEmojiManager().create(
+							details.iconId,
+							[=] { that->customEmojiRepaint(); }));
+				}
+				clearCustomEmojiRepaint();
+				emoji->paint(p, {
+					.textColor = nameFg,
+					.now = context.now,
+					.position = QPoint(availableLeft - 2, trect.top() - 1),
+					.paused = true,
+				});
+				const auto skip = emoji->width() - 4 + st::msgServiceFont->spacew;
+				availableLeft += skip;
+				availableWidth -= skip;
+			}
+		}
+	}
 	const auto nameText = [&] {
 		if (from) {
 			validateFromNameText(from);

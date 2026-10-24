@@ -123,6 +123,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Mokagram::Badges {
 void Start();
 } // namespace Mokagram::Badges
+namespace Mokagram::Guard {
+void Start();
+} // namespace Mokagram::Guard
 
 namespace Core {
 namespace {
@@ -329,6 +332,7 @@ void Application::run() {
 
 	Mokagram::Settings::Load();
 	Mokagram::Badges::Start();
+	Mokagram::Guard::Start();
 	Mokagram::Streamer::RegisterSettings();
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();
