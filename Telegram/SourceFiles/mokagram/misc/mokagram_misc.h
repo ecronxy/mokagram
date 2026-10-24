@@ -7,6 +7,7 @@
 #include <memory>
 
 class PhotoData;
+class PeerData;
 class HistoryItem;
 
 namespace ChatHelpers {
@@ -38,3 +39,11 @@ void ShowStickerSetOwner(
 [[nodiscard]] QByteArray BrandRewrite(const QByteArray &value);
 
 } // namespace Mokagram::Misc
+
+namespace Mokagram::Guard {
+
+// Человек из списка исключений: проверка угроз на него не действует.
+[[nodiscard]] bool ThreatExempt(not_null<PeerData*> peer);
+void ToggleThreatExempt(not_null<PeerData*> peer);
+
+} // namespace Mokagram::Guard

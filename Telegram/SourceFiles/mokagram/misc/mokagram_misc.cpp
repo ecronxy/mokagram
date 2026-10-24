@@ -387,6 +387,15 @@ void Block(not_null<UserData*> user, const QString &why) {
 	Toast(QString::fromUtf8("Заблокировал ") + user->name() + QString::fromUtf8(": ") + why);
 }
 
+[[nodiscard]] QStringList ExemptList() {
+	auto result = QStringList();
+	for (auto part : S::String(u"guard.threat_exempt"_q).split(
+			QRegularExpression(u"[,\\n;\\s]+"_q), Qt::SkipEmptyParts)) {
+		result.push_back(part.trimmed().toLower().remove(u'@'));
+	}
+	return result;
+}
+
 [[nodiscard]] QStringList Threats() {
 	auto result = QStringList();
 	const auto raw = S::String(u"guard.threat_words"_q);
@@ -430,7 +439,7 @@ void OnNewMessage(not_null<HistoryItem*> item) {
 			}
 		}
 	}
-	if (S::Bool(u"guard.threats"_q)) {
+	if (S::Bool(u"guard.threats"_q) && !ThreatExempt(user)) {
 		const auto text = item->originalText().text.toLower();
 		if (!text.isEmpty()) {
 			for (const auto &word : Threats()) {
@@ -495,6 +504,32 @@ void WatchMassAdd(not_null<Main::Session*> session) {
 
 } // namespace
 
+bool ThreatExempt(not_null<PeerData*> peer) {
+	const auto list = ExemptList();
+	if (list.contains(QString::number(peerToUser(peer->id).bare))) {
+		return true;
+	}
+	if (const auto user = peer->asUser()) {
+		const auto name = user->username().toLower();
+		return !name.isEmpty() && list.contains(name);
+	}
+	return false;
+}
+
+void ToggleThreatExempt(not_null<PeerData*> peer) {
+	auto list = ExemptList();
+	const auto id = QString::number(peerToUser(peer->id).bare);
+	if (ThreatExempt(peer)) {
+		list.removeAll(id);
+		if (const auto user = peer->asUser()) {
+			list.removeAll(user->username().toLower());
+		}
+	} else {
+		list.push_back(id);
+	}
+	S::SetString(u"guard.threat_exempt"_q, list.join(u", "_q));
+}
+
 void RegisterSettings() {
 	const auto add = [&](S::Entry entry) {
 		entry.section = kSection;
@@ -551,6 +586,14 @@ void RegisterSettings() {
 		.description = QString::fromUtf8("Через запятую, регистр не важен."),
 		.kind = S::Kind::String,
 		.defaultValue = QString::fromUtf8(kDefaultThreats),
+		.dependsOn = u"guard.threats"_q,
+	});
+	add({
+		.key = u"guard.threat_exempt"_q,
+		.title = QString::fromUtf8("На кого список угроз не действует"),
+		.description = QString::fromUtf8("Им можно писать что угодно. Добавляется в меню чата («Угрозы: не проверять»), здесь можно править: айди или @юзернеймы через запятую."),
+		.kind = S::Kind::String,
+		.defaultValue = QString(),
 		.dependsOn = u"guard.threats"_q,
 	});
 	add({

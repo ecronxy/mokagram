@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
 #include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/history/mokagram_history.h"
 
@@ -335,6 +336,7 @@ private:
 	void addExportChat();
 	void addMokagramHistory();
 	void addMokagramGhost();
+	void addMokagramGuard();
 	void addTranslate();
 	void addReport();
 	void addNewContact();
@@ -1124,6 +1126,23 @@ void Filler::addMokagramGhost() {
 			? QString::fromUtf8("Призрак: снова скрывать прочтение")
 			: QString::fromUtf8("Призрак: не скрывать прочтение здесь"),
 		[=] { Mokagram::Ghost::ToggleReadException(peer); },
+		&st::menuIconRestore);
+}
+
+void Filler::addMokagramGuard() {
+	const auto user = _peer ? _peer->asUser() : nullptr;
+	if (!user
+		|| (_thread && _thread->asTopic())
+		|| user->isSelf()
+		|| user->isBot()) {
+		return;
+	}
+	const auto peer = _peer;
+	_addAction(
+		Mokagram::Guard::ThreatExempt(peer)
+			? QString::fromUtf8("Угрозы: проверять снова")
+			: QString::fromUtf8("Угрозы: не проверять его"),
+		[=] { Mokagram::Guard::ToggleThreatExempt(peer); },
 		&st::menuIconRestore);
 }
 
@@ -1970,6 +1989,7 @@ void Filler::fillContextMenuActions() {
 	addToggleTopicClosed();
 	addToggleFolder();
 	addMokagramGhost();
+	addMokagramGuard();
 	if (const auto user = _peer->asUser()) {
 		if (!user->isContact()) {
 			addBlockUser();
@@ -2000,6 +2020,7 @@ void Filler::fillHistoryActions() {
 	addExportChat();
 	addMokagramHistory();
 	addMokagramGhost();
+	addMokagramGuard();
 	addTranslate();
 	addReport();
 	addClearHistory();
@@ -2029,6 +2050,7 @@ void Filler::fillProfileActions() {
 	addExportChat();
 	addMokagramHistory();
 	addMokagramGhost();
+	addMokagramGuard();
 	addToggleNoForwards();
 	addToggleFolder();
 	addBlockUser();
