@@ -179,73 +179,73 @@ struct Category {
 	return st::menuIconSettings;
 }
 
-// Свой значок для каждой настройки по ключу; nullptr, если подходящего нет.
-[[nodiscard]] const style::icon *AutoIcon(const QString &key) {
+// Значок настройки из набора iOSTelegram: эмодзи-ключ по ключу настройки.
+[[nodiscard]] QString AutoAlt(const QString &key) {
 	struct Item {
 		const char *part;
-		const style::icon *icon;
+		const char *alt;
 	};
 	static const auto items = std::vector<Item>{
-		{ "only_strangers", &st::menuIconPersonal },
-		{ "sticker_count", &st::menuIconOrderNumber },
-		{ "sticker_seconds", &st::menuIconHourglass },
-		{ "guard.stickers", &st::menuIconStickers },
-		{ "threat_words", &st::menuIconArticle },
-		{ "threat_exempt", &st::menuIconUnblock },
-		{ "guard.threats", &st::menuIconReportAntiSpam },
-		{ "mass_count", &st::menuIconOrderNumber },
-		{ "mass_minutes", &st::menuIconTimer },
-		{ "mass_leave", &st::menuIconLeave },
-		{ "mass_add", &st::menuIconInvite },
-		{ "ghost.read", &st::menuIconMarkRead },
-		{ "ghost.online", &st::menuIconWhenOnline },
-		{ "ghost.typing", &st::menuIconChatBubble },
-		{ "ghost.stories", &st::menuIconStoriesSavedSection },
-		{ "ghost.exceptions", &st::menuIconUnblock },
-		{ "ghost.schedule_label", &st::menuIconEdit },
-		{ "ghost.schedule_from", &st::menuIconOrderDate },
-		{ "ghost.schedule_to", &st::menuIconOrderDate },
-		{ "ghost.sched_", &st::menuIconSchedule },
-		{ "ghost.schedule", &st::menuIconSchedule },
-		{ "ghost.offline_on_enable", &st::menuIconMute },
-		{ "history.save_deleted", &st::menuIconDelete },
-		{ "history.save_edited", &st::menuIconEdit },
-		{ "history.save_for_bots", &st::menuIconBot },
-		{ "history.show_ghosts", &st::menuIconShowAll },
-		{ "history.dim_deleted", &st::menuIconTransparent },
-		{ "history.mark", &st::menuIconFave },
-		{ "history.keep_days", &st::menuIconOrderDate },
-		{ "history.keep_mb", &st::menuIconStorage },
-		{ "history.keep_per_chat", &st::menuIconChats },
-		{ "history.keep_ttl", &st::menuIconTTL },
-		{ "history.sqlite", &st::menuIconExport },
-		{ "history.filters_enabled", &st::menuIconTagFilter },
-		{ "hide_blocked", &st::menuIconBlock },
-		{ "lag.enabled", &st::menuIconPowerUsage },
-		{ "lag.level", &st::menuIconQualityHigh },
-		{ "lag.sensitivity", &st::menuIconZoomIn },
-		{ "lag.cache_mb", &st::menuIconDownload },
-		{ "lag.cache", &st::menuIconStorage },
-		{ "lag.calm", &st::menuIconSilent },
-		{ "lag.notify", &st::menuIconNotifications },
-		{ "look.sticker_size", &st::menuIconStickers },
-		{ "look.gif_size", &st::menuIconGif },
-		{ "look.round_size", &st::menuIconVideoChat },
-		{ "bubbles.enabled", &st::menuIconCustomize },
-		{ "bubbles.out_color", &st::menuIconPalette },
-		{ "bubbles.in_color", &st::menuIconChangeColors },
-		{ "bubbles.out_text", &st::menuIconFont },
-		{ "bubbles.in_text", &st::menuIconCaptionShow },
-		{ "player.cover_colors", &st::menuIconPhoto },
-		{ "lyrics.plasma", &st::menuIconEmojiObjects },
-		{ "lyrics.enabled", &st::menuIconArticle },
+		{ "only_strangers", "👤" },
+		{ "sticker_count", "#️⃣" },
+		{ "sticker_seconds", "⏳" },
+		{ "guard.stickers", "😜" },
+		{ "threat_words", "📄" },
+		{ "threat_exempt", "✋" },
+		{ "guard.threats", "⚠️" },
+		{ "mass_count", "#️⃣" },
+		{ "mass_minutes", "🕓" },
+		{ "mass_leave", "⬅️" },
+		{ "mass_add", "➕" },
+		{ "ghost.read", "✅" },
+		{ "ghost.online", "👁" },
+		{ "ghost.typing", "💬" },
+		{ "ghost.stories", "🎞" },
+		{ "ghost.exceptions", "📌" },
+		{ "ghost.schedule_label", "✏️" },
+		{ "ghost.schedule_from", "🕓" },
+		{ "ghost.schedule_to", "🕓" },
+		{ "ghost.sched_", "🗓" },
+		{ "ghost.schedule", "🗓" },
+		{ "ghost.offline_on_enable", "💤" },
+		{ "history.save_deleted", "🗑" },
+		{ "history.save_edited", "✏️" },
+		{ "history.save_for_bots", "🤖" },
+		{ "history.show_ghosts", "🫣" },
+		{ "history.dim_deleted", "🔘" },
+		{ "history.mark", "📍" },
+		{ "history.keep_days", "🗓" },
+		{ "history.keep_mb", "📁" },
+		{ "history.keep_per_chat", "💬" },
+		{ "history.keep_ttl", "⏳" },
+		{ "history.sqlite", "📊" },
+		{ "history.filters_enabled", "📑" },
+		{ "hide_blocked", "🚫" },
+		{ "lag.enabled", "📈" },
+		{ "lag.level", "📊" },
+		{ "lag.sensitivity", "📐" },
+		{ "lag.cache_mb", "🔽" },
+		{ "lag.cache", "📁" },
+		{ "lag.calm", "🔕" },
+		{ "lag.notify", "🔔" },
+		{ "look.sticker_size", "😜" },
+		{ "look.gif_size", "🎞" },
+		{ "look.round_size", "📹" },
+		{ "bubbles.enabled", "🎈" },
+		{ "bubbles.out_color", "🖼" },
+		{ "bubbles.in_color", "🔵" },
+		{ "bubbles.out_text", "📄" },
+		{ "bubbles.in_text", "📋" },
+		{ "player.cover_colors", "🖼" },
+		{ "lyrics.plasma", "💎" },
+		{ "lyrics.enabled", "🎵" },
 	};
 	for (const auto &item : items) {
 		if (key.contains(QLatin1String(item.part))) {
-			return item.icon;
+			return QString::fromUtf8(item.alt);
 		}
 	}
-	return nullptr;
+	return QString();
 }
 
 // Прозрачный фон окна и скруглённая подложка, как в окне «Плагины».
@@ -682,10 +682,16 @@ void PaintPlate(
 		QColor color,
 		const style::icon &icon,
 		const QString &name,
+		const QString &alt,
 		PackIcon &pack,
 		not_null<Ui::RpWidget*> widget) {
-	if (!name.isEmpty() && !pack.emoji && !pack.tried) {
-		pack.emoji = PackIcons::Instance().make(
+	if (!pack.emoji && !pack.tried) {
+		pack.emoji = !alt.isEmpty()
+			? PackIcons::Instance().makeAlt(
+				alt,
+				[=] { widget->update(); },
+				kPackEmojiSize)
+			: PackIcons::Instance().make(
 			name,
 			[=] { widget->update(); },
 			kPackEmojiSize);
@@ -879,8 +885,8 @@ void ShowColorBox(const QString &title, const QString &key) {
 	const auto iconName = entry.icon.isEmpty()
 		? entry.sectionIcon
 		: entry.icon;
-	const auto automatic = entry.icon.isEmpty() ? AutoIcon(entry.key) : nullptr;
-	const auto &icon = automatic ? *automatic : IconByName(iconName);
+	const auto autoAlt = entry.icon.isEmpty() ? AutoAlt(entry.key) : QString();
+	const auto &icon = IconByName(iconName);
 	auto description = entry.description;
 	if (const auto dot = description.indexOf(QStringLiteral(". ")); dot > 0) {
 		description = description.left(dot + 1);
@@ -1183,7 +1189,8 @@ void ShowColorBox(const QString &title, const QString &key) {
 			QRect(kPad, view->plateTop, kPlate, kPlate),
 			color,
 			icon,
-			automatic ? QString() : iconName,
+			iconName,
+			autoAlt,
 			view->pack,
 			row);
 		if (!view->first) {
@@ -1300,6 +1307,7 @@ void AddActionRow(
 			color,
 			icon,
 			iconName,
+			QString(),
 			*pack,
 			row);
 	}, row->lifetime());
