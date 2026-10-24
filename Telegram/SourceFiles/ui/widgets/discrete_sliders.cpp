@@ -461,8 +461,18 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 			return true;
 		});
 		p.setBrush(st::windowBgActive);
+		auto pad = 0;
+		enumerateSections([&](Section &section) {
+			pad = std::max((section.width - section.contentWidth) / 2, 0);
+			return false;
+		});
+		const auto grow = _st.barSnapToLabel ? pad : 0;
 		p.drawRoundedRect(
-			QRectF(range.left + 2, pillTop, range.width - 4, pillHeight),
+			QRectF(
+				range.left - grow + 2,
+				pillTop,
+				range.width + 2 * grow - 4,
+				pillHeight),
 			pillHeight / 2.,
 			pillHeight / 2.);
 	}

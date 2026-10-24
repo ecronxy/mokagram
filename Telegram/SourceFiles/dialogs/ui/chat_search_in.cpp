@@ -445,7 +445,7 @@ void ChatSearchIn::showMenu() {
 void ChatSearchIn::paintEvent(QPaintEvent *e) {
 	auto p = Painter(this);
 	const auto top = QRect(0, 0, width(), st::searchedBarHeight);
-	p.fillRect(top, st::windowBg);
+	p.fillRect(top, st::dialogsBg);
 	p.fillRect(rect().translated(0, st::searchedBarHeight), st::dialogsBg);
 
 	p.setFont(st::searchedBarFont);

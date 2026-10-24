@@ -1707,6 +1707,20 @@ void StartDebugCommands() {
 					Wallet::ShowSendToUser(controller->uiShow(), user);
 				}
 			}
+		} else if (cmd == u"colors"_q) {
+			const auto show = [](const char *name, const style::color &c) {
+				fprintf(stderr, "COLOR %s %d %d %d %d\n", name, c->c.red(), c->c.green(), c->c.blue(), c->c.alpha());
+			};
+			show("windowBg", st::windowBg);
+			show("dialogsBg", st::dialogsBg);
+			show("boxBg", st::boxBg);
+			show("dialogsBgOver", st::dialogsBgOver);
+			show("windowBgOver", st::windowBgOver);
+			show("searchedBarBg", st::searchedBarBg);
+			show("filterInputInactiveBg", st::filterInputInactiveBg);
+			show("layerBg", st::layerBg);
+		} else if (cmd == u"search"_q) {
+			controller->searchMessages(QString(), Dialogs::Key());
 		} else if (cmd == u"datetime"_q) {
 			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 				Ui::ChooseDateTimeBox(box, {

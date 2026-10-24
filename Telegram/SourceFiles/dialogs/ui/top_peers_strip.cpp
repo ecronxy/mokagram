@@ -137,7 +137,7 @@ void TopPeersStrip::setupHeader() {
 	}, _header.lifetime());
 
 	_header.paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(&_header).fillRect(clip, st::windowBg);
+		QPainter(&_header).fillRect(clip, st::dialogsBg);
 	}, _header.lifetime());
 }
 
