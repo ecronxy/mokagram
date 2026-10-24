@@ -192,6 +192,8 @@ std::string SendMessage(const QJsonObject &args) {
 	}
 }
 
+void PluginLog(const std::string &line);
+
 std::string RegisterSettings(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		for (const auto &value : args.value("entries").toArray()) {
@@ -218,6 +220,14 @@ std::string RegisterSettings(const QJsonObject &args) {
 				entry.maxValue = std::max(int(entry.choices.size()) - 1, 0);
 			} else if (kind == "string") {
 				entry.kind = Settings::Kind::String;
+			} else if (kind == "button") {
+				entry.kind = Settings::Kind::String;
+				entry.icon = item.value("icon").toString();
+				const auto pid = item.value("pid").toString().toStdString();
+				const auto cb = item.value("cb").toString().toStdString();
+				entry.action = [=] {
+					Invoke(pid, cb, "{}", PluginLog);
+				};
 			} else {
 				continue;
 			}

@@ -104,6 +104,17 @@ class Divider:
 @dataclass
 class Text:
     text: str = ""
+    subtext: Optional[str] = None
+    icon: Optional[str] = None
+    on_click: Optional[Callable[[Any], None]] = None   # с on_click строка становится кнопкой
+
+
+@dataclass
+class Button:
+    text: str = ""
+    subtext: Optional[str] = None
+    icon: Optional[str] = None
+    on_click: Optional[Callable[[Any], None]] = None
 
 
 @dataclass

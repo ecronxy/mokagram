@@ -667,9 +667,26 @@ def _register_settings(entry):
     section = str(entry['meta'].get('__name__') or entry['id'])
     table = {}
     out = []
+    plugin_name = section
+    buttons = 0
     for it in items:
         cls = type(it).__name__
         key = getattr(it, 'key', None)
+        if cls == 'Header':
+            section = '%s: %s' % (plugin_name, str(getattr(it, 'text', ''))[:60])
+            continue
+        click = getattr(it, 'on_click', None)
+        if cls in ('Text', 'Button') and callable(click) and buttons < 30:
+            buttons += 1
+            out.append({
+                'key': 'plugin.%s.__button%d' % (entry['id'], buttons), 'section': section,
+                'title': str(getattr(it, 'text', '') or 'Действие')[:120],
+                'description': str(getattr(it, 'subtext', '') or '')[:200],
+                'icon': str(getattr(it, 'icon', '') or ''),
+                'kind': 'button', 'default': '',
+                'pid': entry['id'], 'cb': _register_cb(entry, lambda p, f=click: f(None)),
+            })
+            continue
         if cls not in ('Switch', 'Selector', 'Input', 'EditText') or not isinstance(key, str) or not key or len(key) > 64:
             continue
         item = {

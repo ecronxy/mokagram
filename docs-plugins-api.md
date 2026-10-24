@@ -41,6 +41,9 @@
 ## Хранилище и настройки
 `api.storage` (get/set/delete/keys), `get_setting/set_setting`, `create_settings()` со списком Header/Switch/Selector/Input/Text/Divider.
 
+## Настройки плагина
+`create_settings()` возвращает `Header(text)` (начинает новую группу), `Switch`, `Selector`, `Input`, `Text` и `Button(text, subtext, icon, on_click)`. `Button` (или `Text` с `on_click`) это строка-кнопка в Кастомизация → Плагины; из `on_click` можно открыть `show_dialog` как подстраницу.
+
 ## Хуки
 `send_message_hook(params)`, `on_update_hook`, `on_updates_hook`, `pre_request_hook`, `post_request_hook` с `HookResult(strategy, value)`.
 
