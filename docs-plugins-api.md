@@ -9,7 +9,8 @@
 
 ## Пункты интерфейса
 `self.add_menu_item(MenuItemData(menu_type=..., text, on_click(ctx), icon, priority, condition))` возвращает id, `remove_menu_item(id)`.
-Места: `MESSAGE_CONTEXT_MENU` (ctx: id, peer, text, selected, out, has_media, date), `CHAT_ACTION_MENU` (меню чата и строки списка),
+Кнопки с иконкой: `HEADER_BUTTON` (шапка чата), `COMPOSER_BUTTON` (рядом с полем ввода), ctx: peer, title, kind, username.
+Места меню: `MESSAGE_CONTEXT_MENU` (ctx: id, peer, text, selected, out, has_media, date), `CHAT_ACTION_MENU` (меню чата и строки списка),
 `PROFILE_ACTION_MENU`, `ATTACH_MENU` (скрепка), `DRAWER_MENU`/`MAIN_MENU` (боковое меню). Для чатов ctx: peer, title, kind, username.
 Иконки по имени: copy, delete, edit, info, send, settings, search, translate, share, link, pin, forward, reply, bot, lock, palette, premium, timer и ещё ~70 (см. `MenuIconByName`).
 
@@ -28,6 +29,9 @@
 `get_dialogs(limit)`, `get_history(peer, limit)` (только загруженные), `current_chat()`, `mark_read(peer)`.
 Команды в композере: `api.register_command('name', handler, description)`: пишешь `/name аргументы`, сообщение не уходит, зовётся `handler({'args', 'peer', 'text'})`.
 
+## Скрытие сообщений
+`message_filter_hook(m)` возвращает True, чтобы скрыть сообщение у себя (на сервере ничего не меняется). Вызывается один раз на сообщение, результат кэшируется. Нужно право `messages.read`.
+
 ## Потоки и таймеры
 `set_timeout(fn, sec)`, `set_interval(fn, sec)`, `cancel_timer(id)`, `run_on_ui_thread(fn, delay_ms)`, `run_on_queue(fn, delay_ms)`.
 
@@ -36,3 +40,5 @@
 
 ## Хуки
 `send_message_hook(params)`, `on_update_hook`, `on_updates_hook`, `pre_request_hook`, `post_request_hook` с `HookResult(strategy, value)`.
+
+Пример со всем сразу: `examples/showcase.plugin`.

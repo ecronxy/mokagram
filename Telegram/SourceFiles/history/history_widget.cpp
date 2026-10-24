@@ -109,6 +109,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item.h"
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
+#include <deque>
 #include "history/history_item_helpers.h" // GetErrorForSending.
 #include "history/history_drag_area.h"
 #include "history/history_inner_widget.h"
@@ -250,6 +252,56 @@ const auto kPsaAboutPrefix = "cloud_lng_about_psa_";
 		const auto history = key.history();
 		return history ? history->peer.get() : nullptr;
 	});
+}
+
+} // namespace
+
+namespace {
+
+constexpr auto kMokaComposerButton = "moka-composer-button";
+
+// Mokagram: кнопки плагинов рядом с полем ввода (место "composer").
+void RefreshComposerPluginButtons(
+		not_null<Ui::RpWidget*> widget,
+		Dialogs::Key key) {
+	for (const auto child : widget->findChildren<QWidget*>(
+			kMokaComposerButton,
+			Qt::FindDirectChildrenOnly)) {
+		delete child;
+	}
+	const auto peer = key.topic() ? nullptr : key.peer();
+	if (peer) {
+		static auto styles = std::deque<style::IconButton>();
+		Mokagram::Plugins::AddPeerMenuItems(
+			u"composer"_q,
+			peer,
+			[&](const QString &text, Fn<void()> handler, const style::icon *icon) {
+				auto &st = styles.emplace_back(st::historyBotCommandStart);
+				st.icon = *icon;
+				st.iconOver = *icon;
+				const auto button = Ui::CreateChild<Ui::IconButton>(
+					widget.get(),
+					st);
+				button->setObjectName(kMokaComposerButton);
+				button->setClickedCallback(std::move(handler));
+				button->setAccessibleName(text);
+				button->setToolTip(text);
+				button->show();
+			});
+	}
+	QResizeEvent e(widget->size(), widget->size());
+	QCoreApplication::sendEvent(widget, &e);
+}
+
+[[nodiscard]] std::vector<Ui::IconButton*> ComposerPluginButtons(
+		not_null<Ui::RpWidget*> widget) {
+	auto result = std::vector<Ui::IconButton*>();
+	for (const auto child : widget->findChildren<QWidget*>(
+			kMokaComposerButton,
+			Qt::FindDirectChildrenOnly)) {
+		result.push_back(static_cast<Ui::IconButton*>(child));
+	}
+	return result;
 }
 
 } // namespace
@@ -675,6 +727,11 @@ HistoryWidget::HistoryWidget(
 		}) | rpl::to_empty
 	) | rpl::on_next([=] {
 		refreshAttachBotsMenu();
+	}, lifetime());
+
+	controller->activeChatValue(
+	) | rpl::on_next([=](Dialogs::Key key) {
+		RefreshComposerPluginButtons(this, key);
 	}, lifetime());
 
 	_botKeyboardShow->addClickHandler([=] { toggleKeyboard(); });
@@ -7645,6 +7702,10 @@ void HistoryWidget::moveFieldControls() {
 		_scheduled->moveToRight(right, buttonsBottom);
 		right += _scheduled->width();
 	}
+	for (const auto button : ComposerPluginButtons(this)) {
+		button->moveToRight(right, buttonsBottom);
+		right += button->width();
+	}
 	if (_ttlInfo) {
 		_ttlInfo->move(width() - right - _ttlInfo->width(), buttonsBottom);
 	}
@@ -7707,6 +7768,9 @@ void HistoryWidget::updateFieldSize() {
 	}
 	if (_toggleSuggestPost && !_toggleSuggestPost->isHidden()) {
 		fieldWidth -= _toggleSuggestPost->width();
+	}
+	for (const auto button : ComposerPluginButtons(this)) {
+		fieldWidth -= button->width();
 	}
 	if (_giftToUser && !_giftToUser->isHidden()) {
 		fieldWidth -= _giftToUser->width();

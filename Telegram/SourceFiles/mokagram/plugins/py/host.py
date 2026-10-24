@@ -939,6 +939,8 @@ _LOCATIONS = {
     'PROFILE_ACTION_MENU': 'profile',
     'ATTACH_MENU': 'attach',
     'MAIN_MENU': 'drawer',
+    'HEADER_BUTTON': 'header',
+    'COMPOSER_BUTTON': 'composer',
 }
 
 

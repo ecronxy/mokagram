@@ -145,6 +145,8 @@ class MenuItemType(str, Enum):
     PROFILE_ACTION_MENU = "PROFILE_ACTION_MENU"
     ATTACH_MENU = "ATTACH_MENU"       # меню скрепки в композере
     MAIN_MENU = "MAIN_MENU"
+    COMPOSER_BUTTON = "COMPOSER_BUTTON"   # кнопка с иконкой рядом с полем ввода
+    HEADER_BUTTON = "HEADER_BUTTON"   # кнопка с иконкой в шапке чата
 
 
 @dataclass
