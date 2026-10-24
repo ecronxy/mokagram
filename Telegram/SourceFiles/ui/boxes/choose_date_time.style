@@ -27,14 +27,16 @@ defaultCalendarColors: CalendarColors {
 scheduleHeight: 95px;
 scheduleDateTop: 38px;
 scheduleTimeField: InputField(scheduleDateField) {
+	textMargins: margins(8px, 4px, 8px, 0px);
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
+	borderRadius: 10px;
 	heightMin: 28px;
 	placeholderFont: font(14px);
 	placeholderFgActive: placeholderFgActive;
 }
 scheduleDateWidth: 136px;
-scheduleTimeWidth: 72px;
+scheduleTimeWidth: 92px;
 scheduleAtSkip: 24px;
 scheduleAtTop: 42px;
 scheduleAtLabel: FlatLabel(defaultFlatLabel) {

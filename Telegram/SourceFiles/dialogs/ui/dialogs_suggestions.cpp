@@ -748,7 +748,7 @@ void Suggestions::ObjectListController::setupPlainDivider(
 		label->moveToLeft(x, y, size.width());
 	}, raw->lifetime());
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, st::dialogsBg);
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));
@@ -815,7 +815,7 @@ void Suggestions::ObjectListController::setupExpandDivider(
 	}, raw->lifetime());
 
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, st::dialogsBg);
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));
@@ -936,7 +936,7 @@ void RecentsController::setupDivider() {
 		label->moveToLeft(x, y, size.width());
 	}, raw->lifetime());
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, st::dialogsBg);
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));

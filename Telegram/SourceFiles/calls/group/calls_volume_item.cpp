@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "ui/widgets/menu/menu_item_base.h"
 #include "calls/group/calls_volume_item.h"
 
 #include "calls/group/calls_group_common.h"
@@ -100,7 +101,7 @@ MenuVolumeItem::MenuVolumeItem(
 			= _crossLineAnimation.value((!volume) ? 1. : 0.);
 
 		const auto selected = isSelected();
-		p.fillRect(clip, selected ? st.itemBgOver : st.itemBg);
+		Ui::Menu::PaintItemBackground(p, rect(), st, selected);
 
 		const auto mutePen = anim::color(
 			unmuteColor(),

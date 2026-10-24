@@ -1516,7 +1516,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		}
 
 		if (!_peerSearchResults.empty()) {
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), tr::lng_search_global_results(tr::now));
@@ -1583,7 +1583,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		if (_previewResults.empty() && _searchResults.empty()) {
 			if (_loadingAnimation) {
 				const auto text = tr::lng_contacts_loading(tr::now);
-				p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+				p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 				p.setFont(st::searchedBarFont);
 				p.setPen(st::searchedBarFg);
 				p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -1593,7 +1593,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		}
 		if (!_previewResults.empty()) {
 			const auto text = tr::lng_search_tab_public_posts(tr::now);
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -1683,7 +1683,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 			const auto searchLowerText = (_searchHashOrCashtag == HashOrCashtag::None)
 				? _searchState.query.toLower()
 				: QString();
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);

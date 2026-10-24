@@ -7,6 +7,9 @@
 
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/misc/mokagram_misc.h"
+#include "ui/boxes/choose_date_time.h"
+#include "ui/layers/generic_box.h"
+#include "base/unixtime.h"
 #include "wallet/wallet_content.h"
 #include "boxes/add_contact_box.h"
 #include "boxes/peers/edit_peer_info_box.h"
@@ -1704,6 +1707,18 @@ void StartDebugCommands() {
 					Wallet::ShowSendToUser(controller->uiShow(), user);
 				}
 			}
+		} else if (cmd == u"datetime"_q) {
+			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				Ui::ChooseDateTimeBox(box, {
+					.title = rpl::single(u"Выбрать время"_q),
+					.submit = rpl::single(u"Запланировать"_q),
+					.done = [](TimeId) {},
+					.min = [] { return base::unixtime::now(); },
+					.time = base::unixtime::now() + 3600,
+					.max = [] { return base::unixtime::now() + 86400 * 30; },
+					.description = rpl::single(u"Описание"_q),
+				});
+			}));
 		} else if (cmd == u"newgroup"_q) {
 			controller->show(Box<GroupInfoBox>(
 				controller,

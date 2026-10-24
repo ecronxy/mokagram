@@ -1445,7 +1445,12 @@ void StickersBox::Inner::paintRow(
 
 	if (_megagroupSet) {
 		if (index >= 0 && index == IndexOf(_selected)) {
-			p.fillRect(0, 0, width(), _rowHeight, _st.button.textBgOver);
+			{
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(_st.button.textBgOver);
+			p.drawRoundedRect(QRectF(0, 0, width(), _rowHeight).marginsRemoved({ 6., 1., 6., 1. }), 16, 16);
+		}
 			if (row->ripple) {
 				row->ripple->paint(p, 0, 0, width());
 			}

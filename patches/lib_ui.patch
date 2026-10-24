@@ -297,7 +297,7 @@ index df0dc58..ceadaf2 100644
  	auto innerDiameter = _st->diameter - 2 * _st->shift;
  	auto innerRadius = float64(innerDiameter) / 2.;
 diff --git i/ui/widgets/fields/input_field.cpp w/ui/widgets/fields/input_field.cpp
-index d57ac56..01682ae 100644
+index d57ac56..7226abd 100644
 --- i/ui/widgets/fields/input_field.cpp
 +++ w/ui/widgets/fields/input_field.cpp
 @@ -1925,6 +1925,15 @@ InputField::InputField(
@@ -307,9 +307,9 @@ index d57ac56..01682ae 100644
 +	// Mokagram: у скруглённого поля текст не липнет к краю.
 +	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
 +		_additionalMargins = QMargins(
-+			std::max(0, 14 - _st.textMargins.left()),
++			std::max(0, std::min(14, _st.borderRadius) - _st.textMargins.left()),
 +			0,
-+			std::max(0, 10 - _st.textMargins.right()),
++			std::max(0, std::min(10, _st.borderRadius) - _st.textMargins.right()),
 +			0);
 +	}
 +
@@ -344,7 +344,7 @@ index d57ac56..01682ae 100644
  
  	PainterHighQualityEnabler hq(p);
 diff --git i/ui/widgets/fields/masked_input_field.cpp w/ui/widgets/fields/masked_input_field.cpp
-index ef96309..a574545 100644
+index ef96309..a082ef9 100644
 --- i/ui/widgets/fields/masked_input_field.cpp
 +++ w/ui/widgets/fields/masked_input_field.cpp
 @@ -141,6 +141,14 @@ int MaskedInputField::borderAnimationStart() const {
@@ -354,9 +354,9 @@ index ef96309..a574545 100644
 +	// Mokagram: у скруглённого поля текст не липнет к краю.
 +	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
 +		_textMargins += QMargins(
-+			std::max(0, 14 - mrg.left()),
++			std::max(0, std::min(14, _st.borderRadius) - mrg.left()),
 +			0,
-+			std::max(0, 10 - mrg.right()),
++			std::max(0, std::min(10, _st.borderRadius) - mrg.right()),
 +			0);
 +	}
  	setContentsMargins(_textMargins + QMargins(-2, -1, -2, -1));
@@ -526,6 +526,21 @@ index 7633972..d697404 100644
  
  	RippleButton::paintRipple(p, 0, 0);
  
+diff --git i/ui/widgets/time_input.cpp w/ui/widgets/time_input.cpp
+index 7be4b1e..bd5bc20 100644
+--- i/ui/widgets/time_input.cpp
++++ w/ui/widgets/time_input.cpp
+@@ -232,6 +232,10 @@ void TimeInput::paintEvent(QPaintEvent *e) {
+ 	auto p = QPainter(this);
+ 
+ 	const auto &_st = _stDateField;
++	// Mokagram: у скруглённых полей части рисуют себя сами, без общей черты.
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
++		return;
++	}
+ 	const auto height = _st.heightMin;
+ 	if (_st.border) {
+ 		p.fillRect(0, height - _st.border, width(), _st.border, _st.borderFg);
 diff --git i/ui/widgets/widgets.style w/ui/widgets/widgets.style
 index 8b8df7d..e5687e6 100644
 --- i/ui/widgets/widgets.style

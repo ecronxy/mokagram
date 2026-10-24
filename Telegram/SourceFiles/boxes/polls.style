@@ -181,7 +181,7 @@ createPollField: InputField(defaultInputField) {
 	placeholderFont: boxTextFont;
 	placeholderShift: -50px;
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
 	duration: 100;
 }
 createPollFieldPadding: margins(22px, 5px, 22px, 5px);

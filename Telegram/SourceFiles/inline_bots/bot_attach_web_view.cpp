@@ -748,7 +748,7 @@ void BotAction::paint(Painter &p) {
 	if (selected && _st.itemBgOver->c.alpha() < 255) {
 		p.fillRect(0, 0, width(), _height, _st.itemBg);
 	}
-	p.fillRect(0, 0, width(), _height, selected ? _st.itemBgOver : _st.itemBg);
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
 	if (isEnabled()) {
 		paintRipple(p, 0, 0);
 	}

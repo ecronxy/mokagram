@@ -288,7 +288,12 @@ void FilterRowButton::paintEvent(QPaintEvent *e) {
 	const auto over = isOver() || isDown();
 	if (_state == State::Normal) {
 		if (over) {
-			p.fillRect(e->rect(), st::windowBgOver);
+			{
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(QRectF(rect()).marginsRemoved({ 6., 1., 6., 1. }), 16, 16);
+		}
 		}
 		RippleButton::paintRipple(p, 0, 0);
 

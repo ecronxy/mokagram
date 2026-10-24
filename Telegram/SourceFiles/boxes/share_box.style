@@ -30,6 +30,6 @@ shareComment: InputField(defaultInputField) {
 	placeholderScale: 0.;
 	placeholderFont: normalFont;
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
 }
 shareCommentPadding: margins(5px, 5px, 5px, 5px);
