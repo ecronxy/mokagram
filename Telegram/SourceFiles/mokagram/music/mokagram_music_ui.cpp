@@ -49,6 +49,7 @@
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
 #include <QtGui/QLinearGradient>
@@ -1000,7 +1001,8 @@ public:
 	explicit LyricsView(QWidget *parent)
 	: RpWidget(parent) {
 		resize(width(), 280);
-		_timer.setInterval(40);
+		_clock.start();
+		_timer.setInterval(16);
 		connect(&_timer, &QTimer::timeout, this, [=] { tick(); });
 		_timer.start();
 	}
@@ -1010,80 +1012,108 @@ public:
 		update();
 	}
 	void setLoading() {
-		_lyrics = {};
+		reset();
 		_status = QString::fromUtf8("Ищу текст…");
-		_current = -1;
-		_scroll = 0.;
 		update();
 	}
 	void setLyrics(Lyrics lyrics) {
+		reset();
 		_lyrics = std::move(lyrics);
 		_status = _lyrics.found
 			? QString()
 			: QString::fromUtf8("Текст этой песни не найден");
-		_current = -1;
-		_scroll = 0.;
-		_heights.clear();
+		_weights.assign(_lyrics.lines.size(), 0.f);
 		update();
 	}
 	void setPosition(qint64 ms) {
 		_position = ms;
+		_positionAt = _clock.elapsed();
 	}
 
 private:
+	void reset() {
+		_lyrics = {};
+		_current = -1;
+		_scroll = 0.;
+		_scrollReady = false;
+		_heights.clear();
+		_weights.clear();
+	}
+
+	// Позиция трека между обновлениями плеера: плавнее подсветка строк.
+	[[nodiscard]] qint64 livePosition() const {
+		return _position + std::min<qint64>(_clock.elapsed() - _positionAt, 600);
+	}
+
 	void tick() {
 		if (!isVisible()) {
+			_last = _clock.elapsed();
 			return;
 		}
-		_phase += 0.012;
-		auto target = _scroll;
-		if (_lyrics.synced) {
+		const auto now = _clock.elapsed();
+		const auto dt = std::clamp((now - _last) / 1000., 0., 0.1);
+		_last = now;
+		_phase += dt * 0.7;
+		if (_lyrics.found && _lyrics.synced) {
 			auto index = -1;
+			const auto at = livePosition() + 120;
 			for (auto i = 0; i != int(_lyrics.lines.size()); ++i) {
-				if (_lyrics.lines[i].timeMs <= _position) {
+				if (_lyrics.lines[i].timeMs <= at) {
 					index = i;
 				} else {
 					break;
 				}
 			}
 			_current = index;
-			target = offsetOf(std::max(index, 0));
+			const auto target = centerOf(std::max(index, 0));
+			if (!_scrollReady) {
+				_scroll = target;
+				_scrollReady = true;
+			}
+			// Пружина без рывков: чем дальше строка, тем быстрее догоняем.
+			_scroll += (target - _scroll) * (1. - std::exp(-dt * 6.5));
+			const auto fade = float(1. - std::exp(-dt * 9.));
+			for (auto i = 0; i != int(_weights.size()); ++i) {
+				const auto goal = (i == _current) ? 1.f : 0.f;
+				_weights[i] += (goal - _weights[i]) * fade;
+			}
 		}
-		_scroll += (target - _scroll) * 0.18;
 		update();
 	}
 
-	[[nodiscard]] int textWidth() const {
-		return width() - 48;
+	[[nodiscard]] static constexpr double kScaleMax() {
+		return 1.12;
 	}
-	[[nodiscard]] QFont fontFor(bool current) const {
+	[[nodiscard]] int textWidth() const {
+		return int((width() - 56) / kScaleMax());
+	}
+	[[nodiscard]] QFont lineFont() const {
 		auto font = st::semiboldFont->f;
-		font.setPixelSize(current ? 21 : 17);
+		font.setPixelSize(19);
 		return font;
 	}
-	[[nodiscard]] int heightOf(int index, bool current) {
-		const auto key = index * 2 + (current ? 1 : 0);
-		if (int(_heights.size()) <= key) {
-			_heights.resize(key + 1, -1);
+	[[nodiscard]] int heightOf(int index) {
+		if (_heights.size() != _lyrics.lines.size()) {
+			_heights.assign(_lyrics.lines.size(), -1);
 		}
-		if (_heights[key] < 0) {
+		if (_heights[index] < 0) {
 			const auto text = _lyrics.lines[index].text.isEmpty()
 				? u" "_q
 				: _lyrics.lines[index].text;
-			_heights[key] = QFontMetrics(fontFor(current)).boundingRect(
+			_heights[index] = QFontMetrics(lineFont()).boundingRect(
 				QRect(0, 0, textWidth(), 10000),
 				Qt::TextWordWrap | Qt::AlignHCenter,
-				text).height() + 16;
+				text).height() + 20;
 		}
-		return _heights[key];
+		return _heights[index];
 	}
 	// Центр строки index в координатах содержимого.
-	[[nodiscard]] double offsetOf(int index) {
+	[[nodiscard]] double centerOf(int index) {
 		auto y = 0.;
 		for (auto i = 0; i != index; ++i) {
-			y += heightOf(i, false);
+			y += heightOf(i);
 		}
-		return y + heightOf(index, true) / 2.;
+		return y + heightOf(index) / 2.;
 	}
 
 	void paintEvent(QPaintEvent *e) override {
@@ -1122,52 +1152,62 @@ private:
 			return;
 		}
 		const auto count = int(_lyrics.lines.size());
-		auto y = height() / 2. - _scroll;
-		if (!_lyrics.synced) {
-			y = 12.;
-		}
+		auto top = _lyrics.synced ? (height() / 2. - _scroll) : 12.;
+		p.setFont(lineFont());
 		for (auto i = 0; i != count; ++i) {
-			const auto current = _lyrics.synced && (i == _current);
-			const auto lineHeight = heightOf(i, current);
-			if (y + lineHeight >= 0 && y <= height()) {
+			const auto lineHeight = heightOf(i);
+			if (top + lineHeight >= -20 && top <= height() + 20) {
+				const auto w = (_lyrics.synced && i < int(_weights.size()))
+					? double(_weights[i])
+					: 0.;
+				// Дальние строки тусклее, текущая белая и крупнее.
 				const auto distance = _lyrics.synced
 					? std::abs(i - std::max(_current, 0))
 					: 1;
+				const auto rest = std::max(0.2, 0.55 - 0.07 * distance);
 				auto color = QColor(255, 255, 255);
-				color.setAlphaF(current
-					? 1.
-					: std::max(0.22, 0.62 - 0.1 * distance));
+				color.setAlphaF(rest + (1. - rest) * w);
 				p.setPen(color);
-				p.setFont(fontFor(current));
+				const auto scale = 1. + (kScaleMax() - 1.) * w;
+				const auto cy = top + lineHeight / 2.;
+				p.save();
+				p.translate(width() / 2., cy);
+				p.scale(scale, scale);
 				p.drawText(
-					QRectF(24, y + 8, textWidth(), lineHeight - 8),
+					QRectF(-textWidth() / 2., -lineHeight / 2. + 10, textWidth(), lineHeight - 10),
 					Qt::TextWordWrap | Qt::AlignHCenter | Qt::AlignTop,
 					_lyrics.lines[i].text);
+				p.restore();
 			}
-			y += lineHeight;
-			if (y > height() + 400) {
+			top += lineHeight;
+			if (top > height() + 400) {
 				break;
 			}
 		}
 		// Мягкое затухание сверху и снизу.
-		auto fadeTop = QLinearGradient(0, 0, 0, 44);
-		fadeTop.setColorAt(0., QColor(0, 0, 0, 110));
+		auto fadeTop = QLinearGradient(0, 0, 0, 56);
+		fadeTop.setColorAt(0., QColor(0, 0, 0, 140));
 		fadeTop.setColorAt(1., QColor(0, 0, 0, 0));
-		p.fillRect(QRect(0, 0, width(), 44), fadeTop);
-		auto fadeBottom = QLinearGradient(0, height() - 44, 0, height());
+		p.fillRect(QRect(0, 0, width(), 56), fadeTop);
+		auto fadeBottom = QLinearGradient(0, height() - 56, 0, height());
 		fadeBottom.setColorAt(0., QColor(0, 0, 0, 0));
-		fadeBottom.setColorAt(1., QColor(0, 0, 0, 110));
-		p.fillRect(QRect(0, height() - 44, width(), 44), fadeBottom);
+		fadeBottom.setColorAt(1., QColor(0, 0, 0, 140));
+		p.fillRect(QRect(0, height() - 56, width(), 56), fadeBottom);
 	}
 
 	Lyrics _lyrics;
 	QString _status;
 	QTimer _timer;
+	QElapsedTimer _clock;
 	std::vector<int> _heights;
+	std::vector<float> _weights;
 	qint64 _position = 0;
+	qint64 _positionAt = 0;
+	qint64 _last = 0;
 	double _scroll = 0.;
 	double _phase = 0.;
 	int _current = -1;
+	bool _scrollReady = false;
 	bool _plasma = true;
 
 };
