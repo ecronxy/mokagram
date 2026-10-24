@@ -83,7 +83,7 @@ not_null<Ui::FlatLabel*> AddSubsectionTitle(
 			break;
 		}
 	}
-	if (inCard) {
+	{
 		text = std::move(text) | rpl::map([](QString value) {
 			return value.toUpper();
 		});
@@ -96,8 +96,8 @@ not_null<Ui::FlatLabel*> AddSubsectionTitle(
 		inCard
 			? style::margins(12, 14, 12, 6)
 			: (st::defaultSubsectionTitlePadding + addPadding));
+	label->setTextColorOverride(st::windowSubTextFg->c);
 	if (inCard) {
-		label->setTextColorOverride(st::windowSubTextFg->c);
 		label->setProperty("moka-title", true);
 	}
 	return label;
