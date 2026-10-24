@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_key_modifiers.h"
 #include "base/timer_rpl.h"
 #include "base/unixtime.h"
+#include "mokagram/misc/mokagram_datereg.h"
 #include "mokagram/streamer/mokagram_streamer.h"
 #include "boxes/choose_filter_box.h"
 #include "boxes/peer_list_box.h"
@@ -1883,6 +1884,17 @@ Section DetailsFiller::makeInfo() {
 					}
 				};
 				button->setClickedCallback(copyId);
+			}
+			// Mokagram: дата регистрации по ключу DateReg.
+			if (Mokagram::Misc::DateRegEnabled() && !user->isBot()) {
+				addInfoOneLine(
+					rpl::single(QString::fromUtf8("Дата регистрации")),
+					Mokagram::Misc::RegistrationDate(
+						user->id.value & PeerId::kChatTypeMask
+					) | rpl::map([](QString text) {
+						return tr::marked(text);
+					}),
+					QString());
 			}
 		}
 		auto label = user->isBot()

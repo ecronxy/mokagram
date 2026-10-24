@@ -1,5 +1,6 @@
 // Mokagram: мелочи (лимит аккаунтов, стикер из фото, владелец пака, название клиента).
 #include "mokagram/misc/mokagram_misc.h"
+#include "mokagram/misc/mokagram_datereg.h"
 #include "mokagram/misc/mokagram_ping.h"
 
 #include "api/api_stickers_creator.h"
@@ -120,6 +121,7 @@ void RegisterSettings() {
 		.sectionIcon = u"storage"_q,
 		.action = [] { ShowPingBox(); },
 	});
+	RegisterDateRegSettings();
 	Guard::RegisterSettings();
 }
 
