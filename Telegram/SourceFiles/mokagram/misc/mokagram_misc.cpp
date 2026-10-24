@@ -42,6 +42,7 @@
 #include "main/main_session.h"
 #include "main/main_account.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/settings/mokagram_settings_box.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
@@ -318,7 +319,8 @@ void Refresh(int index = 0) {
 		for (const auto id : state.remote) {
 			all.emplace(id);
 		}
-		if (const auto session = Core::App().activeAccount().maybeSession()) {
+		const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
+		if (const auto session = account ? account->maybeSession() : nullptr) {
 			for (const auto id : all) {
 				if (const auto user = session->data().userLoaded(UserId(id))) {
 					user->setBotVerifyDetails(Synthetic(user));
@@ -805,6 +807,7 @@ void Start() {
 			OnNewMessage(update.item);
 		}, session->lifetime());
 		WatchMassAdd(session);
+		::Mokagram::Settings::PreloadRowIcons(session);
 	}, lifetime);
 }
 

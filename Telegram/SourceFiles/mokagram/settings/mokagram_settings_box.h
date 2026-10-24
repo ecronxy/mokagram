@@ -16,6 +16,10 @@ class CustomEmoji;
 namespace style::internal {
 class Icon;
 } // namespace style::internal
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace style {
 using icon = internal::Icon;
 } // namespace style
@@ -42,5 +46,9 @@ void StartDebugCommands();
 	Fn<void()> repaint,
 	int size);
 [[nodiscard]] rpl::producer<> RowIconsUpdated();
+// Есть ли для значка пара из набора (до загрузки набора старый значок не рисуем).
+[[nodiscard]] bool HasRowIcon(const void *icon);
+// Грузит набор значков заранее, чтобы к открытию настроек он уже был.
+void PreloadRowIcons(not_null<Main::Session*> session);
 
 } // namespace Mokagram::Settings

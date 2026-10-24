@@ -320,9 +320,62 @@ SectionBuilder::SectionBuilder(BuildContext context)
 : _context(std::move(context)) {
 }
 
+namespace {
+// Пустая карточка (после addDivider перед заголовком) не нужна: прячем её.
+void HideEmptyGroup(not_null<Ui::VerticalLayout*> container) {
+	if (GroupOuter(container) && container->count() == 0) {
+		if (const auto pad = container->parentWidget()) {
+			pad->hide();
+		}
+	}
+}
+
+// Mokagram: заголовок раздела стоит над карточкой серой заглавной надписью,
+// как в «Кастомизации», а под ним начинается новая карточка.
+not_null<Ui::FlatLabel*> MakeOuterTitle(
+		not_null<Ui::VerticalLayout*> outer,
+		rpl::producer<QString> text) {
+	static const auto st = [] {
+		auto value = st::boxDividerLabel;
+		value.minWidth = 1;
+		value.style.font = st::semiboldFont;
+		return value;
+	}();
+	return outer->add(
+		object_ptr<Ui::FlatLabel>(
+			outer,
+			std::move(text) | rpl::map([](QString value) {
+				return value.toUpper();
+			}),
+			st),
+		style::margins(26, 16, 26, 6));
+}
+
+// Mokagram: любая строка вне карточки (после текста-пояснения или в начале
+// страницы) сама открывает новую карточку, чтобы не было квадратных углов.
+[[nodiscard]] bool InsideGroup(not_null<Ui::VerticalLayout*> container) {
+	for (QWidget *w = container; w; w = w->parentWidget()) {
+		if (w->property("moka-group-outer").isValid()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void EnsureGroup(BuildContext &context) {
+	if (const auto wctx = std::get_if<WidgetContext>(&context)) {
+		if (!InsideGroup(wctx->container)) {
+			wctx->container = BeginGroup(wctx->container);
+		}
+	}
+}
+
+} // namespace
+
 void SectionBuilder::add(FnMut<void(const BuildContext &ctx)> method) {
 	Expects(method != nullptr);
 
+	EnsureGroup(_context);
 	method(_context);
 }
 
@@ -416,6 +469,7 @@ Ui::RpWidget *SectionBuilder::addControl(ControlArgs &&args) {
 }
 
 Ui::SettingsButton *SectionBuilder::addButton(ButtonArgs &&args) {
+	EnsureGroup(_context);
 	const auto &st = args.st ? *args.st : st::settingsButton;
 	auto iconForSearch = IconDescriptor{ args.icon.icon };
 	const auto navigates = bool(args.onClick) && !args.label && !args.toggled && args.id != u"main/faq"_q;
@@ -496,12 +550,11 @@ Ui::SettingsButton *SectionBuilder::addSectionButton(SectionArgs &&args) {
 
 void SectionBuilder::addDivider() {
 	v::match(_context, [&](WidgetContext &ctx) {
-		// Mokagram: вместо полосы-разделителя начинается новая карточка.
-		auto outer = ctx.container;
-		if (const auto parent = GroupOuter(outer)) {
-			outer = parent;
+		// Mokagram: вместо полосы-разделителя заканчивается карточка, следующая
+		// строка сама откроет новую (иначе остаются пустые полоски).
+		if (const auto parent = GroupOuter(ctx.container)) {
+			ctx.container = parent;
 		}
-		ctx.container = BeginGroup(outer);
 	}, [](const SearchContext &) {
 	});
 }
@@ -590,6 +643,7 @@ Ui::SettingsButton *SectionBuilder::addPrivacyButton(PrivacyButtonArgs &&args) {
 }
 
 Ui::Checkbox *SectionBuilder::addCheckbox(CheckboxArgs &&args) {
+	EnsureGroup(_context);
 	const auto factory = [&](not_null<Ui::VerticalLayout*> container) {
 		return object_ptr<Ui::Checkbox>(
 			container,
@@ -612,10 +666,14 @@ Ui::Checkbox *SectionBuilder::addCheckbox(CheckboxArgs &&args) {
 }
 
 void SectionBuilder::addSubsectionTitle(SubsectionTitleArgs &&args) {
-	v::match(_context, [&](const WidgetContext &ctx) {
-		const auto title = AddSubsectionTitle(
-			ctx.container,
-			rpl::duplicate(args.title));
+	v::match(_context, [&](WidgetContext &ctx) {
+		auto outer = ctx.container;
+		HideEmptyGroup(outer);
+		if (const auto parent = GroupOuter(outer)) {
+			outer = parent;
+		}
+		const auto title = MakeOuterTitle(outer, rpl::duplicate(args.title));
+		ctx.container = BeginGroup(outer);
 		if (!args.id.isEmpty() && ctx.highlights) {
 			ctx.highlights->push_back({
 				args.id,
@@ -635,8 +693,14 @@ void SectionBuilder::addSubsectionTitle(SubsectionTitleArgs &&args) {
 }
 
 void SectionBuilder::addSubsectionTitle(rpl::producer<QString> text) {
-	v::match(_context, [&](const WidgetContext &ctx) {
-		AddSubsectionTitle(ctx.container, std::move(text));
+	v::match(_context, [&](WidgetContext &ctx) {
+		auto outer = ctx.container;
+		HideEmptyGroup(outer);
+		if (const auto parent = GroupOuter(outer)) {
+			outer = parent;
+		}
+		MakeOuterTitle(outer, std::move(text));
+		ctx.container = BeginGroup(outer);
 	}, [](const SearchContext &) {
 	});
 }

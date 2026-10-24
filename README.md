@@ -1,11 +1,11 @@
 # mokaGram
 
-> **Основано на Telegram Desktop. Доработки © 2026 ecronx.**
-> Все, кто берёт исходники mokaGram, **обязаны указать авторство** (ecronx, https://github.com/ecronxy/mokagram) в README и в окне «О программе» и сохранить [уведомление](MOKAGRAM_NOTICE.md).
+> **Основано на Telegram Desktop. Доработки © 2026 [@ecronx](https://t.me/ecronx).**
+> Все, кто берёт исходники mokaGram, **обязаны указать авторство** ([@ecronx](https://t.me/ecronx), https://github.com/ecronxy/mokagram) в README и в окне «О программе» и сохранить [уведомление](MOKAGRAM_NOTICE.md).
 > При нарушении лицензия прекращается, автор направит требование и оставляет право защищать авторские права.
 > Подробности: [MOKAGRAM_NOTICE.md](MOKAGRAM_NOTICE.md).
 >
-> *Anyone using mokaGram source code **must credit the author** (ecronx, https://github.com/ecronxy/mokagram) in the README and the About window and keep the [notice](MOKAGRAM_NOTICE.md).*
+> *Anyone using mokaGram source code **must credit the author** ([@ecronx](https://t.me/ecronx), https://github.com/ecronxy/mokagram) in the README and the About window and keep the [notice](MOKAGRAM_NOTICE.md).*
 
 ---
 

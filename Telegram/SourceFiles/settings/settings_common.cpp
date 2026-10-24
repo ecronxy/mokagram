@@ -528,6 +528,10 @@ void AddButtonIcon(
 			});
 			return;
 		}
+		if (packable && !icon->pack && Mokagram::Settings::HasRowIcon(icon->icon.source())) {
+			// Старый значок не показываем, пока не загрузился набор.
+			return;
+		}
 		icon->icon.paint(p, 0, 0);
 	}, icon->widget.lifetime());
 }

@@ -126,11 +126,13 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 
 	// Mokagram: авторство клиента (условие лицензии, см. MOKAGRAM_NOTICE.md).
 	addText(rpl::single(
-		TextWithEntities{ QString::fromUtf8("mokaGram, автор ecronx. Основано на Telegram Desktop. ") }
+		TextWithEntities{ QString::fromUtf8("mokaGram, автор ") }
+			.append(Ui::Text::Link(u"@ecronx"_q, u"https://t.me/ecronx"_q))
+			.append(QString::fromUtf8(". Основано на Telegram Desktop. "))
 			.append(Ui::Text::Link(
 				u"github.com/ecronxy/mokagram"_q,
 				u"https://github.com/ecronxy/mokagram"_q))
-			.append(QString::fromUtf8("\n\nИсходники mokaGram можно использовать только с указанием авторства: автор ecronx и ссылка на репозиторий должны остаться в README и в этом окне."))));
+			.append(QString::fromUtf8("\n\nИсходники mokaGram можно использовать только с указанием авторства: автор @ecronx (t.me/ecronx) и ссылка на репозиторий должны остаться в README и в этом окне."))));
 	addText(Text1());
 	addText(Text2());
 	addText(Text3());

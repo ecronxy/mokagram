@@ -1849,10 +1849,8 @@ const style::icon &OwnRowIcon() {
 	return result;
 }
 
-std::unique_ptr<Ui::Text::CustomEmoji> RowIconEmoji(
-		const void *icon,
-		Fn<void()> repaint,
-		int size) {
+namespace {
+[[nodiscard]] const base::flat_map<const void*, QString> &RowIconMap() {
 	static const auto map = base::flat_map<const void*, QString>{
 		{ &st::menuIconProfile, QString::fromUtf8("👤") },
 		{ &st::menuIconNotifications, QString::fromUtf8("🔔") },
@@ -1872,7 +1870,95 @@ std::unique_ptr<Ui::Text::CustomEmoji> RowIconEmoji(
 		{ &st::menuIconEmojiObjects, QString::fromUtf8("ℹ️") },
 		{ &st::menuIconShowInChat, QString::fromUtf8("👁") },
 		{ &st::menuIconDiscussion, QString::fromUtf8("💬") },
+		{ &st::menuIconCopy, QString::fromUtf8("📋") },
+		{ &st::menuIconStickers, QString::fromUtf8("🙂") },
+		{ &st::menuIconPermissions, QString::fromUtf8("🛡") },
+		{ &st::menuIconDeleteAttention, QString::fromUtf8("🗑") },
+		{ &st::menuIconChannel, QString::fromUtf8("📢") },
+		{ &st::menuIconNetwork, QString::fromUtf8("🔗") },
+		{ &st::menuIconGroups, QString::fromUtf8("👥") },
+		{ &st::menuIconGroupReactions, QString::fromUtf8("💟") },
+		{ &st::menuIconEmoji, QString::fromUtf8("😜") },
+		{ &st::menuIconEdit, QString::fromUtf8("✏️") },
+		{ &st::menuIconChangeColors, QString::fromUtf8("🎈") },
+		{ &st::menuIconTTL, QString::fromUtf8("⏳") },
+		{ &st::menuIconShortcut, QString::fromUtf8("▶️") },
+		{ &st::menuIconShare, QString::fromUtf8("📤") },
+		{ &st::menuIconReplace, QString::fromUtf8("↩️") },
+		{ &st::menuIconRecoveryEmail, QString::fromUtf8("📑") },
+		{ &st::menuIconPremium, QString::fromUtf8("⭐️") },
+		{ &st::menuIconPin, QString::fromUtf8("📌") },
+		{ &st::menuIconPhone, QString::fromUtf8("📞") },
+		{ &st::menuIconNightMode, QString::fromUtf8("💤") },
+		{ &st::menuIconLink, QString::fromUtf8("🔗") },
+		{ &st::menuIconLeaveAttention, QString::fromUtf8("⛔️") },
+		{ &st::menuIconIpAddress, QString::fromUtf8("📍") },
+		{ &st::menuIconFont, QString::fromUtf8("✏️") },
+		{ &st::menuIconDevices, QString::fromUtf8("🤳") },
+		{ &st::menuIconDelete, QString::fromUtf8("🗑") },
+		{ &st::menuIconBlock, QString::fromUtf8("🚫") },
+		{ &st::menuIconWinHello, QString::fromUtf8("🔑") },
+		{ &st::menuIconUsername, QString::fromUtf8("👤") },
+		{ &st::menuIconUnpin, QString::fromUtf8("📌") },
+		{ &st::menuIconTouchID, QString::fromUtf8("🔑") },
+		{ &st::menuIconTopics, QString::fromUtf8("📑") },
+		{ &st::menuIconTimer, QString::fromUtf8("⏳") },
+		{ &st::menuIconTagSell, QString::fromUtf8("💰") },
+		{ &st::menuIconTagRemove, QString::fromUtf8("❌") },
+		{ &st::menuIconSystemPwd, QString::fromUtf8("🔓") },
+		{ &st::menuIconStorage, QString::fromUtf8("📁") },
+		{ &st::menuIconStealth, QString::fromUtf8("🫣") },
+		{ &st::menuIconStats, QString::fromUtf8("📊") },
+		{ &st::menuIconStartStream, QString::fromUtf8("🎙") },
+		{ &st::menuIconSoundOn, QString::fromUtf8("🎵") },
+		{ &st::menuIconSettings, QString::fromUtf8("⚙️") },
+		{ &st::menuIconQrCode, QString::fromUtf8("📐") },
+		{ &st::menuIconPhoto, QString::fromUtf8("🖼") },
+		{ &st::menuIconNftWear, QString::fromUtf8("👑") },
+		{ &st::menuIconNftTakeOff, QString::fromUtf8("👑") },
+		{ &st::menuIconNewWindow, QString::fromUtf8("➕") },
+		{ &st::menuIconMarkUnread, QString::fromUtf8("🔴") },
+		{ &st::menuIconInviteSettings, QString::fromUtf8("🔗") },
+		{ &st::menuIconInvite, QString::fromUtf8("➕") },
+		{ &st::menuIconInfo, QString::fromUtf8("ℹ️") },
+		{ &st::menuIconImportTheme, QString::fromUtf8("🖼") },
+		{ &st::menuIconFaq, QString::fromUtf8("❔") },
+		{ &st::menuIconExport, QString::fromUtf8("📤") },
+		{ &st::menuIconExperimental, QString::fromUtf8("🔧") },
+		{ &st::menuIconEarn, QString::fromUtf8("💰") },
+		{ &st::menuIconDownload, QString::fromUtf8("🔽") },
+		{ &st::menuIconDockBounce, QString::fromUtf8("🎈") },
+		{ &st::menuIconCreatePoll, QString::fromUtf8("📊") },
+		{ &st::menuIconCraft, QString::fromUtf8("🔧") },
+		{ &st::menuIconCancel, QString::fromUtf8("❌") },
+		{ &st::menuIconCallsReceive, QString::fromUtf8("📞") },
+		{ &st::menuIconBlockSettings, QString::fromUtf8("🚫") },
+		{ &st::menuIconArchive, QString::fromUtf8("📁") },
+		{ &st::menuIconAppleWatch, QString::fromUtf8("🔘") },
+		{ &st::menuIconAddress, QString::fromUtf8("📍") },
+		{ &st::menuIconAddAccount, QString::fromUtf8("➕") },
+		{ &st::menuIcon2SV, QString::fromUtf8("🔑") },
 	};
+	return map;
+}
+} // namespace
+
+bool HasRowIcon(const void *icon) {
+	// Ждём набор только первые секунды после запуска: нет сети, значит рисуем старые.
+	static const auto started = crl::now();
+	return (RowIconMap().contains(icon) || icon == &OwnRowIcon())
+		&& (crl::now() - started < 8000);
+}
+
+void PreloadRowIcons(not_null<Main::Session*> session) {
+	PackIcons::Instance().ensure(session);
+}
+
+std::unique_ptr<Ui::Text::CustomEmoji> RowIconEmoji(
+		const void *icon,
+		Fn<void()> repaint,
+		int size) {
+	const auto &map = RowIconMap();
 	const auto i = map.find(icon);
 	const auto window = Core::App().activePrimaryWindow();
 	const auto controller = window ? window->sessionController() : nullptr;
