@@ -148,6 +148,22 @@ void RegisterSettings() {
 	color(kInColor, "Чужие сообщения: фон");
 	color(kInText, "Чужие сообщения: текст");
 
+	{
+		const auto chats = QString::fromUtf8("Сообщения");
+		const auto chatEntry = [&](S::Entry entry) {
+			entry.section = chats;
+			entry.category = u"chats"_q;
+			entry.sectionIcon = u"chats"_q;
+			S::Register(std::move(entry));
+		};
+		chatEntry({
+			.key = u"chats.edited_pencil"_q,
+			.title = QString::fromUtf8("Карандаш вместо «изменено»"),
+			.description = QString::fromUtf8("У изменённого сообщения возле времени стоит значок карандаша."),
+			.kind = S::Kind::Bool,
+			.defaultValue = true,
+		});
+	}
 	const auto player = QString::fromUtf8("Плеер");
 	const auto playerEntry = [&](S::Entry entry) {
 		entry.section = player;
@@ -159,6 +175,13 @@ void RegisterSettings() {
 		.key = u"player.cover_colors"_q,
 		.title = QString::fromUtf8("Цвета плеера из обложки"),
 		.description = QString::fromUtf8("Окно «Сейчас играет» и панель плеера берут цвет с обложки трека."),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+	});
+	playerEntry({
+		.key = u"player.autoplay_next"_q,
+		.title = QString::fromUtf8("Автовоспроизведение следующего"),
+		.description = QString::fromUtf8("После трека, голосового или кружка сам включается следующий."),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});

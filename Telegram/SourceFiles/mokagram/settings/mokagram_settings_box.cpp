@@ -238,6 +238,8 @@ struct Category {
 		{ "bubbles.in_text", "📋" },
 		{ "player.cover_colors", "🖼" },
 		{ "lyrics.plasma", "💎" },
+		{ "player.autoplay_next", "▶️" },
+		{ "chats.edited_pencil", "✏️" },
 		{ "lyrics.enabled", "🎵" },
 	};
 	for (const auto &item : items) {

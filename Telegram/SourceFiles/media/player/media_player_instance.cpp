@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/player/media_player_instance.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/music/mokagram_music_ui.h"
 #include "data/data_audio_msg_id.h"
 
@@ -1492,7 +1493,8 @@ void Instance::emitUpdate(AudioMsgId::Type type, CheckCallback check) {
 		if (data->isPlaying && state.state == State::StoppedAtEnd) {
 			if (repeat(data) == RepeatMode::One) {
 				play(data->current);
-			} else if (OptionDisableAutoplayNext.value()) {
+			} else if (OptionDisableAutoplayNext.value()
+				|| !Mokagram::Settings::Bool(u"player.autoplay_next"_q)) {
 				finished = true;
 			} else if (!moveInPlaylist(data, 1, true)) {
 				finished = true;
