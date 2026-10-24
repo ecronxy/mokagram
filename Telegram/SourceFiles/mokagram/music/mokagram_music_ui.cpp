@@ -538,6 +538,72 @@ private:
 
 };
 
+class PicksBar final : public Ui::AbstractButton {
+public:
+	PicksBar(QWidget *parent, Fn<void()> play, Fn<void()> refresh)
+	: AbstractButton(parent) {
+		resize(width(), 52);
+		setPointerCursor(true);
+		setClickedCallback([=] {
+			if (refreshRect().contains(mapFromGlobal(QCursor::pos()))) {
+				refresh();
+			} else {
+				play();
+			}
+		});
+		paintRequest(
+		) | rpl::on_next([=](QRect) {
+			auto p = QPainter(this);
+			auto hq = PainterHighQualityEnabler(p);
+			if (isOver()) {
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBgOver);
+				p.drawRoundedRect(rect(), 16, 16);
+			}
+			// Значок и подпись слева.
+			const auto cy = height() / 2.;
+			auto tri = QPainterPath();
+			tri.moveTo(24, cy - 8);
+			tri.lineTo(24 + 14, cy);
+			tri.lineTo(24, cy + 8);
+			tri.closeSubpath();
+			p.setBrush(st::windowActiveTextFg);
+			p.drawPath(tri);
+			p.setFont(st::semiboldFont);
+			p.setPen(st::windowFg);
+			p.drawText(
+				QRect(52, 0, width() - 52 - 64, height()),
+				Qt::AlignVCenter | Qt::AlignLeft,
+				QString::fromUtf8("Играть подборку"));
+			// Обновить справа: круговая стрелка.
+			const auto r = refreshRect();
+			const auto refreshColor = refreshRect().contains(mapFromGlobal(QCursor::pos()))
+				? QColor(st::windowActiveTextFg->c)
+				: QColor(st::windowSubTextFg->c);
+			p.setPen(QPen(refreshColor, 2., Qt::SolidLine, Qt::RoundCap));
+			p.setBrush(Qt::NoBrush);
+			const auto arc = QRectF(r).adjusted(9, 9, -9, -9);
+			p.drawArc(arc, 40 * 16, 280 * 16);
+			p.setPen(Qt::NoPen);
+			p.setBrush(refreshColor);
+			auto head = QPainterPath();
+			const auto hx = arc.center().x() + arc.width() * 0.5 * 0.77;
+			const auto hy = arc.center().y() - arc.height() * 0.5 * 0.64;
+			head.moveTo(hx - 1, hy - 6);
+			head.lineTo(hx + 6, hy + 3);
+			head.lineTo(hx - 6, hy + 1);
+			head.closeSubpath();
+			p.drawPath(head);
+		}, lifetime());
+	}
+
+private:
+	[[nodiscard]] QRect refreshRect() const {
+		return QRect(width() - 52, 0, 48, height());
+	}
+
+};
+
 void PlayAll(const std::vector<Track> &tracks) {
 	auto &queue = QueueState();
 	if (tracks.empty()) {
@@ -1273,7 +1339,8 @@ void ShowMusicBox(
 			auto result = st::defaultInputField;
 			result.textBg = clear.color();
 			result.textBgActive = clear.color();
-			result.textMargins = style::margins(0, 10, 0, 10);
+			const auto pad = std::max(0, (44 - st::defaultInputField.style.font->height) / 2);
+			result.textMargins = style::margins(0, pad, 0, pad);
 			result.placeholderFgActive = st::windowSubTextFg;
 			result.placeholderScale = 1.;
 			result.placeholderShift = 0;
@@ -1328,30 +1395,18 @@ void ShowMusicBox(
 		const auto fill = [=] {
 			list->clear();
 			const auto &queue = QueueState();
-			if (queue.tab == 2) {
-				const auto actions = list->add(
-					object_ptr<Ui::RpWidget>(list),
-					QMargins(16, 2, 16, 8));
-				actions->resize(actions->width(), 36);
-				const auto playAll = Ui::CreateChild<TabPill>(actions, QString::fromUtf8("Играть подборку"));
-				const auto refreshPicks = Ui::CreateChild<TabPill>(actions, QString::fromUtf8("Обновить"));
-				playAll->setActive(true);
-				playAll->show();
-				refreshPicks->show();
-				actions->widthValue(
-				) | rpl::on_next([=](int width) {
-					const auto gap = 8;
-					const auto first = (width - gap) * 2 / 3;
-					playAll->setGeometry(0, 0, first, 36);
-					refreshPicks->setGeometry(first + gap, 0, width - first - gap, 36);
-				}, actions->lifetime());
-				playAll->setClickedCallback([=] { PlayAll(QueueState().forYou); });
-				refreshPicks->setClickedCallback([=] {
-					QueueState().forYou.clear();
-					QueueState().results.clear();
-					*statusText = QString::fromUtf8("Подбираю музыку под ваш вкус…");
-					(*refreshForYou)();
-				});
+			if (queue.tab == 2 && !queue.forYou.empty()) {
+				list->add(
+					object_ptr<PicksBar>(
+						list,
+						[=] { PlayAll(QueueState().forYou); },
+						[=] {
+							QueueState().forYou.clear();
+							QueueState().results.clear();
+							*statusText = QString::fromUtf8("Подбираю музыку под ваш вкус…");
+							(*refreshForYou)();
+						}),
+					QMargins(16, 4, 16, 10));
 			}
 			if (!statusText->isEmpty()) {
 				list->add(

@@ -511,24 +511,14 @@ void Widget::paintEvent(QPaintEvent *e) {
 		auto artist = QString();
 		if (Mokagram::Music::OwnsTrack(current)
 			&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
-			// Тональный круг под кнопкой паузы и вторая строка с исполнителем.
-			auto circle = QColor(st::mediaPlayerActiveFg->c);
-			circle.setAlpha(46);
-			p.setPen(Qt::NoPen);
-			p.setBrush(circle);
-			const auto button = _playPause->geometry();
-			p.drawEllipse(QRect(
-				button.center().x() - 20,
-				button.center().y() - 20,
-				40,
-				40));
+			// Вторая строка с исполнителем.
 			p.setFont(st::normalFont);
 			p.setPen(st::windowSubTextFg);
 			const auto left = getNameLeft();
 			const auto room = width() - left - getNameRight() - 12
 				- _rightControls->width();
 			p.drawText(
-				QRect(left, st::mediaPlayerNameTop + 2, std::max(room, 40), 20),
+				QRect(left, st::mediaPlayerNameTop - 4, std::max(room, 40), 20),
 				Qt::AlignLeft | Qt::AlignVCenter,
 				st::normalFont->elided(artist, std::max(room, 40)));
 		}
@@ -701,7 +691,7 @@ void Widget::updateLabelsGeometry() {
 		- getNameRight();
 	_nameLabel->resizeToNaturalWidth(widthForName);
 	const auto owned = Mokagram::Music::OwnsTrack(_lastSongId);
-	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - (owned ? 14 : 0) - st::mediaPlayerName.style.font->ascent);
+	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - (owned ? 6 : 0) - st::mediaPlayerName.style.font->ascent);
 
 	const auto right = getTimeRight();
 	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerPlayTop - st::mediaPlayerTime.font->ascent);
