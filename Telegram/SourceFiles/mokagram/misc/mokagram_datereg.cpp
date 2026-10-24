@@ -24,6 +24,20 @@ namespace {
 
 constexpr auto kKeySetting = "profile.datereg_key";
 
+#if __has_include("mokagram/misc/mokagram_datereg_key.h")
+#include "mokagram/misc/mokagram_datereg_key.h"
+#else
+constexpr auto kMokagramDateRegDefaultKey = "";
+#endif
+
+// Свой ключ из настроек главнее зашитого в сборку.
+QString Key() {
+	const auto own = Settings::String(QString::fromUtf8(kKeySetting)).trimmed();
+	return own.isEmpty()
+		? QString::fromUtf8(kMokagramDateRegDefaultKey)
+		: own;
+}
+
 QNetworkAccessManager &Net() {
 	static auto manager = new QNetworkAccessManager();
 	return *manager;
@@ -103,7 +117,7 @@ void Fetch(quint64 userId) {
 	}
 	auto url = QUrl(u"https://api.datereg.pro/api/v1/users/getCreationDateSmart"_q);
 	auto query = QUrlQuery();
-	query.addQueryItem(u"token"_q, Settings::String(QString::fromUtf8(kKeySetting)).trimmed());
+	query.addQueryItem(u"token"_q, Key());
 	query.addQueryItem(u"user_id"_q, QString::number(userId));
 	url.setQuery(query);
 	const auto reply = Net().get(QNetworkRequest(url));
@@ -145,7 +159,7 @@ void RegisterDateRegSettings() {
 		.key = QString::fromUtf8(kKeySetting),
 		.section = QString::fromUtf8("Профиль"),
 		.title = QString::fromUtf8("Ключ API даты регистрации"),
-		.description = QString::fromUtf8("Ключ из бота @dateregbot. С ним в профиле видна дата регистрации аккаунта."),
+		.description = QString::fromUtf8("Необязательно: свой ключ из @dateregbot. Если пусто, берётся ключ, зашитый в сборку."),
 		.kind = Settings::Kind::String,
 		.defaultValue = QString(),
 		.category = u"privacy"_q,
@@ -154,7 +168,7 @@ void RegisterDateRegSettings() {
 }
 
 bool DateRegEnabled() {
-	return !Settings::String(QString::fromUtf8(kKeySetting)).trimmed().isEmpty();
+	return !Key().isEmpty();
 }
 
 rpl::producer<QString> RegistrationDate(quint64 userId) {
