@@ -359,6 +359,13 @@ def _register_events(entry):
     if wants_filter and not _granted(entry['id'], 'messages.read'):
         _say('[%s] message_filter_hook: нет права messages.read' % entry['id'])
         wants_filter = False
+    text_fn = getattr(base, 'message_text_hook', None)
+    wants_text = getattr(type(inst), 'message_text_hook', None) is not text_fn
+    if wants_text and not _granted(entry['id'], 'messages.read'):
+        _say('[%s] message_text_hook: нет права messages.read' % entry['id'])
+        wants_text = False
+    entry['text_hook'] = wants_text
+    _moka_native('filter_subscribe', json.dumps({'pid': entry['id'], 'on': wants_text, 'kind': 'text'}))
     entry['filter'] = wants_filter
     _moka_native('filter_subscribe', json.dumps({'pid': entry['id'], 'on': wants_filter}))
     entry['events'] = set(names)
@@ -389,6 +396,32 @@ def _moka_filter(message_json):
         if hide:
             return '1'
     return '0'
+
+
+def _moka_text_hook(message_json):
+    """Главный поток: цепочка плагинов меняет текст. '' без изменений, иначе 'T' + текст."""
+    try:
+        message = json.loads(message_json)
+    except Exception:
+        return ''
+    changed = False
+    for entry in list(_plugins.values()):
+        inst = entry.get('plugin')
+        if inst is None or not entry.get('text_hook') or 'message_text_hook' in entry.get('hooks_off', ()):
+            continue
+        started = time.monotonic()
+        try:
+            res = inst.message_text_hook(dict(message))
+        except BaseException as e:
+            _hook_error(entry, 'message_text_hook', e)
+            continue
+        if time.monotonic() - started > 0.05:
+            _hook_slow(entry, 'message_text_hook', time.monotonic() - started, 0.05)
+            continue
+        if isinstance(res, str) and res != message['text']:
+            message['text'] = res
+            changed = True
+    return ('T' + message['text']) if changed else ''
 
 
 def _moka_event(name, payload_json):

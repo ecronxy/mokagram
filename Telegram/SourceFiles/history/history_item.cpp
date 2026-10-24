@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 
@@ -4691,6 +4692,7 @@ void HistoryItem::detectTextLinks(
 }
 
 void HistoryItem::setText(TextWithEntities textWithEntities) {
+	Mokagram::Plugins::TransformMessageText(this, textWithEntities);
 	detectTextLinks(textWithEntities);
 	setTextValue((_media && _media->consumeMessageText(textWithEntities))
 		? TextWithEntities()

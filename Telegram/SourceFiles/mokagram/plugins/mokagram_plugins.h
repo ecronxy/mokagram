@@ -64,6 +64,9 @@ bool MenuItemClick(
 // Решение плагинов "скрыть сообщение": JSON сообщения -> true, если какой-то плагин скрывает.
 bool CallMessageFilter(const std::string &messageJson, LogFn log);
 
+// Замена текста плагинами: JSON сообщения -> пустая строка (без изменений) или "T"+новый текст.
+std::string CallTextHook(const std::string &messageJson, LogFn log);
+
 // Колбэк плагина по токену (диалог, тост с кнопкой, кнопка интерфейса). payloadJson уходит в колбэк как dict.
 bool Invoke(
 	const std::string &pid,

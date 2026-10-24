@@ -60,6 +60,10 @@ class BasePlugin:
     # Зовётся один раз на сообщение (результат кэшируется), нужно право messages.read.
     def message_filter_hook(self, message: dict) -> Any: return False
 
+    # заменить текст входящего сообщения при показе (только у вас): верните новую строку или None.
+    # message: {id, peer, text, date}. Копирование и поиск увидят уже новый текст. Нужно право messages.read.
+    def message_text_hook(self, message: dict) -> Optional[str]: return None
+
     # события клиента (нужно право messages.read): message это dict
     # {id, peer, peer_title, from, text, out, date, has_media, reply_to}
     def on_new_message(self, message: dict) -> None: ...

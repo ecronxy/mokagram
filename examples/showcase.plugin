@@ -34,3 +34,7 @@ class Showcase(BasePlugin):
 
     def message_filter_hook(self, m):
         return "реклама" in m["text"].lower()   # скрыть у себя
+
+    def message_text_hook(self, m):
+        # пример: убрать "Sent from my iPhone" в конце входящих
+        return m["text"].replace("\nSent from my iPhone", "") if "Sent from my iPhone" in m["text"] else None

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "mtproto/sender.h"
+#include "ui/text/text_entity.h"
 
 class HistoryItem;
 
@@ -16,5 +17,11 @@ void RunUpdatesHook(const MTPUpdates &updates);
 // без подписанных плагинов это одна проверка атомарной переменной, результат кэшируется.
 [[nodiscard]] bool HiddenByPlugin(not_null<const HistoryItem*> item);
 [[nodiscard]] bool HasMessageFilter();
+
+// Плагины могут заменить текст сообщения при показе (message_text_hook).
+// Зовётся из HistoryItem::setText, только для входящих сообщений.
+void TransformMessageText(
+	not_null<const HistoryItem*> item,
+	TextWithEntities &text);
 
 } // namespace Mokagram::Plugins

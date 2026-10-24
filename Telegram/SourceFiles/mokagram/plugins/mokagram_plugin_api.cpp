@@ -891,15 +891,22 @@ std::atomic<int> FilterCount = 0;
 std::set<std::string> FilterPlugins;
 std::map<FullMsgId, bool> FilterCache;
 
+std::atomic<int> TextHookCount = 0;
+std::set<std::string> TextHookPlugins;
+
 std::string FilterSubscribe(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto pid = args.value("pid").toString().toStdString();
-		if (args.value("on").toBool()) {
-			FilterPlugins.insert(pid);
+		const auto on = args.value("on").toBool();
+		const auto text = (args.value("kind").toString() == u"text"_q);
+		auto &set = text ? TextHookPlugins : FilterPlugins;
+		if (on) {
+			set.insert(pid);
 		} else {
-			FilterPlugins.erase(pid);
+			set.erase(pid);
 		}
 		FilterCount = int(FilterPlugins.size());
+		TextHookCount = int(TextHookPlugins.size());
 		FilterCache.clear();
 		return Reply(true);
 	});
@@ -924,6 +931,10 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 			{ "events", QJsonArray() } });
 		FilterSubscribe(QJsonObject{
 			{ "pid", args.value("pid") },
+			{ "on", false } });
+		FilterSubscribe(QJsonObject{
+			{ "pid", args.value("pid") },
+			{ "kind", "text" },
 			{ "on", false } });
 		return PluginUnloaded(args);
 	} else if (op == "filter_subscribe") {
@@ -1002,6 +1013,30 @@ void InstallBridge() {
 
 bool HasMessageFilter() {
 	return FilterCount.load(std::memory_order_relaxed) > 0;
+}
+
+void TransformMessageText(
+		not_null<const HistoryItem*> item,
+		TextWithEntities &text) {
+	if (TextHookCount.load(std::memory_order_relaxed) <= 0
+		|| !IsMainThread()
+		|| text.text.isEmpty()
+		|| item->out()) {
+		return;
+	}
+	auto message = QJsonObject();
+	message.insert("id", QString::number(item->id.bare));
+	message.insert("peer", QString::number(item->history()->peer->id.value));
+	message.insert("text", text.text);
+	message.insert("date", double(item->date()));
+	const auto answer = CallTextHook(Json(message), PluginLog);
+	if (answer.size() < 1 || answer[0] != 'T') {
+		return;
+	}
+	const auto changed = QString::fromStdString(answer.substr(1));
+	if (changed != text.text) {
+		text = TextWithEntities{ changed.left(8192) };
+	}
 }
 
 bool HiddenByPlugin(not_null<const HistoryItem*> item) {
