@@ -481,6 +481,22 @@ void Widget::paintEvent(QPaintEvent *e) {
 	if (!fill.isEmpty()) {
 		p.fillRect(fill, st::mediaPlayerBg);
 	}
+	// Mokagram: цвет обложки как мягкая подсветка панели.
+	if (_type == AudioMsgId::Type::Song) {
+		const auto accent = Mokagram::Music::CurrentCoverAccent();
+		if (accent.isValid()) {
+			auto from = accent;
+			from.setAlpha(70);
+			auto to = accent;
+			to.setAlpha(0);
+			auto gradient = QLinearGradient(0, 0, width() * 0.8, 0);
+			gradient.setColorAt(0., from);
+			gradient.setColorAt(1., to);
+			p.fillRect(
+				QRect(0, 0, width(), st::mediaPlayerHeight),
+				gradient);
+		}
+	}
 	// Mokagram: обложка слева.
 	if (_type == AudioMsgId::Type::Song) {
 		const auto size = 52;

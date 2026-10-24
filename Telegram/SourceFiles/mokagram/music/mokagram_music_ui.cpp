@@ -2,6 +2,7 @@
 
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/music/mokagram_music_library.h"
+#include "mokagram/settings/mokagram_settings.h"
 
 #include "base/unixtime.h"
 #include "mainwindow.h"
@@ -925,6 +926,79 @@ private:
 
 } // namespace
 
+namespace {
+
+[[nodiscard]] QColor ComputeAccent(const QImage &cover) {
+	if (cover.isNull()) {
+		return QColor();
+	}
+	const auto small = cover.scaled(
+		24,
+		24,
+		Qt::IgnoreAspectRatio,
+		Qt::SmoothTransformation).convertToFormat(QImage::Format_ARGB32);
+	constexpr auto kBins = 12;
+	double weight[kBins] = {};
+	double sumR[kBins] = {}, sumG[kBins] = {}, sumB[kBins] = {};
+	for (auto y = 0; y != small.height(); ++y) {
+		for (auto x = 0; x != small.width(); ++x) {
+			const auto c = QColor(small.pixel(x, y));
+			const auto s = c.hsvSaturationF();
+			const auto v = c.valueF();
+			if (v < 0.12) {
+				continue;
+			}
+			const auto bin = std::clamp(int(std::max(c.hsvHueF(), 0.f) * kBins), 0, kBins - 1);
+			const auto w = (0.15 + s) * (0.3 + v);
+			weight[bin] += w;
+			sumR[bin] += w * c.redF();
+			sumG[bin] += w * c.greenF();
+			sumB[bin] += w * c.blueF();
+		}
+	}
+	auto best = 0;
+	for (auto i = 1; i != kBins; ++i) {
+		if (weight[i] > weight[best]) {
+			best = i;
+		}
+	}
+	if (weight[best] <= 0.) {
+		return QColor();
+	}
+	auto result = QColor::fromRgbF(
+		sumR[best] / weight[best],
+		sumG[best] / weight[best],
+		sumB[best] / weight[best]);
+	// Тёмный насыщенный оттенок: ложится на тёмную тему без выжигания.
+	auto h = 0.f, s = 0.f, v = 0.f;
+	result.getHsvF(&h, &s, &v);
+	return QColor::fromHsvF(h < 0 ? 0.f : h, std::clamp(s, 0.35f, 0.85f), std::clamp(v, 0.45f, 0.7f));
+}
+
+} // namespace
+
+QColor CurrentCoverAccent() {
+	if (!Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
+		return QColor();
+	}
+	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
+	if (!OwnsTrack(current)) {
+		return QColor();
+	}
+	static auto cachedId = uint64();
+	static auto cached = QColor();
+	const auto id = current.audio()->id;
+	const auto cover = CoverForDocument(id);
+	if (cover.isNull()) {
+		return QColor();
+	}
+	if (cachedId != id || !cached.isValid()) {
+		cachedId = id;
+		cached = ComputeAccent(cover);
+	}
+	return cached;
+}
+
 bool OwnsTrack(const AudioMsgId &id) {
 	return id.audio()
 		&& (id.audio()->id & 0xFFFFFF0000000000ULL) == 0x4D4F4B0000000000ULL;
@@ -1036,6 +1110,33 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		Mokagram::Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();
 		const auto instance = Media::Player::instance();
+
+		// Цвет обложки: мягкий градиент сверху, под всем содержимым.
+		const auto tint = Ui::CreateChild<Ui::RpWidget>(box.get());
+		tint->setAttribute(Qt::WA_TransparentForMouseEvents);
+		tint->lower();
+		box->sizeValue(
+		) | rpl::on_next([=](QSize size) {
+			tint->setGeometry(0, 0, size.width(), size.height());
+		}, tint->lifetime());
+		tint->paintOn([=](QPainter &p) {
+			const auto accent = CurrentCoverAccent();
+			if (!accent.isValid()) {
+				return;
+			}
+			auto hq = PainterHighQualityEnabler(p);
+			auto path = QPainterPath();
+			path.addRoundedRect(QRectF(tint->rect()), 26, 26);
+			p.setClipPath(path);
+			auto top = accent;
+			top.setAlpha(150);
+			auto bottom = accent;
+			bottom.setAlpha(0);
+			auto gradient = QLinearGradient(0, 0, 0, tint->height() * 0.7);
+			gradient.setColorAt(0., top);
+			gradient.setColorAt(1., bottom);
+			p.fillRect(tint->rect(), gradient);
+		});
 
 		const auto header = content->add(
 			object_ptr<Ui::RpWidget>(content),
@@ -1206,6 +1307,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			position->second = fmt(length / frequency);
 			times->update();
 			info->update();
+			tint->update();
 			heart->setLiked(!QueueState().current.id.isEmpty()
 				&& IsLiked(QueueState().current.id));
 			play->setPlaying(state.state == Media::Player::State::Playing

@@ -3,6 +3,7 @@
 
 #include <QtCore/QPoint>
 #include <QtCore/QString>
+#include <QtGui/QColor>
 
 #include "rpl/producer.h"
 
@@ -28,6 +29,10 @@ void Step(int delta);
 
 // Название и исполнитель текущего трека из очереди (false, если играет чужой трек).
 [[nodiscard]] bool CurrentTrackInfo(QString &title, QString &artist);
+
+// Главный цвет обложки играющего трека (невалидный, если выключено в настройках
+// или играет не трек из очереди).
+[[nodiscard]] QColor CurrentCoverAccent();
 
 // Меню по правой кнопке на панели плеера: то же, что в окне музыки, плюс управление.
 void ShowCurrentTrackMenu(
