@@ -796,17 +796,19 @@ void TabbedSelector::updateTabsSliderGeometry() {
 	const auto w = (mediaEditor() && hasMasksTab() && masks()->mySetsEmpty())
 		? width() / 2
 		: width();
-	_tabsSlider->resizeToWidth(w);
-	_tabsSlider->moveToLeft(0, 0);
+	// Mokagram: пилюли не прижаты к краям панели.
+	constexpr auto kSide = 10;
+	_tabsSlider->resizeToWidth(w - 2 * kSide);
+	_tabsSlider->moveToLeft(kSide, 0);
 }
 
 void TabbedSelector::resizeEvent(QResizeEvent *e) {
 	updateTabsSliderGeometry();
 	if (_topShadow && _tabsSlider) {
 		_topShadow->setGeometry(
-			_tabsSlider->x(),
+			0,
 			_tabsSlider->bottomNoMargins() - st::lineWidth,
-			_tabsSlider->width(),
+			width(),
 			st::lineWidth);
 	}
 	updateScrollGeometry(e->oldSize());
