@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "history/view/history_view_list_widget.h"
 
 #include "history/view/history_view_about_view.h"
@@ -1778,7 +1779,7 @@ bool ListWidget::isGoodForSelection(
 	if (!applyTo.contains(item->fullId())) {
 		++totalCount;
 	}
-	return (totalCount <= MaxSelectedItems);
+	return (totalCount <= Mokagram::Appearance::SelectionLimit());
 }
 
 bool ListWidget::addToSelection(
@@ -2019,7 +2020,7 @@ std::vector<not_null<HistoryItem*>> ListWidget::selectionUpTo(
 	}
 	const auto startItem = topToBottom ? nearestItem : toItem.get();
 	const auto endItem = topToBottom ? toItem.get() : nearestItem;
-	const auto left = MaxSelectedItems
+	const auto left = Mokagram::Appearance::SelectionLimit()
 		- int(_selected.size())
 		+ (topToBottom ? 0 : 1);
 	return collectBetween(startItem, endItem, left);
@@ -3479,7 +3480,7 @@ void ListWidget::applyDragSelection(SelectedMap &applyTo) const {
 	if (_dragSelectAction == DragSelectAction::Selecting) {
 		auto already = int(applyTo.size());
 		for (const auto &itemId : _dragSelected) {
-			if (applyTo.size() >= MaxSelectedItems) {
+			if (applyTo.size() >= Mokagram::Appearance::SelectionLimit()) {
 				break;
 			} else if (!applyTo.contains(itemId)) {
 				if (const auto item = session().data().message(itemId)) {

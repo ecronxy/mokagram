@@ -841,6 +841,17 @@ void Histories::deleteMessages(
 		not_null<History*> history,
 		const QVector<MTPint> &ids,
 		bool revoke) {
+	// Mokagram: выделение больше 100 сообщений удаляем по 100 за запрос.
+	constexpr auto kChunk = 100;
+	if (ids.size() > kChunk) {
+		for (auto from = 0; from < ids.size(); from += kChunk) {
+			deleteMessages(
+				history,
+				ids.mid(from, kChunk),
+				revoke);
+		}
+		return;
+	}
 	sendRequest(history, RequestType::Delete, [=](Fn<void()> finish) {
 		const auto done = [=](const MTPmessages_AffectedMessages &result) {
 			session().api().applyAffectedMessages(history->peer, result);

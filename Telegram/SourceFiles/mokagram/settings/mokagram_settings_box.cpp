@@ -240,6 +240,7 @@ struct Category {
 		{ "lyrics.plasma", "💎" },
 		{ "player.autoplay_next", "▶️" },
 		{ "chats.edited_pencil", "✏️" },
+		{ "chats.select_3000", "☑️" },
 		{ "lyrics.enabled", "🎵" },
 	};
 	for (const auto &item : items) {

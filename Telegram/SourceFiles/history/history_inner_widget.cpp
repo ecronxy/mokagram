@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "history/history_inner_widget.h"
 #include "mokagram/history/mokagram_history.h"
 
@@ -3294,7 +3295,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 				}
 				const auto start = (topToBottom ? nearestItem : toItem);
 				const auto end = (topToBottom ? toItem : nearestItem);
-				const auto left = MaxSelectedItems
+				const auto left = Mokagram::Appearance::SelectionLimit()
 					- selectedState.count
 					+ (topToBottom ? 0 : 1);
 				if (collectBetween(start, end, left).empty()) {
@@ -6093,7 +6094,7 @@ void HistoryInner::changeSelection(
 	const auto add = (action == SelectAction::Select);
 	if (add
 		&& goodForSelection(toItems, item, total)
-		&& total <= MaxSelectedItems) {
+		&& total <= Mokagram::Appearance::SelectionLimit()) {
 		addToSelection(toItems, item);
 	} else {
 		removeFromSelection(toItems, item);
@@ -6120,7 +6121,7 @@ void HistoryInner::changeSelectionAsGroup(
 				return false;
 			}
 		}
-		return (total <= MaxSelectedItems);
+		return (total <= Mokagram::Appearance::SelectionLimit());
 	}();
 	if (action == SelectAction::Select && canSelect) {
 		for (const auto &other : group->items) {
@@ -6388,7 +6389,7 @@ void HistoryInner::addSelectionRange(
 				auto item = block->messages[fromitem]->data();
 				changeSelectionAsGroup(toItems, item, SelectAction::Select);
 			}
-			if (toItems->size() >= MaxSelectedItems) break;
+			if (toItems->size() >= Mokagram::Appearance::SelectionLimit()) break;
 			fromitem = 0;
 		}
 	}

@@ -117,6 +117,10 @@ QColor ColorSetting(const QString &key) {
 	return QColor(text.startsWith('#') ? text : (u"#"_q + text));
 }
 
+int SelectionLimit() {
+	return S::Bool(u"chats.select_3000"_q) ? 3000 : 100;
+}
+
 void RegisterSettings() {
 	const auto section = QString::fromUtf8("Пузыри сообщений");
 	const auto add = [&](S::Entry entry) {
@@ -156,6 +160,13 @@ void RegisterSettings() {
 			entry.sectionIcon = u"chats"_q;
 			S::Register(std::move(entry));
 		};
+		chatEntry({
+			.key = u"chats.select_3000"_q,
+			.title = QString::fromUtf8("Выделять до 3000 сообщений"),
+			.description = QString::fromUtf8("Вместо ста. Удаление и пересылка сами делятся на части."),
+			.kind = S::Kind::Bool,
+			.defaultValue = true,
+		});
 		chatEntry({
 			.key = u"chats.edited_pencil"_q,
 			.title = QString::fromUtf8("Карандаш вместо «изменено»"),
