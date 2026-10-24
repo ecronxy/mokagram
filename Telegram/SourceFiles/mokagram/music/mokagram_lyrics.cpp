@@ -64,6 +64,17 @@ std::map<QString, Lyrics> &Cache() {
 	return result;
 }
 
+// Версии speed up и slowed идут быстрее или медленнее оригинала: метки времени
+// растягиваем во столько же раз, во сколько отличается длина трека.
+void ScaleTimes(Lyrics &lyrics, double ratio) {
+	if (std::abs(ratio - 1.) < 0.01) {
+		return;
+	}
+	for (auto &line : lyrics.lines) {
+		line.timeMs = qint64(line.timeMs * ratio);
+	}
+}
+
 [[nodiscard]] Lyrics ParsePlain(const QString &text) {
 	auto result = Lyrics();
 	for (const auto &raw : text.split('\n')) {
@@ -79,6 +90,7 @@ std::map<QString, Lyrics> &Cache() {
 	auto best = QJsonObject();
 	auto bestScore = -1e9;
 	auto bestSynced = false;
+	auto bestRatio = 1.;
 	for (const auto &value : list) {
 		const auto item = value.toObject();
 		const auto synced = item.value("syncedLyrics").toString();
@@ -86,16 +98,26 @@ std::map<QString, Lyrics> &Cache() {
 		if (synced.isEmpty() && plain.isEmpty()) {
 			continue;
 		}
-		const auto diff = durationMs > 0
-			? std::abs(item.value("duration").toDouble() * 1000. - durationMs)
-			: 0.;
-		// Метки времени годятся только у версии той же длины.
-		const auto useSynced = !synced.isEmpty() && diff <= 12000.;
-		const auto score = (useSynced ? 100. : 10.) - diff / 1000.;
+		const auto source = item.value("duration").toDouble() * 1000.;
+		const auto ratio = (durationMs > 0 && source > 0.)
+			? durationMs / source
+			: 1.;
+		const auto diff = std::abs(source - durationMs);
+		auto useSynced = false;
+		auto score = 10. - std::min(diff / 1000., 9.);
+		if (!synced.isEmpty() && (durationMs <= 0 || diff <= 12000.)) {
+			useSynced = true;
+			score = 100. - diff / 1000.;
+		} else if (!synced.isEmpty() && ratio > 0.5 && ratio < 2.) {
+			// Другая скорость: метки подгоним по отношению длин.
+			useSynced = true;
+			score = 60. - std::abs(std::log(ratio)) * 20.;
+		}
 		if (score > bestScore) {
 			bestScore = score;
 			best = item;
 			bestSynced = useSynced;
+			bestRatio = ratio;
 		}
 	}
 	if (bestScore < -1e8) {
@@ -104,6 +126,7 @@ std::map<QString, Lyrics> &Cache() {
 	if (bestSynced) {
 		auto result = ParseLrc(best.value("syncedLyrics").toString());
 		if (result.found) {
+			ScaleTimes(result, bestRatio);
 			return result;
 		}
 	}
@@ -166,6 +189,7 @@ void RequestNetease(
 	GetJson(search, [=](QJsonDocument doc) {
 		const auto songs = doc.object().value("result").toObject().value("songs").toArray();
 		auto best = qint64(0);
+		auto bestSource = 0.;
 		auto bestDiff = 1e18;
 		for (const auto &value : songs) {
 			const auto song = value.toObject();
@@ -182,10 +206,18 @@ void RequestNetease(
 				: 0.;
 			if (diff < bestDiff) {
 				bestDiff = diff;
+				bestSource = song.value("duration").toDouble();
 				best = qint64(song.value("id").toDouble());
 			}
 		}
-		if (!best || (durationMs > 0 && bestDiff > 12000.)) {
+		if (!best) {
+			done({});
+			return;
+		}
+		const auto ratio = (durationMs > 0 && bestSource > 0.)
+			? durationMs / bestSource
+			: 1.;
+		if (durationMs > 0 && bestDiff > 12000. && (ratio <= 0.5 || ratio >= 2.)) {
 			done({});
 			return;
 		}
@@ -205,6 +237,9 @@ void RequestNetease(
 					}),
 					lines.end());
 				result.found = !lines.empty();
+				if (result.found) {
+					ScaleTimes(result, ratio);
+				}
 				done(std::move(result));
 			});
 	});
