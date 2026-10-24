@@ -1191,114 +1191,70 @@ void RunDeleteMulti(std::shared_ptr<DeleteMultiState> multi) {
 
 } // namespace
 
-void ShowDeleteMyMessagesMulti(
-		not_null<Window::SessionController*> controller) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		Plugins::RoundedWindow(box);
-		const auto content = box->verticalLayout();
-		AddHeader(box, content, U("Удалить мои сообщения"));
-		const auto selection = std::make_shared<Selection>();
-		const auto run = Ui::CreateChild<Ui::RoundButton>(
-			content.get(),
-			rpl::single(U("Удалить (0)")),
-			st::dialogsPickDanger);
-		AddButtonsRow(content, { run });
-		selection->changed.events(
-		) | rpl::on_next([=] {
-			run->setText(rpl::single(
-				U("Удалить (%1)").arg(selection->picked.size())));
-		}, box->lifetime());
-		const auto list = content->add(
-			object_ptr<Ui::VerticalLayout>(content),
-			QMargins(),
-			style::al_justify);
-		const auto weakList = QPointer<Ui::VerticalLayout>(list);
-		const auto session = &controller->session();
-		auto count = 0;
-		for (const auto &row : session->data().chatsList()->indexed()->all()) {
-			const auto history = row->history();
-			if (!history || !CanDeleteMyMessages(history->peer)) {
-				continue;
+void ShowDeleteMyMessagesForPeers(
+		not_null<Window::SessionController*> controller,
+		const std::vector<PeerId> &peers) {
+	auto allowed = std::vector<PeerId>();
+	for (const auto id : peers) {
+		if (const auto peer = controller->session().data().peerLoaded(id)) {
+			if (CanDeleteMyMessages(peer)) {
+				allowed.push_back(id);
 			}
-			if (++count > 200) {
-				break;
-			}
-			const auto peer = history->peer;
-			const auto key = Key(peer->id.value, 0);
-			const auto parts = AddCard(weakList);
-			const auto card = parts.card;
-			const auto title = card->add(
-				object_ptr<Ui::FlatLabel>(
-					card,
-					peer->isSelf() ? U("Избранное") : peer->name(),
-					st::defaultSubsectionTitle),
-				QMargins(18, 14, 56, 14));
-			title->setAttribute(Qt::WA_TransparentForMouseEvents);
-			AddCheck(card, false, [=](bool on) {
-				selection->set(key, on);
-			}, [=](Fn<void(bool)> setter) {
-				selection->setters[key] = std::move(setter);
-			});
 		}
-		Ui::AddSkip(content, 10);
-		const auto weak = base::make_weak(controller);
-		run->setClickedCallback([=] {
-			if (selection->picked.empty()) {
+	}
+	if (allowed.empty()) {
+		controller->showToast(U("В выбранных чатах нечего удалять."));
+		return;
+	}
+	const auto weak = base::make_weak(controller);
+	ConfirmAndRun(
+		controller,
+		U("Удалить все ваши сообщения в выбранных чатах (%1)?\n\n"
+			"Они исчезнут у всех участников. Отменить это нельзя.")
+			.arg(allowed.size()),
+		U("Удалить"),
+		[=] {
+			const auto strong = weak.get();
+			if (!strong) {
 				return;
 			}
-			const auto picked = selection->picked;
-			ConfirmAndRun(
-				controller,
-				U("Удалить все ваши сообщения в выбранных чатах (%1)?\n\n"
-					"Они исчезнут у всех участников. Отменить это нельзя.")
-					.arg(picked.size()),
-				U("Удалить"),
-				[=] {
-					const auto strong = weak.get();
-					if (!strong) {
-						return;
-					}
-					const auto multi = std::make_shared<DeleteMultiState>();
-					multi->session = base::make_weak(&strong->session());
-					multi->controller = weak;
-					for (const auto &key : picked) {
-						multi->peers.push_back(PeerId(key.first));
-					}
-					strong->show(Box([=](not_null<Ui::GenericBox*> progress) {
-						multi->box = progress;
-						progress->setTitle(rpl::single(U("Удаление моих сообщений")));
-						const auto inner = progress->verticalLayout();
-						Ui::AddSkip(inner);
-						multi->label = inner->add(
-							object_ptr<Ui::FlatLabel>(
-								inner,
-								U("Ищу ваши сообщения…"),
-								st::boxLabel),
-							st::boxPadding);
-						Ui::AddSkip(inner);
-						progress->addButton(
-							rpl::single(U("Остановить")),
-							[=] {
-								multi->cancelled = true;
-								if (const auto current = multi->current) {
-									current->cancelled = true;
-									if (const auto s = current->session.get()) {
-										if (current->request) {
-											s->api().request(current->request).cancel();
-										}
-									}
+			const auto multi = std::make_shared<DeleteMultiState>();
+			multi->session = base::make_weak(&strong->session());
+			multi->controller = weak;
+			multi->peers = allowed;
+			strong->show(Box([=](not_null<Ui::GenericBox*> progress) {
+				multi->box = progress;
+				progress->setTitle(rpl::single(U("Удаление моих сообщений")));
+				const auto inner = progress->verticalLayout();
+				Ui::AddSkip(inner);
+				multi->label = inner->add(
+					object_ptr<Ui::FlatLabel>(
+						inner,
+						U("Ищу ваши сообщения…"),
+						st::boxLabel),
+					st::boxPadding);
+				Ui::AddSkip(inner);
+				progress->addButton(
+					rpl::single(U("Остановить")),
+					[=] {
+						multi->cancelled = true;
+						if (const auto current = multi->current) {
+							current->cancelled = true;
+							if (const auto s = current->session.get()) {
+								if (current->request) {
+									s->api().request(current->request).cancel();
 								}
-								progress->closeBox();
-							},
-							st::attentionBoxButton);
-						progress->boxClosing() | rpl::on_next([=] {
-							multi->cancelled = true;
-						}, progress->lifetime());
-					}));
-					RunDeleteMulti(multi);
-				});
+							}
+						}
+						progress->closeBox();
+					},
+					st::attentionBoxButton);
+				progress->boxClosing() | rpl::on_next([=] {
+					multi->cancelled = true;
+				}, progress->lifetime());
+			}));
+			RunDeleteMulti(multi);
 		});
-	}));
 }
 
 } // namespace Mokagram::History

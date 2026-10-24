@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/animations.h"
 #include "ui/dragging_scroll_manager.h"
 #include "ui/rows_scroll_cache.h"
+#include "base/flat_set.h"
 #include "ui/rp_widget.h"
 #include "ui/userpic_view.h"
 
@@ -151,6 +152,13 @@ public:
 	void switchToFilter(FilterId filterId);
 
 	void clearSelection();
+
+	// Mokagram: выбор нескольких чатов (пункт «Выделить» в меню чата).
+	void startBulkSelect(not_null<History*> first);
+	void clearBulkSelect();
+	[[nodiscard]] bool bulkMode() const {
+		return _bulkMode;
+	}
 
 	void changeOpenedFolder(Data::Folder *folder);
 	void changeOpenedForum(Data::Forum *forum);
@@ -673,6 +681,8 @@ private:
 	int _collapsedPressed = -1;
 	bool _skipTopDialog = false;
 	Row *_selected = nullptr;
+	bool _bulkMode = false;
+	base::flat_set<not_null<History*>> _bulkSelected;
 	Row *_pressed = nullptr;
 	MsgId _pressedTopicJumpRootId;
 	PeerId _pressedSublistJumpPeerId;

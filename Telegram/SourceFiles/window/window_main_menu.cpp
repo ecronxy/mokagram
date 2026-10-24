@@ -765,12 +765,6 @@ void MainMenu::setupMenu() {
 		)->setClickedCallback([=] {
 			Mokagram::Music::ShowMusicBox(controller);
 		});
-		addAction(
-			rpl::single(QString::fromUtf8("Удалить мои сообщения")),
-			{ &st::menuIconDelete }
-		)->setClickedCallback([=] {
-			Mokagram::History::ShowDeleteMyMessagesMulti(controller);
-		});
 		for (auto &item : Mokagram::Plugins::DrawerMenuItems()) {
 			addAction(
 				rpl::single(item.text),

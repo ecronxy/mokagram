@@ -478,7 +478,7 @@ index 4c16b67..2ded2eb 100644
  
  int Action::contentHeight() const {
 diff --git i/ui/widgets/menu/menu_item_base.h w/ui/widgets/menu/menu_item_base.h
-index 7b329a1..61f48d1 100644
+index 7b329a1..56155d0 100644
 --- i/ui/widgets/menu/menu_item_base.h
 +++ w/ui/widgets/menu/menu_item_base.h
 @@ -7,6 +7,7 @@
@@ -489,7 +489,7 @@ index 7b329a1..61f48d1 100644
  #include "ui/widgets/buttons.h"
  #include "ui/widgets/menu/menu.h"
  #include "ui/widgets/menu/menu_common.h"
-@@ -90,4 +91,24 @@ private:
+@@ -90,4 +91,26 @@ private:
  
  };
  
@@ -501,10 +501,12 @@ index 7b329a1..61f48d1 100644
 +	if (!selected) {
 +		return;
 +	}
-+	const auto sx = style::ConvertScale(6);
-+	const auto sy = style::ConvertScale(1);
++	const auto sx = style::ConvertScale(8);
++	const auto sy = style::ConvertScale(2);
 +	const auto inner = rect.marginsRemoved({ sx, sy, sx, sy });
-+	const auto radius = inner.height() / 2.;
++	const auto radius = std::min<double>(
++		inner.height() / 2.,
++		style::ConvertScale(16));
 +	p.save();
 +	p.setRenderHint(QPainter::Antialiasing);
 +	p.setPen(Qt::NoPen);

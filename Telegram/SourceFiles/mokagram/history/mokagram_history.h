@@ -89,8 +89,9 @@ void ShowChatsBox(not_null<Window::SessionController*> controller);
 // «Удалить все мои сообщения» в чате: подтверждение, поиск на сервере, удаление пачками.
 // Для групп, супергрупп, личных чатов и «Избранного». Каналы не поддерживаются.
 [[nodiscard]] bool CanDeleteMyMessages(not_null<PeerData*> peer);
-void ShowDeleteMyMessagesMulti(
-	not_null<Window::SessionController*> controller);
+void ShowDeleteMyMessagesForPeers(
+	not_null<Window::SessionController*> controller,
+	const std::vector<PeerId> &peers);
 
 void ShowDeleteMyMessages(
 	not_null<Window::SessionController*> controller,
