@@ -175,6 +175,7 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 	.id = kOptionShowChannelJoinedBelowAbout,
 	.name = "Show Channel Joined Date in Profile",
 	.description = "Show when you join Channel under its Description.",
+	.defaultValue = true,
 });
 
 [[nodiscard]] rpl::producer<TextWithEntities> UsernamesSubtext(
@@ -305,6 +306,15 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 					value.append(Link(
 						Italic(langDateTimeFull(base::unixtime::parse(raw))),
 						"internal:~join_date~:show:" + QString::number(raw)));
+				}
+				// Mokagram: до какого числа оплачена подписка на канал.
+				if (const auto until = channel->subscriptionUntilDate()) {
+					using namespace Ui::Text;
+					if (!value.empty()) {
+						value.append("\n");
+					}
+					value.append(Italic(QString::fromUtf8("Подписка до: ")));
+					value.append(Italic(langDateTimeFull(base::unixtime::parse(until))));
 				}
 			}
 		}
