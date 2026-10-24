@@ -412,7 +412,7 @@ QImage SettingsSlider::prepareRippleMask(
 	const auto size = QSize(section.width, height() - _st.rippleBottomSkip);
 	// Mokagram: волна внутри пилюли, а не по прямоугольнику.
 	return RippleAnimation::MaskByDrawer(size, false, [&](QPainter &p) {
-		const auto h = std::max(size.height() - 6, 4);
+		const auto h = std::max(height() - 6, 4);
 		p.drawRoundedRect(
 			QRectF(2, 3, size.width() - 4, h),
 			h / 2.,
@@ -505,10 +505,8 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 				0.,
 				1.);
 		if (section.ripple) {
-			const auto color = anim::color(
-				_st.rippleBg,
-				_st.rippleBgActive,
-				active);
+			// Mokagram: волна лёгкая и прозрачная, чтобы не закрывать цвет пилюли.
+			const auto color = QColor(255, 255, 255, 30);
 			section.ripple->paint(p, section.left, 0, width(), &color);
 			if (section.ripple->empty()) {
 				section.ripple.reset();

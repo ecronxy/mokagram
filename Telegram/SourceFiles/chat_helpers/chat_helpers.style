@@ -876,7 +876,7 @@ inlineBotsScroll: ScrollArea(defaultSolidScroll) {
 	deltab: stickerPanPadding;
 }
 
-gifsPadding: margins(10px, 5px, 10px, 9px);
+gifsPadding: margins(10px, 5px, 0px, 9px);
 
 emojiSuggestionsDropdown: InnerDropdown(defaultInnerDropdown) {
 	scrollMargin: margins(10px, 10px, 10px, 10px);

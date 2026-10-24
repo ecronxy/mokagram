@@ -970,13 +970,8 @@ void TabbedSelector::paintContent(QPainter &p) {
 	if (_restrictedLabel) {
 		p.fillRect(0, sidesTop, width(), sidesHeight, st::emojiPanBg);
 	} else {
-		p.fillRect(
-			myrtlrect(
-				width() - _st.scroll.width,
-				sidesTop,
-				_st.scroll.width,
-				sidesHeight),
-			_st.bg);
+		// Mokagram: боковые поля тоже закрашены (скролл отступает от краёв).
+		p.fillRect(0, sidesTop, width(), sidesHeight, _st.bg);
 		p.fillRect(
 			myrtlrect(0, sidesTop, st::emojiPanRadius, sidesHeight),
 			_st.bg);
