@@ -119,7 +119,7 @@ ivEditorSuggestionsShortcutSkip: 12px;
 ivEditorSuggestionsPadding: margins(0px, 5px, 0px, 5px);
 ivEditorSuggestionsQueryPadding: margins(4px, 2px, 4px, 2px);
 ivEditorSuggestionsQueryRadius: 4px;
-ivEditorSuggestionsRadius: 8px;
+ivEditorSuggestionsRadius: 16px;
 ivEditorSuggestionsScroll: ScrollArea(defaultSolidScroll) {
 	deltax: 3px;
 	deltat: 4px;

@@ -973,7 +973,7 @@ topBarInfo: IconButton(topBarSearch) {
 }
 topBarInfoActive: icon {{ "top_bar_profile", windowActiveTextFg }};
 topBarActionSkip: 10px;
-topBarActionButtonLargeRadius: 8px;
+topBarActionButtonLargeRadius: 16px;
 
 topBarInfoButtonSize: size(52px, topBarHeight);
 topBarInfoButtonInnerSize: 42px;
@@ -999,7 +999,7 @@ inviteLinkTitleRight: FlatLabel(defaultSubsectionTitle) {
 	minWidth: 0px;
 }
 
-inviteLinkFieldRadius: 5px;
+inviteLinkFieldRadius: 14px;
 inviteLinkFieldHeight: 42px;
 inviteLinkFieldMargin: margins(14px, 12px, 36px, 9px);
 inviteLinkThreeDotsIcon: icon {{ "info/edit/dotsmini", dialogsMenuIconFg }};

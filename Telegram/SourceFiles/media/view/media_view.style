@@ -91,7 +91,7 @@ mediaviewFullScreenOutIcon: icon {{ "player/player_minimize", mediaviewPlaybackI
 mediaviewFullScreenOutIconOver: icon {{ "player/player_minimize", mediaviewPlaybackIconFgOver }};
 
 mediaviewVolumeWidth: 75px;
-mediaviewControllerRadius: 9px;
+mediaviewControllerRadius: 20px;
 
 mediaviewVolumeIcon0: icon {{ "player/player_volume_off", mediaviewPlaybackIconFg }};
 mediaviewVolumeIcon0Over: icon {{ "player/player_volume_off", mediaviewPlaybackIconFgOver }};
@@ -286,7 +286,7 @@ mediaviewSwipeDistance: 80px;
 
 mediaviewCaptionPadding: margins(11px, 6px, 11px, 6px);
 mediaviewCaptionMargin: size(11px, 11px);
-mediaviewCaptionRadius: 6px;
+mediaviewCaptionRadius: 16px;
 
 mediaviewGroupPadding: margins(0px, 14px, 0px, 14px);
 mediaviewGroupHeight: 80px;
@@ -478,7 +478,7 @@ pipVolumeIcon2Over: icon {{ "player/player_volume_on", mediaviewPipControlsFgOve
 storiesMaxSize: size(540px, 960px);
 storiesSiblingWidthMin: 200px; // Try making sibling not less than this.
 storiesMaxNameFontSize: 17px;
-storiesRadius: 8px;
+storiesRadius: 20px;
 storiesControlSize: 64px;
 storiesLeft: icon {{ "stories/next-flip_horizontal", mediaviewControlFg }};
 storiesRight: icon {{ "stories/next", mediaviewControlFg }};

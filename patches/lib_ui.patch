@@ -415,6 +415,27 @@ index ceed27c..8bfe1c6 100644
  	setNaturalWidth(-1);
  }
  
+diff --git i/ui/widgets/menu/menu.cpp w/ui/widgets/menu/menu.cpp
+index 5421134..3b882da 100644
+--- i/ui/widgets/menu/menu.cpp
++++ w/ui/widgets/menu/menu.cpp
+@@ -48,14 +48,8 @@ void Menu::init() {
+ 
+ 	setMouseTracking(true);
+ 
+-	if (_st.itemBg->c.alpha() == 255) {
+-		setAttribute(Qt::WA_OpaquePaintEvent);
+-	}
+-
+-	paintRequest(
+-	) | rpl::on_next([=](const QRect &clip) {
+-		QPainter(this).fillRect(clip, _st.itemBg);
+-	}, lifetime());
++	// Mokagram: фон меню даёт контейнер со скруглением, а сам список
++	// не закрашивает углы квадратом.
+ 
+ 	positionValue(
+ 	) | rpl::on_next([=] {
 diff --git i/ui/widgets/menu/menu_action.cpp w/ui/widgets/menu/menu_action.cpp
 index 4c16b67..2ded2eb 100644
 --- i/ui/widgets/menu/menu_action.cpp
@@ -443,7 +464,7 @@ index 4c16b67..2ded2eb 100644
  
  int Action::contentHeight() const {
 diff --git i/ui/widgets/menu/menu_item_base.h w/ui/widgets/menu/menu_item_base.h
-index 7b329a1..dc3979f 100644
+index 7b329a1..61f48d1 100644
 --- i/ui/widgets/menu/menu_item_base.h
 +++ w/ui/widgets/menu/menu_item_base.h
 @@ -7,6 +7,7 @@
@@ -454,7 +475,7 @@ index 7b329a1..dc3979f 100644
  #include "ui/widgets/buttons.h"
  #include "ui/widgets/menu/menu.h"
  #include "ui/widgets/menu/menu_common.h"
-@@ -90,4 +91,25 @@ private:
+@@ -90,4 +91,24 @@ private:
  
  };
  
@@ -463,7 +484,6 @@ index 7b329a1..dc3979f 100644
 +		const QRect &rect,
 +		const style::Menu &st,
 +		bool selected) {
-+	p.fillRect(rect, st.itemBg);
 +	if (!selected) {
 +		return;
 +	}

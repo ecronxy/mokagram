@@ -121,7 +121,6 @@ SpeedSliderItem::SpeedSliderItem(
 	) | rpl::on_next([=](const QRect &clip) {
 		auto p = Painter(this);
 
-		p.fillRect(clip, _st.dropdown.menu.itemBg);
 
 		const auto left = (_st.sliderPadding.left() - _text.maxWidth()) / 2;
 		const auto top = _st.dropdown.menu.itemPadding.top();

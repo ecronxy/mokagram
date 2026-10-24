@@ -714,7 +714,7 @@ topPeers: DialogsStories(dialogsStoriesFull) {
 	photoTop: 8px;
 	nameLeft: 6px;
 }
-topPeersRadius: 4px;
+topPeersRadius: 18px;
 topPeersMargin: margins(3px, 3px, 3px, 4px);
 
 recentPeersEmptySize: 100px;
