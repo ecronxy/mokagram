@@ -378,7 +378,7 @@ void Widget::updateDropdownsGeometry() {
 				height())));
 	const auto playerMargins = _volume->getMargin();
 	const auto shift = QPoint(playerMargins.left(), playerMargins.top());
-	_volume->move(position - shift);
+	_volume->move(position - shift + QPoint(0, 6));
 
 	_orderController->updateDropdownGeometry();
 	_speedController->updateDropdownGeometry();
@@ -515,8 +515,7 @@ void Widget::paintEvent(QPaintEvent *e) {
 			p.setFont(st::normalFont);
 			p.setPen(st::windowSubTextFg);
 			const auto left = getNameLeft();
-			const auto room = width() - left - getNameRight() - 12
-				- _rightControls->width();
+			const auto room = width() - left - getNameRight();
 			p.drawText(
 				QRect(left, st::mediaPlayerNameTop - 4, std::max(room, 40), 20),
 				Qt::AlignLeft | Qt::AlignVCenter,
@@ -642,9 +641,50 @@ void Widget::updateOverLabelsState(bool over) {
 	_togglePlaylistRequests.fire(over && (_type == AudioMsgId::Type::Song));
 }
 
+int Widget::songTextWidth() const {
+	const auto fade = st::mediaPlayerControlsFade.width();
+	const auto controls = getTimeRight() + _timeLabel->width() + fade;
+	const auto available = width()
+		- getNameLeft()
+		- st::mediaPlayerCloseRight
+		- _close->width()
+		- controls
+		- buttonsBlockWidth()
+		- 12;
+	auto natural = _nameLabel->naturalWidth();
+	auto title = QString();
+	auto artist = QString();
+	if (Mokagram::Music::OwnsTrack(_lastSongId)
+		&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
+		natural = std::max(natural, st::normalFont->width(artist));
+	}
+	return std::clamp(natural, 40, std::max(available, 40));
+}
+
+int Widget::buttonsBlockWidth() const {
+	if (_type != AudioMsgId::Type::Song) {
+		return 0;
+	}
+	auto result = _playPause->width();
+	if (_previousTrack) {
+		result += _previousTrack->width() + st::mediaPlayerPlaySkip
+			+ _nextTrack->width() + st::mediaPlayerPlaySkip;
+	}
+	return result + st::mediaPlayerPadding;
+}
+
 void Widget::updatePlayPrevNextPositions() {
-	auto left = st::mediaPlayerPlayLeft;
-	auto top = st::mediaPlayerPlayTop;
+	movePlayPrevNext();
+	updateLabelsGeometry();
+}
+
+void Widget::movePlayPrevNext() {
+	const auto song = (_type == AudioMsgId::Type::Song);
+	// Mokagram: у песен кнопки справа, название рядом с обложкой.
+	auto left = song
+		? (getNameLeft() + songTextWidth() + 12)
+		: st::mediaPlayerPlayLeft;
+	auto top = (st::mediaPlayerHeight - _playPause->height()) / 2;
 	if (_previousTrack) {
 		_previousTrack->moveToLeft(left, top); left += _previousTrack->width() + st::mediaPlayerPlaySkip;
 		_playPause->moveToLeft(left, top); left += _playPause->width() + st::mediaPlayerPlaySkip;
@@ -652,10 +692,12 @@ void Widget::updatePlayPrevNextPositions() {
 	} else {
 		_playPause->moveToLeft(left, top);
 	}
-	updateLabelsGeometry();
 }
 
 int Widget::getNameLeft() const {
+	if (_type == AudioMsgId::Type::Song) {
+		return 14 + 52 + 14;
+	}
 	auto result = st::mediaPlayerPlayLeft + _playPause->width();
 	if (_previousTrack) {
 		result += _previousTrack->width() + st::mediaPlayerPlaySkip + _nextTrack->width() + st::mediaPlayerPlaySkip;
@@ -665,6 +707,9 @@ int Widget::getNameLeft() const {
 }
 
 int Widget::getNameRight() const {
+	if (_type == AudioMsgId::Type::Song) {
+		return width() - getNameLeft() - songTextWidth();
+	}
 	return st::mediaPlayerCloseRight
 		+ _close->width()
 		+ st::mediaPlayerPadding;
@@ -697,6 +742,9 @@ void Widget::updateLabelsGeometry() {
 	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerPlayTop - st::mediaPlayerTime.font->ascent);
 
 	updateControlsWrapGeometry();
+	if (_type == AudioMsgId::Type::Song) {
+		movePlayPrevNext();
+	}
 }
 
 void Widget::updateRepeatToggleIcon() {

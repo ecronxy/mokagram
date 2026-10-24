@@ -390,20 +390,17 @@ void Dropdown::paintEvent(QPaintEvent *e) {
 
 	// draw shadow
 	auto shadowedRect = rect().marginsRemoved(getMargin());
-	auto shadowedSides = RectPart::Left | RectPart::Right | RectPart::Bottom;
+	auto shadowedSides = RectPart::Left | RectPart::Right | RectPart::Bottom | RectPart::Top;
 	Ui::Shadow::paint(p, shadowedRect, width(), st::roundShadowRadius8px, shadowedSides);
-	const auto &corners = Ui::CachedCornerPixmaps(Ui::MenuCorners);
-	const auto fill = Ui::CornersPixmaps{
-		.p = { QPixmap(), QPixmap(), corners.p[2], corners.p[3] },
-	};
+	// Mokagram: панель громкости круглая со всех сторон.
 	Ui::FillRoundRect(
 		p,
 		shadowedRect.x(),
-		0,
+		shadowedRect.y(),
 		shadowedRect.width(),
-		shadowedRect.y() + shadowedRect.height(),
+		shadowedRect.height(),
 		st::menuBg,
-		fill);
+		Ui::MenuCorners);
 }
 
 void Dropdown::enterEventHook(QEnterEvent *e) {

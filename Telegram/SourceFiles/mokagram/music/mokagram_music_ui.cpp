@@ -542,7 +542,7 @@ class PicksBar final : public Ui::AbstractButton {
 public:
 	PicksBar(QWidget *parent, Fn<void()> play, Fn<void()> refresh)
 	: AbstractButton(parent) {
-		resize(width(), 52);
+		resize(width(), 36);
 		setPointerCursor(true);
 		setClickedCallback([=] {
 			if (refreshRect().contains(mapFromGlobal(QCursor::pos()))) {
@@ -554,52 +554,29 @@ public:
 		paintRequest(
 		) | rpl::on_next([=](QRect) {
 			auto p = QPainter(this);
-			auto hq = PainterHighQualityEnabler(p);
-			if (isOver()) {
-				p.setPen(Qt::NoPen);
-				p.setBrush(st::windowBgOver);
-				p.drawRoundedRect(rect(), 16, 16);
-			}
-			// Значок и подпись слева.
-			const auto cy = height() / 2.;
-			auto tri = QPainterPath();
-			tri.moveTo(24, cy - 8);
-			tri.lineTo(24 + 14, cy);
-			tri.lineTo(24, cy + 8);
-			tri.closeSubpath();
-			p.setBrush(st::windowActiveTextFg);
-			p.drawPath(tri);
+			// Только текст, без значков и плашек.
+			const auto onRefresh = refreshRect().contains(
+				mapFromGlobal(QCursor::pos()));
 			p.setFont(st::semiboldFont);
-			p.setPen(st::windowFg);
+			p.setPen(onRefresh || !isOver()
+				? st::windowActiveTextFg
+				: st::windowFg);
 			p.drawText(
-				QRect(52, 0, width() - 52 - 64, height()),
+				QRect(8, 0, width() - 8 - 110, height()),
 				Qt::AlignVCenter | Qt::AlignLeft,
-				QString::fromUtf8("Играть подборку"));
-			// Обновить справа: круговая стрелка.
-			const auto r = refreshRect();
-			const auto refreshColor = refreshRect().contains(mapFromGlobal(QCursor::pos()))
-				? QColor(st::windowActiveTextFg->c)
-				: QColor(st::windowSubTextFg->c);
-			p.setPen(QPen(refreshColor, 2., Qt::SolidLine, Qt::RoundCap));
-			p.setBrush(Qt::NoBrush);
-			const auto arc = QRectF(r).adjusted(9, 9, -9, -9);
-			p.drawArc(arc, 40 * 16, 280 * 16);
-			p.setPen(Qt::NoPen);
-			p.setBrush(refreshColor);
-			auto head = QPainterPath();
-			const auto hx = arc.center().x() + arc.width() * 0.5 * 0.77;
-			const auto hy = arc.center().y() - arc.height() * 0.5 * 0.64;
-			head.moveTo(hx - 1, hy - 6);
-			head.lineTo(hx + 6, hy + 3);
-			head.lineTo(hx - 6, hy + 1);
-			head.closeSubpath();
-			p.drawPath(head);
+				QString::fromUtf8("Слушать подборку"));
+			p.setFont(st::normalFont);
+			p.setPen(onRefresh ? st::windowFg : st::windowSubTextFg);
+			p.drawText(
+				refreshRect(),
+				Qt::AlignVCenter | Qt::AlignRight,
+				QString::fromUtf8("Обновить"));
 		}, lifetime());
 	}
 
 private:
 	[[nodiscard]] QRect refreshRect() const {
-		return QRect(width() - 52, 0, 48, height());
+		return QRect(width() - 110, 0, 110 - 8, height());
 	}
 
 };

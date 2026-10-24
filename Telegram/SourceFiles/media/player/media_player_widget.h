@@ -82,6 +82,9 @@ private:
 	void handleSeekFinished(float64 progress);
 
 	[[nodiscard]] int getNameLeft() const;
+	[[nodiscard]] int buttonsBlockWidth() const;
+	[[nodiscard]] int songTextWidth() const;
+	void movePlayPrevNext();
 	[[nodiscard]] int getNameRight() const;
 	[[nodiscard]] int getTimeRight() const;
 	void updateOverLabelsState(QPoint pos);
