@@ -19,3 +19,10 @@ to link the code of portions of this program with the OpenSSL library.
 More information about the Telegram project: https://telegram.org
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
+
+---
+
+mokaGram modifications: Copyright (c) 2026 ecronx, https://github.com/ecronxy/mokagram.
+Additional term under GPLv3 section 7(b): derivative works must preserve this
+attribution and the notice in MOKAGRAM_NOTICE.md, including a visible
+"Based on mokaGram by ecronx" line with a link in the README and About window.

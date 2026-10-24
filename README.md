@@ -1,3 +1,14 @@
+# mokaGram
+
+> **Основано на Telegram Desktop. Доработки © 2026 ecronx.**
+> Все, кто берёт исходники mokaGram, **обязаны указать авторство** (ecronx, https://github.com/ecronxy/mokagram) в README и в окне «О программе» и сохранить [уведомление](MOKAGRAM_NOTICE.md).
+> При нарушении лицензия прекращается, автор направит требование и оставляет право защищать авторские права.
+> Подробности: [MOKAGRAM_NOTICE.md](MOKAGRAM_NOTICE.md).
+>
+> *Anyone using mokaGram source code **must credit the author** (ecronx, https://github.com/ecronxy/mokagram) in the README and the About window and keep the [notice](MOKAGRAM_NOTICE.md).*
+
+---
+
 # [Telegram Desktop][telegram_desktop] – Official Messenger
 
 This is the complete source code and the build instructions for the official [Telegram][telegram] messenger desktop client, based on the [Telegram API][telegram_api] and the [MTProto][telegram_proto] secure protocol.
