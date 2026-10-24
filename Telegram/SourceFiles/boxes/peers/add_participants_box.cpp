@@ -1764,6 +1764,20 @@ void AddSpecialBoxSearchController::searchQuery(const QString &query) {
 		_chatsContactsAdded = false;
 		_chatMembersAdded = false;
 		_globalLoaded = false;
+		// Mokagram: числовой запрос ищет человека по его ID.
+		if (_query.size() >= 5 && _query.size() <= 14) {
+			auto ok = false;
+			const auto id = _query.toULongLong(&ok);
+			if (ok && id) {
+				if (const auto user = _peer->session().data().userLoaded(
+						UserId(id))) {
+					_timer.cancel();
+					delegate()->peerListSearchAddRow(user);
+					delegate()->peerListSearchRefreshRows();
+					return;
+				}
+			}
+		}
 		if (!_query.isEmpty() && !searchParticipantsInCache()) {
 			_timer.callOnce(AutoSearchTimeout);
 		} else {

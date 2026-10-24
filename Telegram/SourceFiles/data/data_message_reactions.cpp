@@ -212,6 +212,13 @@ PossibleItemReactionsRef LookupPossibleReactions(
 	}();
 	auto added = base::flat_set<ReactionId>();
 	const auto add = [&](auto predicate) {
+		// Mokagram: своя быстрая реакция идёт первой в панели.
+		if (const auto favorite = reactions->favorite()) {
+			if (predicate(*favorite)
+				&& added.emplace(favorite->id).second) {
+				result.recent.push_back(favorite);
+			}
+		}
 		auto &&all = ranges::views::concat(top, recent, full);
 		for (const auto &reaction : all) {
 			if (predicate(reaction)) {

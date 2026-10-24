@@ -34,6 +34,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
 #include "core/application.h"
+#include "ui/widgets/tooltip.h"
+#include <array>
 #include "core/click_handler_types.h"
 #include "core/ui_integration.h"
 #include "data/business/data_business_common.h"
@@ -1885,16 +1887,76 @@ Section DetailsFiller::makeInfo() {
 				};
 				button->setClickedCallback(copyId);
 			}
-			// Mokagram: дата регистрации по ключу DateReg.
-			if (Mokagram::Misc::DateRegEnabled() && !user->isBot()) {
-				addInfoOneLine(
-					rpl::single(QString::fromUtf8("Дата регистрации")),
+			// Mokagram: иконка календаря справа от ID, в подсказке дата регистрации и DC.
+			if (const auto holder = dynamic_cast<Ui::RpWidget*>(
+					idLine.text->parentWidget());
+				holder && !user->isBot()) {
+				const auto icon = Ui::CreateChild<Ui::AbstractButton>(holder);
+				const auto &ist = st::menuIconSchedule;
+				icon->resize(ist.width() + 16, ist.height() + 16);
+				icon->setPointerCursor(false);
+				icon->setMouseTracking(true);
+				icon->paintRequest() | rpl::on_next([=] {
+					auto p = QPainter(icon);
+					ist.paintInCenter(p, icon->rect(), st::windowFg->c);
+				}, icon->lifetime());
+				rpl::combine(
+					holder->widthValue(),
+					idLine.text->geometryValue(),
+					idLine.subtext->geometryValue()
+				) | rpl::on_next([=](int w, QRect a, QRect b) {
+					Q_UNUSED(b);
+					icon->move(
+						w - icon->width() + 4,
+						a.y() + (a.height() - icon->height()) / 2);
+				}, icon->lifetime());
+
+				struct State final : Ui::AbstractTooltipShower {
+					QWidget *window = nullptr;
+					QString date;
+					QString dc;
+					QString tooltipText() const override {
+						return date.isEmpty() ? dc : (date + '\n' + dc);
+					}
+					QPoint tooltipPos() const override {
+						return QCursor::pos();
+					}
+					bool tooltipWindowActive() const override {
+						return window && window->isActiveWindow();
+					}
+				};
+				const auto state = icon->lifetime().make_state<State>();
+				state->window = icon->window();
+				const auto dcNum = user->isSelf()
+					? int(user->session().mainDcId())
+					: [&] {
+						const auto &d = user->userpicLocation().file().data;
+						const auto loc = std::get_if<StorageFileLocation>(&d);
+						return loc ? int(loc->dcId()) : 0;
+					}();
+				const auto places = std::array<const char*, 6>{
+					"", "Майами", "Амстердам", "Майами", "Амстердам",
+					"Сингапур" };
+				state->dc = (dcNum >= 1 && dcNum <= 5)
+					? QString::fromUtf8("DC%1, %2").arg(dcNum).arg(
+						QString::fromUtf8(places[dcNum]))
+					: QString::fromUtf8("DC неизвестен (у аккаунта нет фото)");
+				if (Mokagram::Misc::DateRegEnabled()) {
 					Mokagram::Misc::RegistrationDate(
 						user->id.value & PeerId::kChatTypeMask
-					) | rpl::map([](QString text) {
-						return tr::marked(text);
-					}),
-					QString());
+					) | rpl::on_next([=](QString text) {
+						state->date = QString::fromUtf8("Регистрация: ")
+							+ text;
+					}, icon->lifetime());
+				}
+				icon->events() | rpl::on_next([=](not_null<QEvent*> e) {
+					if (e->type() == QEvent::MouseMove
+						|| e->type() == QEvent::Enter) {
+						Ui::Tooltip::Show(0, state);
+					} else if (e->type() == QEvent::Leave) {
+						Ui::Tooltip::Hide();
+					}
+				}, icon->lifetime());
 			}
 		}
 		auto label = user->isBot()
