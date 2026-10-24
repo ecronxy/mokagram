@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/discrete_sliders.h"
 
 #include "ui/effects/ripple_animation.h"
+#include "ui/painter.h"
 #include "styles/style_widgets.h"
 
 namespace Ui {
@@ -441,14 +442,30 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 	const auto clip = e->rect();
 	const auto range = DiscreteSlider::getCurrentActiveRange();
 
+	// Mokagram: вкладки-пилюли, как в «Кастомизации», вместо полосы-подчёркивания.
 	const auto drawRect = [&](QRect rect, bool active = false) {
-		const auto &bar = active ? _barActive : _bar;
-		if (bar) {
-			bar->paint(p, rect);
-		} else {
-			p.fillRect(rect, active ? _st.barFgActive : _st.barFg);
-		}
+		Q_UNUSED(rect);
+		Q_UNUSED(active);
 	};
+	const auto pillTop = 3;
+	const auto pillHeight = std::max(height() - 2 * pillTop, 4);
+	{
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBgOver);
+		enumerateSections([&](Section &section) {
+			p.drawRoundedRect(
+				QRectF(section.left + 2, pillTop, section.width - 4, pillHeight),
+				pillHeight / 2.,
+				pillHeight / 2.);
+			return true;
+		});
+		p.setBrush(st::windowBgActive);
+		p.drawRoundedRect(
+			QRectF(range.left + 2, pillTop, range.width - 4, pillHeight),
+			pillHeight / 2.,
+			pillHeight / 2.);
+	}
 	enumerateSections([&](Section &section) {
 		const auto activeWidth = _st.barSnapToLabel
 			? section.contentWidth
@@ -504,7 +521,7 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 			section.contentWidth,
 			_st.labelStyle.font->height);
 		if (rect.intersects(clip)) {
-			p.setPen(anim::pen(_st.labelFg, _st.labelFgActive, active));
+			p.setPen(anim::pen(st::windowSubTextFg, st::windowFgActive, active));
 			section.label.draw(p, {
 				.position = QPoint(labelLeft, _st.labelTop),
 				.outerWidth = width(),
