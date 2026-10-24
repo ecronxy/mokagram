@@ -1802,6 +1802,12 @@ void StartDebugCommands() {
 				pt = child->mapFrom(w, pt);
 				w = child;
 			}
+			{
+				auto enter = QEnterEvent(QPointF(pt), w->mapToGlobal(QPointF(pt)), w->mapToGlobal(QPointF(pt)));
+				QCoreApplication::sendEvent(w, &enter);
+				auto move = QMouseEvent(QEvent::MouseMove, QPointF(pt), w->mapToGlobal(QPointF(pt)), Qt::NoButton, Qt::NoButton, mods);
+				QCoreApplication::sendEvent(w, &move);
+			}
 			for (const auto type : { QEvent::MouseButtonPress, QEvent::MouseButtonRelease }) {
 				auto e = QMouseEvent(type, QPointF(pt), w->mapToGlobal(QPointF(pt)), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, mods);
 				QCoreApplication::sendEvent(w, &e);

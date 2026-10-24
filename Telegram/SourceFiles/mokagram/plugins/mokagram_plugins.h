@@ -61,6 +61,13 @@ bool MenuItemClick(
 	const std::string &ctxJson,
 	LogFn log);
 
+// Колбэк плагина по токену (диалог, тост с кнопкой, кнопка интерфейса). payloadJson уходит в колбэк как dict.
+bool Invoke(
+	const std::string &pid,
+	const std::string &token,
+	const std::string &payloadJson,
+	LogFn log);
+
 // Вызывает on_plugin_unload у всех плагинов.
 void Shutdown(LogFn log);
 

@@ -59,6 +59,116 @@ def show_toast(text, icon=None, duration=2.5):
     return bool(res.get('ok'))
 
 
+# ---- свои окна, формы и тосты с кнопкой ----
+
+_FIELD_TYPES = {'Header': 'header', 'Text': 'text', 'Switch': 'switch', 'Selector': 'select', 'Input': 'input',
+                'EditText': 'input', 'Divider': 'divider', 'Progress': 'progress'}
+
+
+def _field_dict(f):
+    if isinstance(f, dict):
+        d = dict(f)
+    else:
+        d = {k: getattr(f, k) for k in ('key', 'text', 'default', 'items', 'subtext', 'multiline', 'hint')
+             if hasattr(f, k)}
+        d['type'] = _FIELD_TYPES.get(type(f).__name__, 'text')
+    d['type'] = str(d.get('type', 'text'))
+    d['text'] = str(d.get('text', d.get('hint', '')))[:300]
+    d['key'] = str(d.get('key', ''))[:64]
+    if d['type'] == 'select':
+        d['items'] = [str(i)[:100] for i in (d.get('items') or [])][:50]
+    default = d.get('default')
+    d['default'] = default if isinstance(default, (bool, int, float, str)) else ''
+    return {k: d[k] for k in ('type', 'key', 'text', 'default', 'items', 'multiline') if k in d}
+
+
+def show_dialog(title, message='', fields=None, buttons=None, on_result=None, on_close=None):
+    """Своё окно. fields: Header/Text/Switch/Selector/Input из base_plugin или dict
+    {'type': header|text|input|switch|select|progress, 'key', 'text', 'default', 'items', 'multiline'}.
+    buttons: [{'id': 'ok', 'text': 'Готово', 'style': 'primary'|'cancel'|'red', 'keep_open': False}].
+    on_result(button_id, values) зовётся при нажатии; on_close() когда окно закрыли.
+    Возвращает id окна для update_dialog / close_dialog."""
+    entry = _gate('show_dialog', 'ui')
+    if entry is None:
+        return None
+    if not _limit(entry, 'dialog', 10, 60):
+        _h['say']('[%s] слишком много окон, пропущено' % entry['id'])
+        return None
+    btns = []
+    for b in (buttons or [{'id': 'ok', 'text': 'Ок'}])[:4]:
+        b = dict(b) if isinstance(b, dict) else {'id': str(b), 'text': str(b)}
+        btns.append({'id': str(b.get('id', b.get('text', 'ok')))[:32], 'text': str(b.get('text', 'Ок'))[:40],
+                     'style': str(b.get('style', 'primary')), 'keep_open': bool(b.get('keep_open', False))})
+
+    def _result(payload):
+        if on_result:
+            on_result(payload.get('button'), payload.get('values') or {})
+
+    def _closed(payload):
+        if on_close:
+            on_close()
+
+    res = _native('dialog_show', {
+        'pid': entry['id'], 'title': str(title)[:120], 'message': str(message or '')[:4000],
+        'fields': [_field_dict(f) for f in (fields or [])[:30]], 'buttons': btns,
+        'cb': _h['register_cb'](entry, _result), 'close_cb': _h['register_cb'](entry, _closed, True)})
+    return res.get('id') if res.get('ok') else None
+
+
+def update_dialog(dialog_id, message=None, progress=None, title=None):
+    """Меняет открытое окно: текст, заголовок, полоса прогресса (0..100)."""
+    entry = _gate('update_dialog', 'ui')
+    if entry is None:
+        return None
+    args = {'id': dialog_id}
+    if message is not None:
+        args['message'] = str(message)[:4000]
+    if title is not None:
+        args['title'] = str(title)[:120]
+    if progress is not None:
+        args['progress'] = max(0.0, min(100.0, float(progress)))
+    return True if _native('dialog_update', args).get('ok') else None
+
+
+def close_dialog(dialog_id):
+    entry = _gate('close_dialog', 'ui')
+    if entry is None:
+        return None
+    return True if _native('dialog_close', {'id': dialog_id}).get('ok') else None
+
+
+def confirm(title, message, on_yes, on_no=None, yes='Да', no='Отмена', danger=False):
+    return show_dialog(title, message, buttons=[
+        {'id': 'yes', 'text': yes, 'style': 'red' if danger else 'primary'},
+        {'id': 'no', 'text': no, 'style': 'cancel'}],
+        on_result=lambda b, v: (on_yes() if b == 'yes' else (on_no() if on_no else None)))
+
+
+def prompt(title, label, on_ok, default='', multiline=False, ok='Готово'):
+    return show_dialog(title, '', fields=[{'type': 'input', 'key': 'v', 'text': label, 'default': default,
+                                          'multiline': multiline}],
+                       buttons=[{'id': 'ok', 'text': ok}, {'id': 'cancel', 'text': 'Отмена', 'style': 'cancel'}],
+                       on_result=lambda b, v: on_ok(v.get('v', '')) if b == 'ok' else None)
+
+
+def show_bulletin(text, kind='info', subtitle=None, button=None, on_click=None, duration=3.0):
+    """Тост с заголовком и кнопкой (undo и т.п.). kind: info|error|success. on_click() по кнопке."""
+    entry = _gate('show_bulletin', 'ui')
+    if entry is None:
+        return None
+    if not _limit(entry, 'toast', 10, 10):
+        return None
+    try:
+        sec = min(max(float(duration), 1.0), 15.0)
+    except Exception:
+        sec = 3.0
+    cb = _h['register_cb'](entry, lambda p: on_click(), True) if (button and on_click) else ''
+    res = _native('bulletin', {'text': str(text)[:300], 'subtitle': str(subtitle or '')[:120],
+                               'button': str(button or '')[:30], 'cb': cb, 'pid': entry['id'],
+                               'kind': str(kind), 'duration': sec})
+    return bool(res.get('ok'))
+
+
 # ---- сообщения ----
 
 def send_message(peer, text, reply_to=None, silent=False):

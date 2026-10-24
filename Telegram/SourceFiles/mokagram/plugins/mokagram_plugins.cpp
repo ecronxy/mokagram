@@ -471,6 +471,20 @@ std::string CallHook(
 	return result;
 }
 
+bool Invoke(
+		const std::string &pid,
+		const std::string &token,
+		const std::string &payloadJson,
+		LogFn log) {
+	if (!_started || token.empty()) {
+		return false;
+	}
+	const auto gil = Gil();
+	const auto result = CallStr("_moka_invoke", { pid, token, payloadJson });
+	Drain(log);
+	return result == "true";
+}
+
 std::string MenuItemsJson(
 		const std::string &location,
 		const std::string &ctxJson) {

@@ -5,6 +5,18 @@
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "api/api_common.h"
+#include "ui/layers/generic_box.h"
+#include "ui/painter.h"
+#include "ui/rp_widget.h"
+#include "ui/toast/toast.h"
+#include "ui/vertical_list.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/labels.h"
+#include "ui/wrap/vertical_layout.h"
+#include "styles/style_boxes.h"
+#include "styles/style_layers.h"
+#include "styles/style_widgets.h"
 #include "api/api_editing.h"
 #include "core/click_handler_types.h"
 #include "data/data_channel.h"
@@ -31,6 +43,7 @@
 #include <QtCore/QThread>
 
 #include <algorithm>
+#include <map>
 #include <chrono>
 #include <future>
 
@@ -356,6 +369,270 @@ std::string CopyText(const QJsonObject &args) {
 	});
 }
 
+// ---- свои окна плагинов ----
+
+struct DialogState {
+	std::string pid;
+	QPointer<Ui::GenericBox> box;
+	QPointer<Ui::FlatLabel> message;
+	QPointer<Ui::RpWidget> bar;
+	std::shared_ptr<double> progress = std::make_shared<double>(0.);
+};
+
+std::map<int, std::shared_ptr<DialogState>> Dialogs;
+int DialogNext = 0;
+
+void PluginLog(const std::string &line) {
+	LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+}
+
+[[nodiscard]] std::string Json(const QJsonObject &object) {
+	return QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString();
+}
+
+std::string DialogShow(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!controller) {
+			return Reply(false, U("нет открытого окна"));
+		}
+		const auto id = ++DialogNext;
+		const auto state = std::make_shared<DialogState>();
+		state->pid = args.value("pid").toString().toStdString();
+		Dialogs[id] = state;
+		const auto closeCb = args.value("close_cb").toString().toStdString();
+		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			state->box = box;
+			box->setTitle(rpl::single(args.value("title").toString()));
+			const auto content = box->verticalLayout();
+			const auto message = args.value("message").toString();
+			Ui::AddSkip(content);
+			state->message = content->add(
+				object_ptr<Ui::FlatLabel>(content, message, st::boxLabel),
+				st::boxPadding);
+			if (message.isEmpty()) {
+				state->message->hide();
+			}
+			using Getter = std::pair<QString, Fn<QJsonValue()>>;
+			const auto getters = std::make_shared<std::vector<Getter>>();
+			for (const auto &value : args.value("fields").toArray()) {
+				const auto field = value.toObject();
+				const auto type = field.value("type").toString();
+				const auto key = field.value("key").toString();
+				const auto text = field.value("text").toString();
+				const auto def = field.value("default");
+				if (type == u"header"_q) {
+					Ui::AddSubsectionTitle(content, rpl::single(text));
+				} else if (type == u"text"_q) {
+					content->add(
+						object_ptr<Ui::FlatLabel>(content, text, st::boxLabel),
+						st::boxPadding);
+				} else if (type == u"input"_q) {
+					const auto multiline = field.value("multiline").toBool();
+					const auto input = content->add(
+						object_ptr<Ui::InputField>(
+							content,
+							st::defaultInputField,
+							multiline
+								? Ui::InputField::Mode::MultiLine
+								: Ui::InputField::Mode::SingleLine,
+							rpl::single(text),
+							TextWithTags{ def.toString() }),
+						st::boxPadding);
+					getters->push_back({ key, [=] {
+						return QJsonValue(input->getLastText());
+					} });
+				} else if (type == u"switch"_q) {
+					const auto check = content->add(
+						object_ptr<Ui::Checkbox>(content, text, def.toBool()),
+						st::boxPadding);
+					getters->push_back({ key, [=] {
+						return QJsonValue(check->checked());
+					} });
+				} else if (type == u"select"_q) {
+					const auto group = std::make_shared<Ui::RadiobuttonGroup>(
+						def.toInt());
+					if (!text.isEmpty()) {
+						content->add(
+							object_ptr<Ui::FlatLabel>(content, text, st::boxLabel),
+							st::boxPadding);
+					}
+					auto index = 0;
+					for (const auto &item : field.value("items").toArray()) {
+						content->add(
+							object_ptr<Ui::Radiobutton>(
+								content,
+								group,
+								index++,
+								item.toString()),
+							st::boxPadding);
+					}
+					getters->push_back({ key, [=] {
+						return QJsonValue(group->current());
+					} });
+				} else if (type == u"progress"_q) {
+					const auto bar = content->add(
+						object_ptr<Ui::RpWidget>(content),
+						st::boxPadding);
+					bar->resize(bar->width(), 8);
+					bar->setMinimumHeight(8);
+					bar->setMaximumHeight(8);
+					state->progress = std::make_shared<double>(def.toDouble());
+					const auto progress = state->progress;
+					bar->paintOn([=](QPainter &p) {
+						auto hq = PainterHighQualityEnabler(p);
+						p.setPen(Qt::NoPen);
+						p.setBrush(st::windowBgOver);
+						p.drawRoundedRect(bar->rect(), 4, 4);
+						p.setBrush(st::windowActiveTextFg);
+						p.drawRoundedRect(
+							QRectF(
+								0,
+								0,
+								bar->width() * std::clamp(*progress, 0., 100.) / 100.,
+								bar->height()),
+							4,
+							4);
+					});
+					state->bar = bar;
+				}
+			}
+			Ui::AddSkip(content);
+			const auto pid = state->pid;
+			const auto cb = args.value("cb").toString().toStdString();
+			for (const auto &value : args.value("buttons").toArray()) {
+				const auto button = value.toObject();
+				const auto buttonId = button.value("id").toString();
+				const auto keepOpen = button.value("keep_open").toBool();
+				const auto style = button.value("style").toString();
+				const auto click = [=] {
+					auto values = QJsonObject();
+					for (const auto &getter : *getters) {
+						values.insert(getter.first, getter.second());
+					}
+					auto payload = QJsonObject();
+					payload.insert("button", buttonId);
+					payload.insert("values", values);
+					const auto weak = state->box;
+					Invoke(pid, cb, Json(payload), PluginLog);
+					if (!keepOpen && weak) {
+						weak->closeBox();
+					}
+				};
+				const auto text = rpl::single(button.value("text").toString());
+				if (style == u"cancel"_q) {
+					box->addButton(text, click, st::defaultBoxButton);
+				} else if (style == u"red"_q) {
+					box->addButton(text, click, st::attentionBoxButton);
+				} else {
+					box->addButton(text, click);
+				}
+			}
+			box->boxClosing() | rpl::on_next([=] {
+				Dialogs.erase(id);
+				Invoke(state->pid, closeCb, "{}", PluginLog);
+			}, box->lifetime());
+		}));
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("id", id);
+		return Json(result);
+	});
+}
+
+std::string DialogUpdate(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto i = Dialogs.find(args.value("id").toInt());
+		if (i == end(Dialogs)) {
+			return Reply(false, U("окно закрыто"));
+		}
+		const auto &state = i->second;
+		if (args.contains("message") && state->message) {
+			const auto text = args.value("message").toString();
+			state->message->setText(text);
+			state->message->setVisible(!text.isEmpty());
+		}
+		if (args.contains("title") && state->box) {
+			state->box->setTitle(rpl::single(args.value("title").toString()));
+		}
+		if (args.contains("progress")) {
+			*state->progress = args.value("progress").toDouble();
+			if (state->bar) {
+				state->bar->update();
+			}
+		}
+		return Reply(true);
+	});
+}
+
+std::string DialogClose(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto i = Dialogs.find(args.value("id").toInt());
+		if (i != end(Dialogs) && i->second->box) {
+			i->second->box->closeBox();
+		}
+		return Reply(true);
+	});
+}
+
+std::string PluginUnloaded(const QJsonObject &args) {
+	const auto pid = args.value("pid").toString().toStdString();
+	return OnMain([=]() -> std::string {
+		auto boxes = std::vector<QPointer<Ui::GenericBox>>();
+		for (const auto &[id, state] : Dialogs) {
+			if (state->pid == pid) {
+				boxes.push_back(state->box);
+			}
+		}
+		for (const auto &box : boxes) {
+			if (box) {
+				box->closeBox();
+			}
+		}
+		return Reply(true);
+	});
+}
+
+std::string ShowBulletin(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!controller) {
+			return Reply(false, U("нет открытого окна"));
+		}
+		const auto kind = args.value("kind").toString();
+		const auto subtitle = args.value("subtitle").toString();
+		const auto button = args.value("button").toString();
+		const auto prefix = (kind == u"success"_q)
+			? U("\u2713 ")
+			: (kind == u"error"_q) ? U("\u26a0 ") : QString();
+		auto config = Ui::Toast::Config();
+		auto text = TextWithEntities{ args.value("text").toString() };
+		if (!subtitle.isEmpty()) {
+			config.title = prefix + text.text;
+			text = TextWithEntities{ subtitle };
+		} else {
+			text.text = prefix + text.text;
+		}
+		if (!button.isEmpty()) {
+			text.append(u"  "_q);
+			text.append(Ui::Text::Link(button, u"moka://bulletin"_q));
+			const auto pid = args.value("pid").toString().toStdString();
+			const auto cb = args.value("cb").toString().toStdString();
+			config.filter = [=](const ClickHandlerPtr &, Qt::MouseButton) {
+				Invoke(pid, cb, "{}", PluginLog);
+				return false;
+			};
+			config.acceptinput = true;
+		}
+		config.text = std::move(text);
+		config.duration = crl::time(args.value("duration").toDouble(3.) * 1000);
+		controller->showToast(std::move(config));
+		return Reply(true);
+	});
+}
+
 std::string Bridge(const std::string &op, const std::string &argsJson) {
 	const auto args = QJsonDocument::fromJson(
 		QByteArray::fromStdString(argsJson)).object();
@@ -363,6 +640,16 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return ShowToast(args);
 	} else if (op == "send_message") {
 		return SendMessage(args);
+	} else if (op == "dialog_show") {
+		return DialogShow(args);
+	} else if (op == "dialog_update") {
+		return DialogUpdate(args);
+	} else if (op == "dialog_close") {
+		return DialogClose(args);
+	} else if (op == "plugin_unloaded") {
+		return PluginUnloaded(args);
+	} else if (op == "bulletin") {
+		return ShowBulletin(args);
 	} else if (op == "get_message") {
 		return GetMessage(args);
 	} else if (op == "edit_message") {

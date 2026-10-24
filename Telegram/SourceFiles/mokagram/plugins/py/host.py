@@ -118,7 +118,7 @@ def _moka_install_api(source):
     exec(compile(source, 'mokagram_sdk/api.py', 'exec'), mod.__dict__)
     mod._h.update({
         'caller': _caller, 'granted': _granted, 'audit': _audit, 'say': _say,
-        'native': _moka_native, 'data_dir': _data_dir,
+        'native': _moka_native, 'data_dir': _data_dir, 'register_cb': _register_cb,
     })
     sys.modules['mokagram_sdk.api'] = mod
     sys.modules['moka'] = mod
@@ -337,7 +337,45 @@ def _activate(entry, source):
         _fail(entry, e)
 
 
+# ---- обратные вызовы клиента в плагин: диалоги, тосты с кнопкой, кнопки интерфейса ----
+
+_cb_counter = [0]
+
+
+def _register_cb(entry, fn, once=False):
+    if not callable(fn):
+        return ''
+    _cb_counter[0] += 1
+    token = 'c%d' % _cb_counter[0]
+    entry.setdefault('cbs', {})[token] = (fn, bool(once))
+    return token
+
+
+def _moka_invoke(pid, token, payload_json):
+    entry = _plugins.get(pid)
+    if entry is None or entry.get('plugin') is None:
+        return 'false'
+    item = entry.get('cbs', {}).get(token)
+    if item is None:
+        return 'false'
+    fn, once = item
+    if once:
+        entry['cbs'].pop(token, None)
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+        fn(payload)
+    except BaseException as e:
+        _hook_error(entry, 'callback', e)
+        return 'false'
+    return 'true'
+
+
 def _deactivate(entry):
+    try:
+        _moka_native('plugin_unloaded', json.dumps({'pid': entry['id']}))
+    except BaseException:
+        pass
+    entry['cbs'] = {}
     _clear_filters(entry)
     inst = entry.get('plugin')
     if inst is not None:
