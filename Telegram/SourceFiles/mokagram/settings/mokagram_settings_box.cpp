@@ -22,6 +22,7 @@
 
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/music/mokagram_soundcloud.h"
 #include "data/data_user.h"
 #include "dialogs/dialogs_row.h"
 #include "dialogs/dialogs_main_list.h"
@@ -1837,6 +1838,18 @@ void StartDebugCommands() {
 					}
 				}
 			}
+		} else if (cmd.startsWith(u"scsearch:"_q)) {
+			Mokagram::Music::Search(cmd.mid(9), 0, [](Mokagram::Music::SearchResult result) {
+				LOG(("[music] search: %1 tracks, error '%2', next %3").arg(result.tracks.size()).arg(result.error).arg(result.nextOffset));
+				if (result.tracks.empty()) {
+					return;
+				}
+				const auto track = result.tracks.front();
+				LOG(("[music] first: '%1' by '%2', %3 ms, %4 hls=%5").arg(track.title).arg(track.artist).arg(track.durationMs).arg(track.extension).arg(track.hls));
+				Mokagram::Music::Download(track, [](const QString &path, const QString &error) {
+					LOG(("[music] download: path '%1' error '%2'").arg(path).arg(error));
+				});
+			});
 		} else if (cmd.startsWith(u"deletemine"_q)) {
 			auto peer = (PeerData*)controller->session().user();
 			if (cmd.size() > 11) {

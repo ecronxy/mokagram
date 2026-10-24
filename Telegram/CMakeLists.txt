@@ -74,6 +74,8 @@ set_target_properties(Telegram PROPERTIES AUTOMOC ON)
 find_package(Python3 REQUIRED COMPONENTS Development.Embed)
 nice_target_sources(Telegram ${src_loc}
 PRIVATE
+    mokagram/music/mokagram_soundcloud.cpp
+    mokagram/music/mokagram_soundcloud.h
     mokagram/plugins/mokagram_plugin_api.cpp
     mokagram/plugins/mokagram_plugin_api.h
     mokagram/plugins/mokagram_plugin_install.cpp
