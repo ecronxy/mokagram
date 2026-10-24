@@ -13,6 +13,10 @@
 #include "core/application.h"
 #include "base/flat_set.h"
 #include <QtCore/QFile>
+#include <QtCore/QTimer>
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkRequest>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -22,6 +26,7 @@
 #include "data/stickers/data_stickers.h"
 #include "data/stickers/data_stickers_set.h"
 #include "main/main_session.h"
+#include "main/main_account.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
@@ -194,9 +199,14 @@ namespace {
 
 struct State {
 	base::flat_set<quint64> users;
+	base::flat_set<quint64> remote;
 	DocumentId icon = 5397879498492389616ULL;
 	bool loaded = false;
 };
+
+// Список выданных галочек лежит в репозитории, ветка badges, файл badges.json;
+// его обновляет бот командой /publish.
+constexpr auto kBadgesUrl = "https://raw.githubusercontent.com/ecronxy/mokagram/badges/badges.json";
 
 [[nodiscard]] State &Data() {
 	static auto result = State();
@@ -237,7 +247,8 @@ void Load() {
 Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	Load();
 	const auto &state = Data();
-	if (!state.users.contains(peerToUser(user->id).bare)) {
+	const auto id = peerToUser(user->id).bare;
+	if (!state.users.contains(id) && !state.remote.contains(id)) {
 		return {};
 	}
 	return Ui::BotVerifyDetails{
@@ -245,6 +256,56 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 		.iconId = state.icon,
 		.description = TextWithEntities{ QString::fromUtf8("Разработчик mokaGram") },
 	};
+}
+
+void Refresh() {
+	Load();
+	static auto manager = new QNetworkAccessManager();
+	auto request = QNetworkRequest(QUrl(QString::fromLatin1(kBadgesUrl)));
+	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
+	const auto reply = manager->get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		if (reply->error() != QNetworkReply::NoError) {
+			return;
+		}
+		const auto document = QJsonDocument::fromJson(reply->readAll());
+		if (!document.isObject()) {
+			return;
+		}
+		const auto object = document.object();
+		auto &state = Data();
+		const auto old = base::take(state.remote);
+		const auto icon = object.value(u"emoji_id"_q).toVariant().toString().toULongLong();
+		if (icon) {
+			state.icon = icon;
+		}
+		for (const auto &value : object.value(u"users"_q).toArray()) {
+			if (const auto id = value.toVariant().toULongLong()) {
+				state.remote.emplace(id);
+			}
+		}
+		// Пересчитываем значок у тех, кто уже загружен, и у тех, кого убрали.
+		auto all = old;
+		for (const auto id : state.remote) {
+			all.emplace(id);
+		}
+		if (const auto session = Core::App().activeAccount().maybeSession()) {
+			for (const auto id : all) {
+				if (const auto user = session->data().userLoaded(UserId(id))) {
+					user->setBotVerifyDetails(Synthetic(user));
+				}
+			}
+		}
+	});
+}
+
+void Start() {
+	Refresh();
+	static auto timer = new QTimer();
+	timer->setInterval(30 * 60 * 1000);
+	QObject::connect(timer, &QTimer::timeout, [] { Refresh(); });
+	timer->start();
 }
 
 void Apply(not_null<UserData*> user) {

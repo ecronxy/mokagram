@@ -120,6 +120,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <ksandbox.h>
 
+namespace Mokagram::Badges {
+void Start();
+} // namespace Mokagram::Badges
+
 namespace Core {
 namespace {
 
@@ -324,6 +328,7 @@ void Application::run() {
 	startLocalStorage();
 
 	Mokagram::Settings::Load();
+	Mokagram::Badges::Start();
 	Mokagram::Streamer::RegisterSettings();
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();

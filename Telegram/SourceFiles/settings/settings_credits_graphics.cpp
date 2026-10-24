@@ -2682,6 +2682,40 @@ void GenericCreditsEntryBody(
 			loadingAnimation->showOn(state->confirmButtonBusy.value());
 		}
 	};
+	if (uniqueGift) {
+		// Mokagram: быстрый переход на маркеты, чтобы узнать цену подарка.
+		auto row = object_ptr<Ui::RpWidget>(box);
+		const auto raw = row.data();
+		const auto portals = Ui::CreateChild<Ui::RoundButton>(
+			raw,
+			rpl::single(u"Portals"_q),
+			st::mokaMarketButton);
+		const auto mrkt = Ui::CreateChild<Ui::RoundButton>(
+			raw,
+			rpl::single(u"MRKT"_q),
+			st::mokaMarketButton);
+		portals->setClickedCallback([] {
+			UrlClickHandler::Open(
+				u"https://t.me/portals/market?startapp=porbjn"_q);
+		});
+		mrkt->setClickedCallback([] {
+			UrlClickHandler::Open(
+				u"https://t.me/mrkt/app?startapp=6612638154"_q);
+		});
+		raw->resize(raw->width(), portals->height());
+		raw->widthValue(
+		) | rpl::on_next([=](int width) {
+			const auto gap = st::boxRowPadding.left() / 2;
+			const auto half = (width - gap) / 2;
+			portals->resizeToWidth(half);
+			mrkt->resizeToWidth(width - gap - half);
+			portals->moveToLeft(0, 0);
+			mrkt->moveToRight(0, 0);
+		}, raw->lifetime());
+		Ui::AddSkip(content);
+		box->addRow(std::move(row), style::margins(st::boxRowPadding.left(), 0, st::boxRowPadding.right(), 0));
+	}
+
 	if (upgradeSpinner) {
 		using SpinnerState = Data::GiftUpgradeSpinner::State;
 		box->clearButtons();

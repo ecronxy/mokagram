@@ -279,3 +279,13 @@ darkGiftBoxClose: IconButton(boxTitleClose) {
 		color: groupCallMembersBgOver;
 	}
 }
+
+mokaMarketButton: RoundButton(giveawayGiftCodeBoxButton) {
+	textFg: windowFg;
+	textFgOver: windowFg;
+	textBg: windowBgOver;
+	textBgOver: windowBgRipple;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: windowBgRipple;
+	}
+}
