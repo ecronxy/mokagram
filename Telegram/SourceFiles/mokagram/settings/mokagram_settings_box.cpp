@@ -697,6 +697,95 @@ struct Group {
 	return result;
 }
 
+// Выбор цвета: готовые цвета и ввод #RRGGBB. Пустое значение возвращает цвет темы.
+void ShowColorBox(const QString &title, const QString &key) {
+	const auto window = Core::App().activeWindow();
+	if (!window) {
+		return;
+	}
+	window->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(title));
+		box->setWidth(360);
+		const auto content = box->verticalLayout();
+		static const auto presets = std::vector<QColor>{
+			QColor(0x7A, 0x3D, 0xF0), QColor(0x0A, 0x84, 0xFF),
+			QColor(0x34, 0xC7, 0x59), QColor(0xFF, 0x9F, 0x0A),
+			QColor(0xFF, 0x45, 0x3A), QColor(0xFF, 0x37, 0x5F),
+			QColor(0xBF, 0x5A, 0xF2), QColor(0x64, 0xD2, 0xFF),
+			QColor(0x24, 0x3B, 0x2C), QColor(0x1C, 0x1C, 0x1E),
+			QColor(0x3A, 0x3A, 0x3C), QColor(0xFF, 0xFF, 0xFF),
+		};
+		static const auto fieldStyle = [] {
+			auto result = st::defaultInputField;
+			result.textMargins = style::margins(0, 7, 0, 7);
+			return result;
+		}();
+		const auto field = content->add(
+			object_ptr<Ui::InputField>(
+				content,
+				fieldStyle,
+				rpl::single(U("#RRGGBB")),
+				String(key)),
+			QMargins(22, 8, 22, 6));
+		const auto grid = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(22, 4, 22, 12));
+		constexpr auto kDot = 36;
+		constexpr auto kGap = 12;
+		grid->resize(grid->width(), 2 * kDot + kGap);
+		grid->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			const auto current = QColor(String(key));
+			const auto perRow = 6;
+			for (auto i = 0; i != int(presets.size()); ++i) {
+				const auto r = QRectF(
+					(i % perRow) * (kDot + kGap),
+					(i / perRow) * (kDot + kGap),
+					kDot,
+					kDot);
+				p.setPen(QPen(QColor(255, 255, 255, 40), 1.));
+				p.setBrush(presets[i]);
+				p.drawEllipse(r);
+				if (current.isValid() && current == presets[i]) {
+					p.setPen(QPen(Qt::white, 2.5));
+					p.setBrush(Qt::NoBrush);
+					p.drawEllipse(r.adjusted(-4, -4, 4, 4));
+				}
+			}
+		});
+		grid->setCursor(style::cur_pointer);
+		grid->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::MouseButtonRelease;
+		}) | rpl::on_next([=](not_null<QEvent*> e) {
+			const auto point = static_cast<QMouseEvent*>(e.get())->pos();
+			const auto perRow = 6;
+			const auto col = point.x() / (kDot + kGap);
+			const auto row = point.y() / (kDot + kGap);
+			const auto index = row * perRow + col;
+			if (col < perRow && index >= 0 && index < int(presets.size())) {
+				SetString(key, presets[index].name());
+				field->setText(presets[index].name());
+				grid->update();
+			}
+		}, grid->lifetime());
+		field->changes() | rpl::on_next([=] {
+			const auto text = field->getLastText().trimmed();
+			const auto color = QColor(text.startsWith('#') ? text : (u"#"_q + text));
+			if (text.isEmpty() || color.isValid()) {
+				SetString(key, text.isEmpty() ? QString() : color.name());
+				grid->update();
+			}
+		}, field->lifetime());
+		box->addButton(rpl::single(U("Готово")), [=] { box->closeBox(); });
+		box->addLeftButton(rpl::single(U("По теме")), [=] {
+			SetString(key, QString());
+			field->setText(QString());
+			grid->update();
+		});
+	}));
+}
+
 // Строка одной настройки. Раскладка зависит от вида значения.
 [[nodiscard]] RowInfo AddRow(
 		not_null<Ui::VerticalLayout*> card,
@@ -756,6 +845,7 @@ struct Group {
 	Ui::FlatLabel *valueLabel = nullptr;
 	Ui::MediaSlider *slider = nullptr;
 	Ui::InputField *field = nullptr;
+	Ui::RpWidget *swatch = nullptr;
 	const auto choiceText = [=](int index) {
 		return (index >= 0 && index < int(entry.choices.size()))
 			? entry.choices[index]
@@ -829,8 +919,41 @@ struct Group {
 			row->resize(row->width(), row->height());
 		}, row->lifetime());
 	} break;
-	case Kind::String:
 	case Kind::Color: {
+		const auto shown = [=](const QString &value) {
+			return value.isEmpty() ? U("По теме") : value.toUpper();
+		};
+		valueLabel = Ui::CreateChild<Ui::FlatLabel>(
+			row,
+			shown(String(key)),
+			TextLabelStyle());
+		MakeTransparent(valueLabel);
+		swatch = Ui::CreateChild<Ui::RpWidget>(row);
+		swatch->resize(22, 22);
+		swatch->setAttribute(Qt::WA_TransparentForMouseEvents);
+		swatch->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			const auto color = QColor(String(key));
+			const auto r = QRectF(1, 1, 20, 20);
+			if (color.isValid()) {
+				p.setPen(QPen(QColor(255, 255, 255, 60), 1.));
+				p.setBrush(color);
+			} else {
+				auto pen = QPen(QColor(255, 255, 255, 90), 1.5, Qt::DashLine);
+				p.setPen(pen);
+				p.setBrush(Qt::NoBrush);
+			}
+			p.drawEllipse(r);
+		});
+		row->setPointerCursor(true);
+		row->setClickedCallback([=] { ShowColorBox(titleText, key); });
+		StringValue(key) | rpl::on_next([=](const QString &value) {
+			valueLabel->setText(shown(value));
+			swatch->update();
+			row->resize(row->width(), row->height());
+		}, row->lifetime());
+	} break;
+	case Kind::String: {
 		if (entry.action) {
 			valueLabel = Ui::CreateChild<Ui::FlatLabel>(
 				row,
@@ -884,7 +1007,7 @@ struct Group {
 			controlW = toggle->width();
 		} else if (valueLabel) {
 			valueLabel->resizeToNaturalWidth(full / 2);
-			controlW = valueLabel->width() + chevron;
+			controlW = valueLabel->width() + chevron + (swatch ? 30 : 0);
 		}
 		const auto textW = full
 			- controlW
@@ -933,6 +1056,11 @@ struct Group {
 			valueLabel->move(
 				right - chevron - valueLabel->width(),
 				center - valueLabel->height() / 2);
+			if (swatch) {
+				swatch->move(
+					valueLabel->x() - 30,
+					center - swatch->height() / 2);
+			}
 			view->chevronTop = center;
 		}
 		right -= controlW + (controlW ? 8 : 0);
