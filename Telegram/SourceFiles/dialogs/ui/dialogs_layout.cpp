@@ -484,7 +484,17 @@ void PaintRow(
 	if (swipeTranslation) {
 		p.translate(swipeMirrored ? swipeTranslation : -swipeTranslation, 0);
 	}
-	p.fillRect(geometry, bg);
+	// Mokagram: выбранная и активная строка списка — скруглённая пилюля.
+	if ((context.active || context.selected) && !swipeTranslation) {
+		p.fillRect(geometry, context.currentBg);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		const auto inner = geometry.marginsRemoved({ 6, 1, 6, 1 });
+		p.drawRoundedRect(inner, 18, 18);
+	} else {
+		p.fillRect(geometry, bg);
+	}
 	if (!(flags & Flag::TopicJumpRipple)) {
 		auto ripple = context.active
 			? st::dialogsRippleBgActive

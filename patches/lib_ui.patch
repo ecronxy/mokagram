@@ -271,6 +271,26 @@ index df0dc58..ceadaf2 100644
  	auto fullWidth = _st->diameter + _st->width;
  	auto innerDiameter = _st->diameter - 2 * _st->shift;
  	auto innerRadius = float64(innerDiameter) / 2.;
+diff --git i/ui/widgets/fields/input_field.cpp w/ui/widgets/fields/input_field.cpp
+index d57ac56..1465cfa 100644
+--- i/ui/widgets/fields/input_field.cpp
++++ w/ui/widgets/fields/input_field.cpp
+@@ -2882,10 +2882,12 @@ void InputField::paintRoundSurrounding(
+ 		float64 focusedDegree) {
+ 	const auto divide = _st.borderDenominator ? _st.borderDenominator : 1;
+ 	const auto border = _st.border / float64(divide);
+-	const auto borderHalf = border / 2.;
++	const auto borderHalf = std::max(border, 1.5) / 2.;
+ 	auto pen = anim::pen(_st.borderFg, _st.borderFgActive, focusedDegree);
+-	pen.setWidthF(border);
+-	p.setPen(pen);
++	// Mokagram: без рамки в покое, при фокусе тонкое акцентное кольцо.
++	const auto lineWidth = (border > 0.) ? border : (1.5 * focusedDegree);
++	pen.setWidthF(lineWidth);
++	p.setPen((lineWidth > 0.) ? pen : QPen(Qt::NoPen));
+ 	p.setBrush(anim::brush(_st.textBg, _st.textBgActive, focusedDegree));
+ 
+ 	PainterHighQualityEnabler hq(p);
 diff --git i/ui/widgets/menu/menu_action.cpp w/ui/widgets/menu/menu_action.cpp
 index 4c16b67..2ded2eb 100644
 --- i/ui/widgets/menu/menu_action.cpp
@@ -362,8 +382,28 @@ index 36af139..425ecbb 100644
  	if (!_bar.width() && !_bar.height()) {
  		hide();
  		return;
+diff --git i/ui/widgets/side_bar_button.cpp w/ui/widgets/side_bar_button.cpp
+index 7633972..d697404 100644
+--- i/ui/widgets/side_bar_button.cpp
++++ w/ui/widgets/side_bar_button.cpp
+@@ -167,7 +167,14 @@ void SideBarButton::paintEvent(QPaintEvent *e) {
+ 	const auto clip = e->rect();
+ 
+ 	const auto &bg = _active ? _st.textBgActive : _st.textBg;
+-	p.fillRect(clip, bg);
++	// Mokagram: вкладка-пилюля вместо прямоугольника.
++	p.fillRect(clip, _st.textBg);
++	if (_active) {
++		auto hq = PainterHighQualityEnabler(p);
++		p.setPen(Qt::NoPen);
++		p.setBrush(_st.textBgActive);
++		p.drawRoundedRect(rect().marginsRemoved({ 4, 2, 4, 2 }), 16, 16);
++	}
+ 
+ 	RippleButton::paintRipple(p, 0, 0);
+ 
 diff --git i/ui/widgets/widgets.style w/ui/widgets/widgets.style
-index 8b8df7d..dc481fd 100644
+index 8b8df7d..8451b00 100644
 --- i/ui/widgets/widgets.style
 +++ w/ui/widgets/widgets.style
 @@ -992,7 +992,7 @@ defaultPopupMenu: PopupMenu {
@@ -375,6 +415,34 @@ index 8b8df7d..dc481fd 100644
  	duration: 150;
  	showDuration: 200;
  }
+@@ -1030,13 +1030,13 @@ defaultInputField: InputField {
+ 	textBgActive: windowBg;
+ 	textFg: windowFg;
+ 	textMarkBg: windowBgOver;
+-	textMargins: margins(0px, 28px, 0px, 4px);
++	textMargins: margins(16px, 28px, 16px, 4px);
+ 	textAlign: align(topleft);
+ 
+ 	placeholderFg: windowSubTextFg;
+ 	placeholderFgActive: windowActiveTextFg;
+ 	placeholderFgError: attentionButtonFg;
+-	placeholderMargins: margins(0px, 0px, 0px, 0px);
++	placeholderMargins: margins(16px, 0px, 0px, 0px);
+ 	placeholderAlign: align(topleft);
+ 	placeholderScale: 0.9;
+ 	placeholderShift: -20px;
+@@ -1047,9 +1047,9 @@ defaultInputField: InputField {
+ 	borderFgActive: activeLineFg;
+ 	borderFgError: activeLineFgError;
+ 
+-	border: 1px;
++	border: 0px;
+ 	borderActive: 2px;
+-	borderRadius: 0px;
++	borderRadius: 16px;
+ 	borderDenominator: 1;
+ 
+ 	style: boxTextStyle;
 @@ -1252,7 +1252,7 @@ defaultPeerListCheckbox: RoundImageCheckbox {
  	check: defaultPeerListCheck;
  }

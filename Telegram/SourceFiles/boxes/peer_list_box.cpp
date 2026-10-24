@@ -2119,7 +2119,19 @@ void PeerListContent::paintRowContent(
 		}
 	});
 
-	p.fillRect(0, 0, outerWidth, _rowHeight, bg);
+	// Mokagram: подсветка строки списка — скруглённая пилюля.
+	if (selected) {
+		p.fillRect(0, 0, outerWidth, _rowHeight, st.button.textBg);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(
+			QRect(6, 1, outerWidth - 12, _rowHeight - 2),
+			18,
+			18);
+	} else {
+		p.fillRect(0, 0, outerWidth, _rowHeight, bg);
+	}
 	row->paintRipple(p, st, 0, 0, outerWidth);
 	row->paintUserpic(
 		p,
