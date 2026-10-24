@@ -427,7 +427,8 @@ QImage *PeerData::userpicCloudImage(Ui::PeerUserpicView &view) const {
 		_userpicEmpty = nullptr;
 		return image;
 	} else if (isNotificationsUser()) {
-		static auto result = Window::LogoNoMargin().scaledToWidth(
+		// Служебный Telegram: оригинальный логотип, а не иконка форка.
+		static auto result = QImage(u":/gui/art/logo_telegram_userpic.png"_q).scaledToWidth(
 			kUserpicSize,
 			Qt::SmoothTransformation);
 		return &result;
