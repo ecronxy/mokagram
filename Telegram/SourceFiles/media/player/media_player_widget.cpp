@@ -102,6 +102,16 @@ Widget::Widget(
 	) | rpl::on_next([=] {
 		handlePlaylistUpdate();
 	}, lifetime());
+	events(
+	) | rpl::filter([](not_null<QEvent*> e) {
+		return e->type() == QEvent::ContextMenu;
+	}) | rpl::on_next([=](not_null<QEvent*> e) {
+		if (Mokagram::Music::OwnsTrack(_lastSongId)) {
+			Mokagram::Music::ShowCurrentTrackMenu(
+				_controller,
+				static_cast<QContextMenuEvent*>(e.get())->globalPos());
+		}
+	}, lifetime());
 
 	setupRightControls();
 
@@ -473,7 +483,7 @@ void Widget::paintEvent(QPaintEvent *e) {
 	}
 	// Mokagram: обложка слева.
 	if (_type == AudioMsgId::Type::Song) {
-		const auto size = 44;
+		const auto size = 52;
 		const auto art = QRect(
 			14,
 			(st::mediaPlayerHeight - size) / 2,
@@ -496,6 +506,31 @@ void Widget::paintEvent(QPaintEvent *e) {
 			p.setBrush(st::windowBgOver);
 			p.drawPath(path);
 			st::menuIconSoundOn.paintInCenter(p, art);
+		}
+		auto title = QString();
+		auto artist = QString();
+		if (Mokagram::Music::OwnsTrack(current)
+			&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
+			// Тональный круг под кнопкой паузы и вторая строка с исполнителем.
+			auto circle = QColor(st::mediaPlayerActiveFg->c);
+			circle.setAlpha(46);
+			p.setPen(Qt::NoPen);
+			p.setBrush(circle);
+			const auto button = _playPause->geometry();
+			p.drawEllipse(QRect(
+				button.center().x() - 20,
+				button.center().y() - 20,
+				40,
+				40));
+			p.setFont(st::normalFont);
+			p.setPen(st::windowSubTextFg);
+			const auto left = getNameLeft();
+			const auto room = width() - left - getNameRight() - 12
+				- _rightControls->width();
+			p.drawText(
+				QRect(left, st::mediaPlayerNameTop + 2, std::max(room, 40), 20),
+				Qt::AlignLeft | Qt::AlignVCenter,
+				st::normalFont->elided(artist, std::max(room, 40)));
 		}
 	}
 }
@@ -563,7 +598,7 @@ void Widget::mouseReleaseEvent(QMouseEvent *e) {
 	// Mokagram: клик по обложке открывает очередь и управление, по названию
 	// музыку с последним запросом.
 	if (_type == AudioMsgId::Type::Song) {
-		const auto cover = QRect(14, (st::mediaPlayerHeight - 44) / 2, 44, 44);
+		const auto cover = QRect(14, (st::mediaPlayerHeight - 52) / 2, 52, 52);
 		if (cover.contains(e->pos())) {
 			Mokagram::Music::ShowPlayerBox(_controller);
 			return;
@@ -665,7 +700,8 @@ void Widget::updateLabelsGeometry() {
 		- left
 		- getNameRight();
 	_nameLabel->resizeToNaturalWidth(widthForName);
-	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - st::mediaPlayerName.style.font->ascent);
+	const auto owned = Mokagram::Music::OwnsTrack(_lastSongId);
+	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - (owned ? 14 : 0) - st::mediaPlayerName.style.font->ascent);
 
 	const auto right = getTimeRight();
 	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerPlayTop - st::mediaPlayerTime.font->ascent);
@@ -833,6 +869,12 @@ void Widget::handleSongChange() {
 	} else {
 		textWithEntities = Ui::Text::FormatSongNameFor(document)
 			.textWithEntities(true);
+		auto title = QString();
+		auto artist = QString();
+		if (Mokagram::Music::OwnsTrack(current)
+			&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
+			textWithEntities = TextWithEntities{ title };
+		}
 	}
 	_nameLabel->setMarkedText(textWithEntities);
 	handlePlaylistUpdate();

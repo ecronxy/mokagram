@@ -1841,6 +1841,10 @@ void StartDebugCommands() {
 			}
 		} else if (cmd == u"player"_q) {
 			Mokagram::Music::ShowPlayerBox(controller);
+		} else if (cmd.startsWith(u"musictab:"_q)) {
+			Mokagram::Music::DebugTab(cmd.mid(9).toInt());
+		} else if (cmd.startsWith(u"musiclike:"_q)) {
+			Mokagram::Music::DebugLike(cmd.mid(10).toInt());
 		} else if (cmd.startsWith(u"musicplay:"_q)) {
 			Mokagram::Music::DebugPlay(cmd.mid(10).toInt());
 		} else if (cmd.startsWith(u"musicsave:"_q)) {

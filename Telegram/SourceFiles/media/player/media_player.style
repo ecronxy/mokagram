@@ -81,12 +81,12 @@ MediaSpeedButton {
 }
 
 mediaPlayerWideWidth: 460px;
-mediaPlayerHeight: 64px;
+mediaPlayerHeight: 72px;
 mediaPlayerPadding: 8px;
-mediaPlayerNameTop: 38px;
-mediaPlayerPlayLeft: 74px;
+mediaPlayerNameTop: 42px;
+mediaPlayerPlayLeft: 82px;
 mediaPlayerPlaySkip: 1px;
-mediaPlayerPlayTop: 17px;
+mediaPlayerPlayTop: 21px;
 mediaPlayerCloseRight: 0px;
 
 mediaPlayerName: FlatLabel(defaultFlatLabel) {
@@ -301,7 +301,7 @@ mediaPlayerClose: IconButton(mediaPlayerRepeatButton) {
 }
 mediaPlayerPlayback: FilledSlider {
 	fullWidth: 6px;
-	lineWidth: 2px;
+	lineWidth: 3px;
 	activeFg: mediaPlayerActiveFg;
 	inactiveFg: mediaPlayerInactiveFg;
 	disabledFg: mediaPlayerDisabledFg;

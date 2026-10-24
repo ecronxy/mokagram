@@ -3,6 +3,7 @@
 #include "core/application.h"
 #include "rpl/event_stream.h"
 
+#include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
@@ -172,6 +173,25 @@ void ApiGet(
 	result.permalink = object.value("permalink_url").toString();
 	result.durationMs = object.value("duration").toInt();
 	result.authorization = object.value("track_authorization").toString();
+	result.artistId = QString::number(user.value("id").toVariant().toLongLong());
+	result.genre = object.value("genre").toString().trimmed().toLower();
+	result.playbackCount = object.value("playback_count").toVariant().toLongLong();
+	result.likesCount = object.value("likes_count").toVariant().toLongLong();
+	result.createdAt = QDateTime::fromString(
+		object.value("created_at").toString(),
+		Qt::ISODate).toSecsSinceEpoch();
+	{
+		// tag_list: слова через пробел, составные теги в кавычках.
+		const auto raw = object.value("tag_list").toString();
+		auto match = QRegularExpression(u"\"([^\"]+)\"|(\\S+)"_q).globalMatch(raw);
+		while (match.hasNext()) {
+			const auto m = match.next();
+			const auto tag = (m.captured(1).isEmpty() ? m.captured(2) : m.captured(1)).toLower();
+			if (!tag.isEmpty() && result.tags.size() < 12) {
+				result.tags.push_back(tag);
+			}
+		}
+	}
 	auto progressive = QString();
 	auto hlsMp3 = QString();
 	auto hlsAac = QString();
@@ -344,6 +364,80 @@ rpl::producer<> CoversChanged() {
 
 uint64 DocumentIdForTrack(const QString &trackId) {
 	return 0x4D4F4B0000000000ULL + trackId.toULongLong();
+}
+
+namespace {
+
+void CollectionRequest(
+		const QString &path,
+		QUrlQuery query,
+		Fn<void(std::vector<Track>)> done) {
+	ApiGet(
+		QString::fromLatin1(kApi) + path,
+		std::move(query),
+		[=](QByteArray data, QString error) {
+			auto result = std::vector<Track>();
+			if (error.isEmpty()) {
+				const auto root = QJsonDocument::fromJson(data).object();
+				for (const auto &value : root.value("collection").toArray()) {
+					auto track = ParseTrack(value.toObject());
+					if (!track.transcodingUrl.isEmpty() && !track.id.isEmpty()) {
+						result.push_back(std::move(track));
+					}
+				}
+			}
+			done(std::move(result));
+		});
+}
+
+} // namespace
+
+void Resolve(
+		const Track &track,
+		Fn<void(Track, const QString &error)> done) {
+	ApiGet(
+		QString::fromLatin1(kApi) + u"/tracks/"_q + track.id,
+		QUrlQuery(),
+		[=](QByteArray data, QString error) {
+			if (!error.isEmpty()) {
+				done(track, error);
+				return;
+			}
+			auto fresh = ParseTrack(QJsonDocument::fromJson(data).object());
+			if (fresh.transcodingUrl.isEmpty()) {
+				done(track, u"трек недоступен (закрыт или удалён)"_q);
+				return;
+			}
+			done(std::move(fresh), QString());
+		});
+}
+
+void Related(
+		const QString &trackId,
+		int limit,
+		Fn<void(std::vector<Track>)> done) {
+	auto q = QUrlQuery();
+	q.addQueryItem(u"limit"_q, QString::number(limit));
+	CollectionRequest(u"/tracks/"_q + trackId + u"/related"_q, q, std::move(done));
+}
+
+void UserTracks(
+		const QString &userId,
+		int limit,
+		Fn<void(std::vector<Track>)> done) {
+	auto q = QUrlQuery();
+	q.addQueryItem(u"limit"_q, QString::number(limit));
+	CollectionRequest(u"/users/"_q + userId + u"/tracks"_q, q, std::move(done));
+}
+
+void SearchLimited(
+		const QString &query,
+		int limit,
+		Fn<void(std::vector<Track>)> done) {
+	auto q = QUrlQuery();
+	q.addQueryItem(u"q"_q, query);
+	q.addQueryItem(u"limit"_q, QString::number(limit));
+	CollectionRequest(u"/search/tracks"_q, q, std::move(done));
 }
 
 QString CacheDir() {

@@ -416,10 +416,18 @@ index ceed27c..8bfe1c6 100644
  }
  
 diff --git i/ui/widgets/menu/menu.cpp w/ui/widgets/menu/menu.cpp
-index 5421134..0d84ad3 100644
+index 5421134..2b236a9 100644
 --- i/ui/widgets/menu/menu.cpp
 +++ w/ui/widgets/menu/menu.cpp
-@@ -48,10 +48,8 @@ void Menu::init() {
+@@ -5,6 +5,7 @@
+ // https://github.com/desktop-app/legal/blob/master/LEGAL
+ //
+ #include "ui/widgets/menu/menu.h"
++#include "ui/widgets/popup_menu.h"
+ 
+ #include "ui/widgets/menu/menu_action.h"
+ #include "ui/widgets/menu/menu_item_base.h"
+@@ -48,13 +49,17 @@ void Menu::init() {
  
  	setMouseTracking(true);
  
@@ -431,7 +439,17 @@ index 5421134..0d84ad3 100644
 +	// поэтому квадратная заливка тут нужна: без неё меню прозрачное.
  	paintRequest(
  	) | rpl::on_next([=](const QRect &clip) {
- 		QPainter(this).fillRect(clip, _st.itemBg);
+-		QPainter(this).fillRect(clip, _st.itemBg);
++		// Остальные контейнеры (выпадающие окна и т.п.) красят и скругляют фон сами.
++		for (auto w = parentWidget(); w; w = w->parentWidget()) {
++			if (dynamic_cast<PopupMenu*>(w)) {
++				QPainter(this).fillRect(clip, _st.itemBg);
++				break;
++			}
++		}
+ 	}, lifetime());
+ 
+ 	positionValue(
 diff --git i/ui/widgets/menu/menu_action.cpp w/ui/widgets/menu/menu_action.cpp
 index 4c16b67..2ded2eb 100644
 --- i/ui/widgets/menu/menu_action.cpp

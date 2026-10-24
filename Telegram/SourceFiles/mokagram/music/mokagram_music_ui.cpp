@@ -1,8 +1,10 @@
 #include "mokagram/music/mokagram_music_ui.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_music_library.h"
 
 #include "base/unixtime.h"
+#include "mainwindow.h"
 #include "base/random.h"
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -58,7 +60,13 @@ constexpr auto kArtSize = 56;
 
 struct Queue {
 	std::vector<Track> tracks;       // очередь воспроизведения
-	std::vector<Track> results;      // последний результат поиска
+	std::vector<Track> results;      // то, что сейчас показано в списке
+	std::vector<Track> searchResults;
+	std::vector<Track> forYou;
+	QString forYouNote;
+	int tab = 0;                     // 0 поиск, 1 лайкнутые, 2 для вас
+	Track current;                   // играющий трек (с разобранными ссылками)
+	bool recorded = true;            // прослушивание уже записано в историю
 	QString lastQuery;
 	bool custom = false;             // очередь собрана вручную
 	int index = -1;
@@ -122,6 +130,30 @@ Queue &QueueState() {
 
 void PlayIndex(int index);
 
+void ResolveThen(const Track &track, Fn<void(Track, QString)> done) {
+	if (!track.transcodingUrl.isEmpty()) {
+		done(track, QString());
+		return;
+	}
+	Resolve(track, std::move(done));
+}
+
+// Записывает в историю то, что успели послушать, до перехода на другой трек.
+void RecordCurrentListen(bool finished) {
+	auto &queue = QueueState();
+	if (queue.recorded || queue.current.id.isEmpty()) {
+		return;
+	}
+	queue.recorded = true;
+	auto listened = queue.current.durationMs;
+	if (!finished) {
+		const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+		const auto frequency = std::max<int64>(state.frequency, 1);
+		listened = int(state.position * 1000 / frequency);
+	}
+	RecordListen(queue.current, listened, finished);
+}
+
 void Subscribe() {
 	auto &queue = QueueState();
 	if (queue.subscribed) {
@@ -139,6 +171,7 @@ void Subscribe() {
 			return;
 		}
 		if (Media::Player::IsStoppedAtEnd(state.state)) {
+			RecordCurrentListen(true);
 			const auto count = int(queue.tracks.size());
 			const auto &settings = Core::App().settings();
 			if (settings.playerRepeatMode() == Media::RepeatMode::One) {
@@ -167,13 +200,14 @@ void PlayIndex(int index) {
 		return;
 	}
 	Subscribe();
+	RecordCurrentListen(false);
 	const auto track = queue.tracks[index];
 	const auto token = ++queue.pendingToken;
 	queue.index = index;
 	queue.currentId = track.id;
 	queue.changes.fire({});
 	controller->showToast(QString::fromUtf8("Загружаю: ") + track.title);
-	Download(track, [=](const QString &path, const QString &error) {
+	ResolveThen(track, [=](Track resolved, QString error) {
 		auto &queue = QueueState();
 		const auto controller = queue.controller.get();
 		if (!controller || token != queue.pendingToken) {
@@ -183,18 +217,38 @@ void PlayIndex(int index) {
 			controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
 			return;
 		}
-		const auto document = MakeDocument(&controller->session(), track, path);
-		LoadImage(ArtUrl(track.artworkUrl, u"t500x500"_q), [id = document->id](QImage image) {
-			SetCover(id, std::move(image));
-			QueueState().changes.fire({});
-		});
-		Media::Player::instance()->play(
-			AudioMsgId(document, FullMsgId()),
-			std::nullopt);
-		// Следующий трек качаем заранее, чтобы переход был без паузы.
-		if (index + 1 < int(queue.tracks.size())) {
-			Download(queue.tracks[index + 1], [](const QString &, const QString &) {});
+		if (index < int(queue.tracks.size()) && queue.tracks[index].id == resolved.id) {
+			queue.tracks[index] = resolved;
 		}
+		Download(resolved, [=](const QString &path, const QString &error) {
+			auto &queue = QueueState();
+			const auto controller = queue.controller.get();
+			if (!controller || token != queue.pendingToken) {
+				return;
+			}
+			if (!error.isEmpty()) {
+				controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
+				return;
+			}
+			const auto document = MakeDocument(&controller->session(), resolved, path);
+			LoadImage(ArtUrl(resolved.artworkUrl, u"t500x500"_q), [id = document->id](QImage image) {
+				SetCover(id, std::move(image));
+				QueueState().changes.fire({});
+			});
+			queue.current = resolved;
+			queue.recorded = false;
+			Media::Player::instance()->play(
+				AudioMsgId(document, FullMsgId()),
+				std::nullopt);
+			// Следующий трек качаем заранее, чтобы переход был без паузы.
+			if (index + 1 < int(queue.tracks.size())) {
+				ResolveThen(queue.tracks[index + 1], [](Track next, QString error) {
+					if (error.isEmpty()) {
+						Download(next, [](const QString &, const QString &) {});
+					}
+				});
+			}
+		});
 	});
 }
 
@@ -217,16 +271,24 @@ void PlayIndex(int index) {
 
 void EnsureFile(
 		const Track &track,
-		Fn<void(const QString &)> done) {
+		Fn<void(const QString &, const Track &)> done) {
 	const auto controller = QueueState().controller.get();
-	Download(track, [=](const QString &path, const QString &error) {
+	ResolveThen(track, [=](Track resolved, QString error) {
 		if (!error.isEmpty()) {
 			if (const auto controller = QueueState().controller.get()) {
 				controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
 			}
 			return;
 		}
-		done(path);
+		Download(resolved, [=](const QString &path, const QString &error) {
+			if (!error.isEmpty()) {
+				if (const auto controller = QueueState().controller.get()) {
+					controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
+				}
+				return;
+			}
+			done(path, resolved);
+		});
 	});
 	if (controller) {
 		controller->showToast(QString::fromUtf8("Загружаю: ") + track.title);
@@ -255,7 +317,7 @@ void SendTrack(
 }
 
 void SaveToDisk(const Track &track) {
-	EnsureFile(track, [=](const QString &path) {
+	EnsureFile(track, [=](const QString &path, const Track &track) {
 		auto dir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
 		if (dir.isEmpty()) {
 			dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
@@ -281,7 +343,7 @@ void ForwardTrack(
 		controller,
 		[=](not_null<Data::Thread*> thread) {
 			const auto history = thread->owningHistory();
-			EnsureFile(track, [=](const QString &path) {
+			EnsureFile(track, [=](const QString &path, const Track &track) {
 				SendTrack(history, track, path);
 			});
 			return true;
@@ -296,7 +358,7 @@ void AddToProfile(
 		const Track &track) {
 	const auto session = &controller->session();
 	const auto weak = base::make_weak(session);
-	EnsureFile(track, [=](const QString &path) {
+	EnsureFile(track, [=](const QString &path, const Track &track) {
 		const auto strong = weak.get();
 		if (!strong) {
 			return;
@@ -416,6 +478,76 @@ void QueueRemove(int index) {
 	queue.changes.fire({});
 }
 
+void DrawHeart(QPainter &p, const QRectF &r, bool filled, const QColor &color) {
+	auto path = QPainterPath();
+	const auto w = r.width();
+	const auto h = r.height();
+	const auto x = r.x();
+	const auto y = r.y();
+	path.moveTo(x + w * 0.5, y + h * 0.92);
+	path.cubicTo(x - w * 0.15, y + h * 0.55, x + w * 0.05, y + h * 0.05, x + w * 0.5, y + h * 0.30);
+	path.cubicTo(x + w * 0.95, y + h * 0.05, x + w * 1.15, y + h * 0.55, x + w * 0.5, y + h * 0.92);
+	p.save();
+	if (filled) {
+		p.setPen(Qt::NoPen);
+		p.setBrush(color);
+	} else {
+		p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.setBrush(Qt::NoBrush);
+	}
+	p.drawPath(path);
+	p.restore();
+}
+
+[[nodiscard]] const QColor &HeartColor() {
+	static const auto color = QColor(255, 77, 109);
+	return color;
+}
+
+class TabPill final : public Ui::AbstractButton {
+public:
+	TabPill(QWidget *parent, const QString &text)
+	: AbstractButton(parent)
+	, _text(text) {
+		resize(width(), 36);
+		setPointerCursor(true);
+		paintRequest(
+		) | rpl::on_next([=](QRect) {
+			auto p = QPainter(this);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			auto tone = QColor(st::windowActiveTextFg->c);
+			tone.setAlpha(_active ? 60 : 0);
+			p.setBrush(_active ? tone : (isOver() ? st::windowBgOver : st::windowBg)->c);
+			p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+			p.setFont(st::semiboldFont);
+			p.setPen(_active ? st::windowActiveTextFg : st::windowSubTextFg);
+			p.drawText(rect(), Qt::AlignCenter, _text);
+		}, lifetime());
+	}
+	void setActive(bool active) {
+		if (_active != active) {
+			_active = active;
+			update();
+		}
+	}
+
+private:
+	QString _text;
+	bool _active = false;
+
+};
+
+void PlayAll(const std::vector<Track> &tracks) {
+	auto &queue = QueueState();
+	if (tracks.empty()) {
+		return;
+	}
+	queue.custom = false;
+	queue.tracks = tracks;
+	PlayIndex(0);
+}
+
 enum class RowMode { Results, Queue };
 
 class Row final : public Ui::AbstractButton {
@@ -439,7 +571,15 @@ public:
 		) | rpl::on_next([=] {
 			update();
 		}, lifetime());
+		LikesChanged(
+		) | rpl::on_next([=] {
+			update();
+		}, lifetime());
 		setClickedCallback([=] {
+			if (heartRect().contains(mapFromGlobal(QCursor::pos()))) {
+				SetLiked(_track, !IsLiked(_track.id));
+				return;
+			}
 			if (_mode == RowMode::Queue) {
 				PlayIndex(index);
 			} else {
@@ -459,6 +599,15 @@ public:
 	}
 
 private:
+	[[nodiscard]] QRect heartRect() const {
+		const auto durationWidth = st::normalFont->width(FormatDuration(_track.durationMs));
+		return QRect(
+			width() - 24 - durationWidth - 14 - 28,
+			(height() - 28) / 2,
+			28,
+			28);
+	}
+
 	void showMenu(not_null<Window::SessionController*> controller, int index) {
 		_menu = base::make_unique_q<Ui::PopupMenu>(
 			this,
@@ -474,6 +623,11 @@ private:
 				PlayFromResults(index);
 			}
 		}, &st::menuIconSoundOn);
+		add(IsLiked(track.id)
+			? QString::fromUtf8("Убрать из избранного")
+			: QString::fromUtf8("В избранное"), [=] {
+			SetLiked(track, !IsLiked(track.id));
+		}, &st::menuIconFave);
 		if (_mode == RowMode::Results) {
 			add(QString::fromUtf8("Играть следующим"), [=] { EnqueueNext(track); controller->showToast(QString::fromUtf8("Добавлено в очередь")); }, &st::menuIconAbove);
 			add(QString::fromUtf8("В конец очереди"), [=] { EnqueueLast(track); controller->showToast(QString::fromUtf8("Добавлено в очередь")); }, &st::menuIconBelow);
@@ -539,7 +693,14 @@ private:
 			QRect(right - durationWidth, 0, durationWidth, height()),
 			Qt::AlignVCenter | Qt::AlignRight,
 			duration);
-		const auto textWidth = right - durationWidth - 16 - left;
+		const auto liked = IsLiked(_track.id);
+		const auto heart = heartRect();
+		DrawHeart(
+			p,
+			QRectF(heart).adjusted(5, 6, -5, -5),
+			liked,
+			liked ? HeartColor() : QColor(st::windowSubTextFg->c));
+		const auto textWidth = heart.left() - 12 - left;
 		p.setFont(st::semiboldFont);
 		p.setPen(playing ? st::windowActiveTextFg : st::windowFg);
 		p.drawText(
@@ -630,7 +791,7 @@ private:
 
 };
 
-enum class Glyph { Previous, Next, Play };
+enum class Glyph { Previous, Next, Play, Heart };
 
 class RoundGlyph final : public Ui::AbstractButton {
 public:
@@ -651,6 +812,12 @@ public:
 			update();
 		}
 	}
+	void setLiked(bool liked) {
+		if (_liked != liked) {
+			_liked = liked;
+			update();
+		}
+	}
 
 private:
 	void paint() {
@@ -659,6 +826,18 @@ private:
 		const auto r = QRectF(rect());
 		const auto c = r.center();
 		p.setPen(Qt::NoPen);
+		if (_glyph == Glyph::Heart) {
+			if (isOver()) {
+				p.setBrush(st::windowBgOver);
+				p.drawEllipse(r);
+			}
+			DrawHeart(
+				p,
+				r.adjusted(r.width() * 0.22, r.height() * 0.24, -r.width() * 0.22, -r.height() * 0.2),
+				_liked,
+				_liked ? HeartColor() : QColor(st::windowSubTextFg->c));
+			return;
+		}
 		if (_glyph == Glyph::Play) {
 			p.setBrush(isOver() ? st::windowActiveTextFg->c.lighter(115) : st::windowActiveTextFg->c);
 			p.drawEllipse(r);
@@ -698,6 +877,7 @@ private:
 
 	Glyph _glyph;
 	bool _playing = false;
+	bool _liked = false;
 
 };
 
@@ -750,6 +930,62 @@ void Step(int delta) {
 
 rpl::producer<> QueueChanges() {
 	return QueueState().changes.events();
+}
+
+bool CurrentTrackInfo(QString &title, QString &artist) {
+	const auto &queue = QueueState();
+	if (queue.index < 0 || queue.index >= int(queue.tracks.size())) {
+		return false;
+	}
+	title = queue.tracks[queue.index].title;
+	artist = queue.tracks[queue.index].artist;
+	return true;
+}
+
+void ShowCurrentTrackMenu(
+		not_null<Window::SessionController*> controller,
+		QPoint globalPosition) {
+	const auto &queue = QueueState();
+	if (queue.index < 0 || queue.index >= int(queue.tracks.size())) {
+		return;
+	}
+	QueueState().controller = base::make_weak(controller);
+	static auto menu = base::unique_qptr<Ui::PopupMenu>();
+	QWidget *parent = controller->widget().get();
+	menu = base::make_unique_q<Ui::PopupMenu>(
+		parent,
+		st::popupMenuWithIcons);
+	const auto track = queue.tracks[queue.index];
+	const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
+		menu->addAction(text, std::move(callback), icon);
+	};
+	const auto instance = Media::Player::instance();
+	add(QString::fromUtf8("Пауза / играть"), [=] {
+		instance->playPause(AudioMsgId::Type::Song);
+	}, &st::menuIconSoundOn);
+	if (PreviousAvailable()) {
+		add(QString::fromUtf8("Предыдущий"), [] { Step(-1); }, &st::menuIconAbove);
+	}
+	if (NextAvailable()) {
+		add(QString::fromUtf8("Следующий"), [] { Step(1); }, &st::menuIconBelow);
+	}
+	menu->addSeparator();
+	add(IsLiked(track.id)
+		? QString::fromUtf8("Убрать из избранного")
+		: QString::fromUtf8("В избранное"), [=] {
+		SetLiked(track, !IsLiked(track.id));
+	}, &st::menuIconFave);
+	add(QString::fromUtf8("Скачать"), [=] { SaveToDisk(track); }, &st::menuIconDownload);
+	add(QString::fromUtf8("Переслать"), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
+	add(QString::fromUtf8("Добавить в профиль"), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
+	add(QString::fromUtf8("Копировать ссылку"), [=] {
+		QGuiApplication::clipboard()->setText(track.permalink);
+		controller->showToast(QString::fromUtf8("Ссылка скопирована"));
+	}, &st::menuIconLink);
+	menu->addSeparator();
+	add(QString::fromUtf8("Поиск музыки"), [=] { ShowMusicBox(controller); }, &st::menuIconSearch);
+	add(QString::fromUtf8("Очередь"), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
+	menu->popup(globalPosition);
 }
 
 void ShowPlayerBox(not_null<Window::SessionController*> controller) {
@@ -875,12 +1111,14 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		const auto previous = Ui::CreateChild<RoundGlyph>(controls, Glyph::Previous, 56);
 		const auto play = Ui::CreateChild<RoundGlyph>(controls, Glyph::Play, 72);
 		const auto next = Ui::CreateChild<RoundGlyph>(controls, Glyph::Next, 56);
+		const auto heart = Ui::CreateChild<RoundGlyph>(controls, Glyph::Heart, 48);
 		controls->widthValue(
 		) | rpl::on_next([=](int width) {
 			const auto top = (controls->height() - 72) / 2;
 			play->move((width - 72) / 2, top);
 			previous->move(play->x() - 28 - 56, top + 8);
 			next->move(play->x() + 72 + 28, top + 8);
+			heart->move(next->x() + 56 + 24, top + 12);
 		}, controls->lifetime());
 
 		const auto step = [=](int delta) {
@@ -892,6 +1130,12 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 				instance->previous(AudioMsgId::Type::Song);
 			}
 		};
+		heart->setClickedCallback([=] {
+			const auto &queue = QueueState();
+			if (!queue.current.id.isEmpty()) {
+				SetLiked(queue.current, !IsLiked(queue.current.id));
+			}
+		});
 		previous->setClickedCallback([=] { step(-1); });
 		next->setClickedCallback([=] { step(1); });
 		play->setClickedCallback([=] {
@@ -915,6 +1159,8 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			position->second = fmt(length / frequency);
 			times->update();
 			info->update();
+			heart->setLiked(!QueueState().current.id.isEmpty()
+				&& IsLiked(QueueState().current.id));
 			play->setPlaying(state.state == Media::Player::State::Playing
 				|| state.state == Media::Player::State::Starting
 				|| state.state == Media::Player::State::Resuming);
@@ -924,6 +1170,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		QueueState().changes.events(
 		) | rpl::on_next(refresh, box->lifetime());
 		CoversChanged() | rpl::on_next(refresh, box->lifetime());
+		LikesChanged() | rpl::on_next(refresh, box->lifetime());
 		refresh();
 
 		// Очередь: живой список, меняется при добавлении, перемещении и смене трека.
@@ -957,6 +1204,20 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 
 void DebugPlay(int index) {
 	PlayFromResults(index);
+}
+
+void DebugLike(int index) {
+	const auto &queue = QueueState();
+	if (index >= 0 && index < int(queue.results.size())) {
+		SetLiked(queue.results[index], !IsLiked(queue.results[index].id));
+	}
+}
+
+void DebugTab(int tab) {
+	QueueState().tab = tab;
+	if (const auto controller = QueueState().controller.get()) {
+		ShowMusicBox(controller);
+	}
 }
 
 void DebugSaveTrack(int index) {
@@ -1041,39 +1302,146 @@ void ShowMusicBox(
 			input->setGeometry(18, 0, width - 36, 44);
 		}, searchWrap->lifetime());
 
-		const auto status = content->add(
-			object_ptr<Ui::FlatLabel>(
-				content,
-				QString::fromUtf8("Введите название или исполнителя и нажмите Enter"),
-				st::boxLabel),
-			QMargins(24, 8, 24, 8));
+		// Вкладки: поиск, лайкнутые, подборка.
+		const auto tabs = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(16, 4, 16, 6));
+		tabs->resize(tabs->width(), 36);
+		const auto tabSearch = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8("Поиск"));
+		const auto tabLiked = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8("Лайкнутые"));
+		const auto tabForYou = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8("Для вас"));
+		tabs->widthValue(
+		) | rpl::on_next([=](int width) {
+			const auto gap = 8;
+			const auto each = (width - 2 * gap) / 3;
+			tabSearch->setGeometry(0, 0, each, 36);
+			tabLiked->setGeometry(each + gap, 0, each, 36);
+			tabForYou->setGeometry(2 * (each + gap), 0, width - 2 * (each + gap), 36);
+		}, tabs->lifetime());
+
 		const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
 		Ui::AddSkip(content, 10);
+		const auto statusText = std::make_shared<QString>();
+		const auto refreshForYou = std::make_shared<Fn<void()>>();
 
+		// Список: сверху строка действий (для подборки) и пояснение, дальше треки.
 		const auto fill = [=] {
 			list->clear();
 			const auto &queue = QueueState();
+			if (queue.tab == 2) {
+				const auto actions = list->add(
+					object_ptr<Ui::RpWidget>(list),
+					QMargins(16, 2, 16, 8));
+				actions->resize(actions->width(), 36);
+				const auto playAll = Ui::CreateChild<TabPill>(actions, QString::fromUtf8("Играть подборку"));
+				const auto refreshPicks = Ui::CreateChild<TabPill>(actions, QString::fromUtf8("Обновить"));
+				playAll->setActive(true);
+				playAll->show();
+				refreshPicks->show();
+				actions->widthValue(
+				) | rpl::on_next([=](int width) {
+					const auto gap = 8;
+					const auto first = (width - gap) * 2 / 3;
+					playAll->setGeometry(0, 0, first, 36);
+					refreshPicks->setGeometry(first + gap, 0, width - first - gap, 36);
+				}, actions->lifetime());
+				playAll->setClickedCallback([=] { PlayAll(QueueState().forYou); });
+				refreshPicks->setClickedCallback([=] {
+					QueueState().forYou.clear();
+					QueueState().results.clear();
+					*statusText = QString::fromUtf8("Подбираю музыку под ваш вкус…");
+					(*refreshForYou)();
+				});
+			}
+			if (!statusText->isEmpty()) {
+				list->add(
+					object_ptr<Ui::FlatLabel>(list, *statusText, st::boxLabel),
+					QMargins(24, 8, 24, 8));
+			}
 			for (auto i = 0; i != int(queue.results.size()); ++i) {
 				list->add(object_ptr<Row>(list, controller, queue.results[i], i));
 			}
 		};
+		const auto showStatus = [=](const QString &text) {
+			*statusText = text;
+			fill();
+		};
+		const auto buildForYou = [=] {
+			*statusText = QString::fromUtf8("Подбираю музыку под ваш вкус…");
+			fill();
+			BuildForYou(30, crl::guard(box, [=](std::vector<Track> tracks, QString note) {
+				auto &queue = QueueState();
+				queue.forYou = std::move(tracks);
+				queue.forYouNote = note;
+				if (queue.tab == 2) {
+					queue.results = queue.forYou;
+					showStatus(note);
+					fill();
+				}
+			}));
+		};
+		*refreshForYou = buildForYou;
+		const auto setTab = [=](int tab) {
+			auto &queue = QueueState();
+			queue.tab = tab;
+			tabSearch->setActive(tab == 0);
+			tabLiked->setActive(tab == 1);
+			tabForYou->setActive(tab == 2);
+			if (tab == 0) {
+				queue.results = queue.searchResults;
+				showStatus(queue.searchResults.empty()
+					? QString::fromUtf8("Введите название или исполнителя и нажмите Enter")
+					: QString());
+			} else if (tab == 1) {
+				queue.results = LikedTracks();
+				showStatus(queue.results.empty()
+					? QString::fromUtf8("Пока пусто. Нажмите сердечко у трека, и он появится здесь.")
+					: QString());
+			} else {
+				queue.results = queue.forYou;
+				if (queue.forYou.empty()) {
+					buildForYou();
+				} else {
+					showStatus(QString());
+				}
+			}
+			fill();
+		};
+		tabSearch->setClickedCallback([=] { setTab(0); });
+		tabLiked->setClickedCallback([=] { setTab(1); });
+		tabForYou->setClickedCallback([=] { setTab(2); });
+		LikesChanged(
+		) | rpl::filter([=] {
+			return QueueState().tab == 1;
+		}) | rpl::on_next([=] {
+			auto &queue = QueueState();
+			queue.results = LikedTracks();
+			showStatus(queue.results.empty()
+				? QString::fromUtf8("Пока пусто. Нажмите сердечко у трека, и он появится здесь.")
+				: QString());
+			fill();
+		}, box->lifetime());
+
 		const auto search = [=] {
 			const auto query = input->getLastText().trimmed();
 			if (query.isEmpty()) {
 				return;
 			}
-			status->setText(QString::fromUtf8("Ищу…"));
+			if (QueueState().tab != 0) {
+				setTab(0);
+			}
+			showStatus(QString::fromUtf8("Ищу…"));
 			Search(query, 0, crl::guard(box, [=](SearchResult result) {
 				list->clear();
 				if (!result.error.isEmpty()) {
-					status->setText(result.error);
+					showStatus(result.error);
 					return;
 				}
-				status->setText(result.tracks.empty()
+				showStatus(result.tracks.empty()
 					? QString::fromUtf8("Ничего не найдено")
 					: QString());
-				status->setVisible(result.tracks.empty());
 				auto &queue = QueueState();
+				queue.searchResults = result.tracks;
 				queue.results = result.tracks;
 				queue.lastQuery = query;
 				fill();
@@ -1090,12 +1458,12 @@ void ShowMusicBox(
 		if (!initialQuery.isEmpty()) {
 			input->setText(initialQuery);
 			search();
-		} else if (!QueueState().lastQuery.isEmpty()) {
-			// Возвращаем последний запрос и его результаты без нового запроса.
-			input->setText(QueueState().lastQuery);
-			status->setVisible(QueueState().results.empty());
-			status->setText(QString::fromUtf8("Ничего не найдено"));
-			fill();
+		} else {
+			if (!QueueState().lastQuery.isEmpty()) {
+				// Возвращаем последний запрос и его результаты без нового запроса.
+				input->setText(QueueState().lastQuery);
+			}
+			setTab(QueueState().tab);
 		}
 	}));
 }
