@@ -410,6 +410,14 @@ QImage SettingsSlider::prepareRippleMask(
 		int sectionIndex,
 		const Section &section) {
 	const auto size = QSize(section.width, height() - _st.rippleBottomSkip);
+	// Mokagram: волна внутри пилюли, а не по прямоугольнику.
+	return RippleAnimation::MaskByDrawer(size, false, [&](QPainter &p) {
+		const auto h = std::max(size.height() - 6, 4);
+		p.drawRoundedRect(
+			QRectF(2, 3, size.width() - 4, h),
+			h / 2.,
+			h / 2.);
+	});
 	if (!_rippleTopRoundRadius
 		|| (sectionIndex > 0 && sectionIndex + 1 < getSectionsCount())) {
 		return RippleAnimation::RectMask(size);
@@ -461,10 +469,18 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 			return true;
 		});
 		p.setBrush(st::windowBgActive);
+		// Отступ берём у ближайшей к активной области секции, а не у первой.
 		auto pad = 0;
+		auto bestDistance = std::numeric_limits<int>::max();
 		enumerateSections([&](Section &section) {
-			pad = std::max((section.width - section.contentWidth) / 2, 0);
-			return false;
+			const auto contentLeft = section.left
+				+ (section.width - section.contentWidth) / 2;
+			const auto distance = std::abs(contentLeft - range.left);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				pad = std::max((section.width - section.contentWidth) / 2, 0);
+			}
+			return true;
 		});
 		const auto grow = _st.barSnapToLabel ? pad : 0;
 		p.drawRoundedRect(

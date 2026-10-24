@@ -805,11 +805,8 @@ void TabbedSelector::updateTabsSliderGeometry() {
 void TabbedSelector::resizeEvent(QResizeEvent *e) {
 	updateTabsSliderGeometry();
 	if (_topShadow && _tabsSlider) {
-		_topShadow->setGeometry(
-			0,
-			_tabsSlider->bottomNoMargins() - st::lineWidth,
-			width(),
-			st::lineWidth);
+		// Mokagram: линии под пилюлями нет.
+		_topShadow->setGeometry(0, 0, 0, 0);
 	}
 	updateScrollGeometry(e->oldSize());
 	updateRestrictedLabelGeometry();
@@ -822,13 +819,15 @@ void TabbedSelector::contextMenuEvent(QContextMenuEvent *e) {
 }
 
 void TabbedSelector::updateScrollGeometry(QSize oldSize) {
-	auto scrollWidth = width() - st::emojiPanRadius;
+	// Mokagram: радиус панели больше не двигает содержимое.
+	constexpr auto kScrollLeft = 10;
+	auto scrollWidth = width() - 2 * kScrollLeft;
 	auto scrollHeight = height() - scrollTop() - scrollBottom();
 	auto inner = currentTab()->widget();
-	auto innerWidth = scrollWidth - _st.scroll.width;
+	auto innerWidth = scrollWidth;
 	auto setScrollGeometry = [&] {
 		_scroll->setGeometryToLeft(
-			st::emojiPanRadius,
+			kScrollLeft,
 			scrollTop(),
 			scrollWidth,
 			scrollHeight);
