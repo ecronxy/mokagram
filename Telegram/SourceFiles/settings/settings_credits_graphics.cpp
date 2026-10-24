@@ -2215,7 +2215,8 @@ void GenericCreditsEntryBody(
 	Ui::AddSkip(content);
 
 	const auto addGiftLinkTON = [&] {
-		if (!uniqueGift) {
+		// Mokagram: подпись про блокчейн TON убрана.
+		if (true || !uniqueGift) {
 			return;
 		}
 		const auto address = !uniqueGift->giftAddress.isEmpty()
@@ -2246,7 +2247,9 @@ void GenericCreditsEntryBody(
 		addGiftLinkTON();
 	}
 
-	Ui::AddSkip(content);
+	if (!uniqueGift) {
+		Ui::AddSkip(content);
+	}
 
 	struct State final {
 		rpl::variable<bool> confirmButtonBusy;
@@ -2712,7 +2715,6 @@ void GenericCreditsEntryBody(
 			portals->moveToLeft(0, 0);
 			mrkt->moveToRight(0, 0);
 		}, raw->lifetime());
-		Ui::AddSkip(content);
 		box->addRow(std::move(row), style::margins(st::boxRowPadding.left(), 0, st::boxRowPadding.right(), 0));
 	}
 
