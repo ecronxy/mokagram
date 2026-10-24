@@ -5,7 +5,7 @@ constexpr auto kApiScript = R"PY(
 пишет решение в журнал действий и только потом просит клиент выполнить действие.
 Нет права: запись в журнал и None, плагин не падает.
 """
-import json, os, time, collections
+import json, os, time, collections, threading
 
 _h = {}   # функции хоста, кладёт host.py: caller, granted, audit, say, native, data_dir
 
@@ -167,6 +167,83 @@ def show_bulletin(text, kind='info', subtitle=None, button=None, on_click=None, 
                                'button': str(button or '')[:30], 'cb': cb, 'pid': entry['id'],
                                'kind': str(kind), 'duration': sec})
     return bool(res.get('ok'))
+
+
+# ---- потоки и таймеры ----
+
+_timer_ids = [0]
+
+
+def run_on_ui_thread(fn, delay=0):
+    """Выполнить fn в главном потоке клиента (для работы с интерфейсом), delay в миллисекундах."""
+    entry = _gate('run_on_ui_thread', 'background')
+    if entry is None or not callable(fn):
+        return None
+    if not _limit(entry, 'ui_thread', 200, 10):
+        return None
+    cb = _h['register_cb'](entry, lambda p: fn(), True)
+    return True if _native('run_main', {'pid': entry['id'], 'cb': cb, 'delay': int(max(0, delay))}).get('ok') else None
+
+
+def _start_timer(entry, fn, seconds, repeat):
+    timers = entry.setdefault('timers', {})
+    if len(timers) >= 20:
+        _h['say']('[%s] больше 20 таймеров, отказ' % entry['id'])
+        return None
+    _timer_ids[0] += 1
+    tid = _timer_ids[0]
+
+    def fire():
+        if tid not in timers:
+            return
+        if repeat:
+            arm()
+        else:
+            timers.pop(tid, None)
+        try:
+            fn()
+        except BaseException as e:
+            _h['hook_error'](entry, 'timer', e)
+
+    def arm():
+        t = threading.Timer(seconds, fire)
+        t.daemon = True
+        timers[tid] = t
+        t.start()
+
+    arm()
+    return tid
+
+
+def set_timeout(fn, seconds):
+    """Один раз через seconds секунд (в фоновом потоке). Возвращает id для cancel_timer."""
+    entry = _gate('set_timeout', 'background')
+    if entry is None or not callable(fn):
+        return None
+    return _start_timer(entry, fn, max(0.05, float(seconds)), False)
+
+
+def set_interval(fn, seconds):
+    """Повторять каждые seconds секунд (минимум 0.5), пока плагин не выгружен или не отменён."""
+    entry = _gate('set_interval', 'background')
+    if entry is None or not callable(fn):
+        return None
+    return _start_timer(entry, fn, max(0.5, float(seconds)), True)
+
+
+def cancel_timer(timer_id):
+    entry = _gate('cancel_timer', 'background')
+    if entry is None:
+        return None
+    t = entry.get('timers', {}).pop(timer_id, None)
+    if t is not None:
+        t.cancel()
+    return True
+
+
+def run_on_queue(fn, delay_ms=0):
+    """Совместимость с exteraGram: выполнить fn в фоне после delay_ms."""
+    return set_timeout(fn, max(0, delay_ms) / 1000.0)
 
 
 # ---- сообщения ----

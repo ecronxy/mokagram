@@ -55,6 +55,12 @@ class BasePlugin:
     def pre_request_hook(self, request: Any) -> HookResult: return HookResult()
     def post_request_hook(self, response: Any, error: Any = None) -> HookResult: return HookResult()
 
+    # события клиента (нужно право messages.read): message это dict
+    # {id, peer, peer_title, from, text, out, date, has_media, reply_to}
+    def on_new_message(self, message: dict) -> None: ...
+    def on_message_edited(self, message: dict) -> None: ...
+    def on_message_deleted(self, message: dict) -> None: ...
+
     # интерфейс
     def add_menu_item(self, item: MenuItem) -> None:
         # плагин мог не вызвать super().__init__()

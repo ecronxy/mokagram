@@ -53,6 +53,7 @@ std::array<IdSet, kHookKinds> _filterUnion;
 std::atomic<size_t> _filterCount[kHookKinds] = {};
 
 // Очередь наблюдающих хуков и рабочий поток Python.
+constexpr auto kEventKind = 100;
 struct HookTask {
 	int kind = 0;
 	uint32_t id = 0;
@@ -315,6 +316,16 @@ void WorkerLoop() {
 			_queue.pop_front();
 		}
 		try {
+			if (task.kind == kEventKind) {
+				const auto split = task.bytes.find('\n');
+				const auto gil = Gil();
+				CallStr("_moka_event", {
+					task.bytes.substr(0, split),
+					task.bytes.substr(split + 1),
+				});
+				Drain(_logFn);
+				continue;
+			}
 			const auto gil = Gil();
 			CallStr("_moka_hook_observe", {
 				kKindNames[task.kind],
@@ -590,6 +601,21 @@ void QueueHook(
 		_logFn("plugin: очередь хуков переполнена, отброшено событий: "
 			+ std::to_string(dropped));
 	}
+}
+
+void QueueEvent(const std::string &name, const std::string &payloadJson) {
+	if (!_started || _stopping.load() || payloadJson.size() > kMaxHookBytes) {
+		return;
+	}
+	auto task = HookTask{ .kind = kEventKind, .bytes = name + "\n" + payloadJson };
+	{
+		const auto lock = std::lock_guard(_queueMutex);
+		if (_queue.size() >= kQueueLimit) {
+			_queue.pop_front();
+		}
+		_queue.push_back(std::move(task));
+	}
+	_queueCv.notify_one();
 }
 
 void MarkFromPlugin(bool on) {

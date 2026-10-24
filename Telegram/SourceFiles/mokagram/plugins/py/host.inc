@@ -119,7 +119,7 @@ def _moka_install_api(source):
     exec(compile(source, 'mokagram_sdk/api.py', 'exec'), mod.__dict__)
     mod._h.update({
         'caller': _caller, 'granted': _granted, 'audit': _audit, 'say': _say,
-        'native': _moka_native, 'data_dir': _data_dir, 'register_cb': _register_cb,
+        'native': _moka_native, 'data_dir': _data_dir, 'register_cb': _register_cb, 'hook_error': _hook_error,
     })
     sys.modules['mokagram_sdk.api'] = mod
     sys.modules['moka'] = mod
@@ -334,8 +334,57 @@ def _activate(entry, source):
         entry['slow'] = {}
         _register_settings(entry)
         _register_filters(entry)
+        _register_events(entry)
     except BaseException as e:   # включая SystemExit: плагин не должен ронять клиент
         _fail(entry, e)
+
+
+# ---- события клиента (новое, изменённое, удалённое сообщение) ----
+
+_EVENTS = ('new_message', 'message_edited', 'message_deleted')
+
+
+def _register_events(entry):
+    inst = entry['plugin']
+    base = sys.modules['mokagram_sdk.base_plugin'].BasePlugin
+    names = [e for e in _EVENTS
+             if getattr(type(inst), 'on_' + e, None) is not getattr(base, 'on_' + e, None)]
+    if names and not _granted(entry['id'], 'messages.read'):
+        _say('[%s] события сообщений: нет права messages.read, не подписан' % entry['id'])
+        _audit(entry, 'events.subscribe', ','.join(names), 'denied')
+        names = []
+    elif names:
+        _audit(entry, 'events.subscribe', ','.join(names), 'allowed')
+    entry['events'] = set(names)
+    _moka_native('events_subscribe', json.dumps({'pid': entry['id'], 'events': names}))
+
+
+def _moka_event(name, payload_json):
+    """Рабочий поток C++: доставка события плагинам, результат игнорируется."""
+    try:
+        payload = json.loads(payload_json)
+    except Exception:
+        return ''
+    hook = 'on_' + name
+    for entry in list(_plugins.values()):
+        inst = entry.get('plugin')
+        if inst is None or hook in entry.get('hooks_off', ()):
+            continue
+        if name not in entry.get('events', ()):
+            continue
+        fn = getattr(inst, hook, None)
+        if not callable(fn):
+            continue
+        started = time.monotonic()
+        try:
+            fn(dict(payload))
+            _hook_ok(entry, hook)
+        except BaseException as e:
+            _hook_error(entry, hook, e)
+        spent = time.monotonic() - started
+        if spent > _OBSERVE_BUDGET:
+            _hook_slow(entry, hook, spent, _OBSERVE_BUDGET)
+    return ''
 
 
 # ---- обратные вызовы клиента в плагин: диалоги, тосты с кнопкой, кнопки интерфейса ----
@@ -377,6 +426,10 @@ def _deactivate(entry):
     except BaseException:
         pass
     entry['cbs'] = {}
+    for t in list(entry.get('timers', {}).values()):
+        t.cancel()
+    entry['timers'] = {}
+    entry['events'] = set()
     _clear_filters(entry)
     inst = entry.get('plugin')
     if inst is not None:

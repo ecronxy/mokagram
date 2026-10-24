@@ -108,6 +108,9 @@ void QueueHook(
 	const void *data,
 	size_t sizeBytes);
 
+// Событие клиента (new_message, ...) с JSON-данными: в очередь рабочего потока. Из любого потока.
+void QueueEvent(const std::string &name, const std::string &payloadJson);
+
 // Пока true, хуки запросов не вызываются: это запросы самого плагина (защита от петли).
 void MarkFromPlugin(bool on);
 [[nodiscard]] bool IsFromPlugin();

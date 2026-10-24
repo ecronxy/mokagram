@@ -31,6 +31,8 @@
 #include "data/data_session.h"
 #include "history/history.h"
 #include "main/main_account.h"
+#include "main/main_domain.h"
+#include "data/data_changes.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "window/window_controller.h"
@@ -41,9 +43,12 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
 
 #include <algorithm>
 #include <map>
+#include <mutex>
+#include <atomic>
 #include <chrono>
 #include <future>
 
@@ -633,6 +638,87 @@ std::string ShowBulletin(const QJsonObject &args) {
 	});
 }
 
+// ---- события клиента ----
+
+enum EventBit : uint32 {
+	kEventNewMessage = 1,
+	kEventEdited = 2,
+	kEventDeleted = 4,
+};
+
+std::mutex EventMutex;
+std::map<std::string, uint32> EventSubscribers;
+std::atomic<uint32> EventMask = 0;
+rpl::lifetime SessionLifetime;
+
+std::string EventsSubscribe(const QJsonObject &args) {
+	auto bits = uint32(0);
+	for (const auto &name : args.value("events").toArray()) {
+		const auto value = name.toString();
+		if (value == u"new_message"_q) {
+			bits |= kEventNewMessage;
+		} else if (value == u"message_edited"_q) {
+			bits |= kEventEdited;
+		} else if (value == u"message_deleted"_q) {
+			bits |= kEventDeleted;
+		}
+	}
+	const auto lock = std::lock_guard(EventMutex);
+	const auto pid = args.value("pid").toString().toStdString();
+	if (bits) {
+		EventSubscribers[pid] = bits;
+	} else {
+		EventSubscribers.erase(pid);
+	}
+	auto all = uint32(0);
+	for (const auto &[_, mask] : EventSubscribers) {
+		all |= mask;
+	}
+	EventMask = all;
+	return Reply(true);
+}
+
+void EmitMessageEvent(
+		uint32 bit,
+		const char *name,
+		not_null<const HistoryItem*> item) {
+	if (!(EventMask.load() & bit)) {
+		return;
+	}
+	auto payload = QJsonObject();
+	payload.insert("id", QString::number(item->id.bare));
+	const auto peer = item->history()->peer;
+	payload.insert("peer", QString::number(peer->id.value));
+	payload.insert("peer_title", peer->name());
+	payload.insert("from", QString::number(item->from()->id.value));
+	payload.insert("text", item->originalText().text);
+	payload.insert("out", item->out());
+	payload.insert("date", double(item->date()));
+	payload.insert("has_media", item->media() != nullptr);
+	payload.insert("reply_to", QString::number(item->replyToId().bare));
+	QueueEvent(name, Json(payload));
+}
+
+void SubscribeSession(Main::Session *session) {
+	SessionLifetime.destroy();
+	if (!session) {
+		return;
+	}
+	session->data().newItemAdded(
+	) | rpl::on_next([](not_null<HistoryItem*> item) {
+		EmitMessageEvent(kEventNewMessage, "new_message", item);
+	}, SessionLifetime);
+	session->data().itemRemoved(
+	) | rpl::on_next([](not_null<const HistoryItem*> item) {
+		EmitMessageEvent(kEventDeleted, "message_deleted", item);
+	}, SessionLifetime);
+	session->changes().messageUpdates(
+		Data::MessageUpdate::Flag::Edited
+	) | rpl::on_next([](const Data::MessageUpdate &update) {
+		EmitMessageEvent(kEventEdited, "message_edited", update.item);
+	}, SessionLifetime);
+}
+
 std::string Bridge(const std::string &op, const std::string &argsJson) {
 	const auto args = QJsonDocument::fromJson(
 		QByteArray::fromStdString(argsJson)).object();
@@ -647,7 +733,22 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 	} else if (op == "dialog_close") {
 		return DialogClose(args);
 	} else if (op == "plugin_unloaded") {
+		EventsSubscribe(QJsonObject{
+			{ "pid", args.value("pid") },
+			{ "events", QJsonArray() } });
 		return PluginUnloaded(args);
+	} else if (op == "run_main") {
+		const auto pid = args.value("pid").toString().toStdString();
+		const auto cb = args.value("cb").toString().toStdString();
+		const auto delay = std::clamp(args.value("delay").toInt(), 0, 3600000);
+		crl::on_main([=] {
+			QTimer::singleShot(delay, [=] {
+				Invoke(pid, cb, "{}", PluginLog);
+			});
+		});
+		return Reply(true);
+	} else if (op == "events_subscribe") {
+		return EventsSubscribe(args);
 	} else if (op == "bulletin") {
 		return ShowBulletin(args);
 	} else if (op == "get_message") {
@@ -676,6 +777,8 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 
 void InstallBridge() {
 	SetBridge(Bridge);
+	Core::App().domain().activeSessionValue(
+	) | rpl::on_next(SubscribeSession, BridgeLifetime);
 	// Изменения настроек plugin.<id>.<key> доходят до плагина как on_settings_changed.
 	Settings::Changed() | rpl::on_next([](const QString &key) {
 		if (!key.startsWith(U("plugin."))) {
