@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
 #include "mokagram/perf/mokagram_perf.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/plugins/mokagram_plugins.h"
 #include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/effects/mokagram_effects.h"
@@ -339,6 +340,7 @@ void Application::run() {
 
 	startLocalStorage();
 
+	Mokagram::Plugins::ApplyPendingRestore();
 	Mokagram::Settings::Load();
 	Mokagram::Badges::Start();
 	Mokagram::Perf::Start();

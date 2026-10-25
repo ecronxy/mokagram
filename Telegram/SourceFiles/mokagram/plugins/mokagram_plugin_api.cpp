@@ -4,6 +4,7 @@
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/plugins/mokagram_plugins.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/plugins/mokagram_plugin_store.h"
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "api/api_common.h"
@@ -1401,6 +1402,13 @@ std::string DownloadMedia(const QJsonObject &args) {
 	});
 }
 
+std::string ClientDataDir(const QJsonObject &) {
+	auto result = QJsonObject();
+	result.insert("ok", true);
+	result.insert("dir", cWorkingDir() + u"tdata/"_q);
+	return Json(result);
+}
+
 std::string ClientLang(const QJsonObject &) {
 	// Tr() возвращает русский текст как есть только в русском, украинском и белорусском интерфейсе.
 	const auto russian = (std::string(Mokagram::Lang::Tr("Да")) == "Да");
@@ -1643,6 +1651,8 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return SendAlbum(args);
 	} else if (op == "download_media") {
 		return DownloadMedia(args);
+	} else if (op == "client_data_dir") {
+		return ClientDataDir(args);
 	} else if (op == "client_lang") {
 		return ClientLang(args);
 	} else if (op == "install_plugin_file") {
@@ -1707,6 +1717,53 @@ QJsonArray EntitiesToJsonArray(const EntitiesInText &list) {
 	return EntitiesToJson(list);
 }
 
+namespace {
+
+void CopyTree(const QString &from, const QString &to) {
+	const auto dir = QDir(from);
+	QDir().mkpath(to);
+	for (const auto &info : dir.entryInfoList(
+			QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot)) {
+		const auto target = QDir(to).filePath(info.fileName());
+		if (info.isDir()) {
+			CopyTree(info.absoluteFilePath(), target);
+		} else if (info.fileName() != u"secrets.enc"_q) {
+			QFile::remove(target);
+			QFile::copy(info.absoluteFilePath(), target);
+		}
+	}
+}
+
+} // namespace
+
+void ApplyPendingRestore() {
+	const auto tdata = cWorkingDir() + u"tdata/"_q;
+	const auto root = tdata + u"restore-pending/"_q;
+	if (!QDir(root).exists()) {
+		return;
+	}
+	for (const auto &name : {
+		u"moka_settings.json"_q,
+		u"moka_notes.json"_q,
+		u"moka_snippets.json"_q,
+		u"mokagram_filters.json"_q,
+	}) {
+		const auto from = root + name;
+		if (!QFile::exists(from)) {
+			continue;
+		}
+		QFile::remove(tdata + name + u".bak"_q);
+		QFile::rename(tdata + name, tdata + name + u".bak"_q);
+		QFile::copy(from, tdata + name);
+	}
+	if (QDir(root + u"plugin_data"_q).exists()) {
+		const auto base = QDir::cleanPath(
+			QString::fromStdString(PluginsDir()) + u"/../plugin_data"_q);
+		CopyTree(root + u"plugin_data"_q, base);
+	}
+	QDir(root).removeRecursively();
+}
+
 void EmitChatOpened(PeerData *peer) {
 	if (!peer || !WantEvent("chat_opened")) {
 		return;
@@ -1739,6 +1796,11 @@ void EmitTyping(PeerData *peer, UserData *user, mtpTypeId type) {
 
 void InstallBridge() {
 	SetBridge(Bridge);
+	StartPluginAutoUpdate();
+	// Нормальный выход: плагины получают STOP и on_plugin_unload, пока интерпретатор ещё жив.
+	QObject::connect(qGuiApp, &QCoreApplication::aboutToQuit, qGuiApp, [] {
+		Shutdown(PluginLog);
+	});
 	QObject::connect(qGuiApp, &QGuiApplication::applicationStateChanged, qGuiApp, [](Qt::ApplicationState state) {
 		static auto active = true;
 		const auto now = (state == Qt::ApplicationActive);

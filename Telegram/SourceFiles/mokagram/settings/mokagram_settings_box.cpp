@@ -239,6 +239,7 @@ struct Category {
 		{ "lag.emoji_cap", "😜" },
 		{ "plugins.prefix", "🔧" },
 		{ "plugins.dev_reload", "⚙️" },
+		{ "plugins.autoupdate", "🔼" },
 		{ "lag.sticker_cap", "🎞" },
 		{ "lag.enabled", "📈" },
 		{ "lag.level", "📊" },
@@ -2355,6 +2356,8 @@ void StartDebugCommands() {
 				message.textWithTags.text = cmd.mid(9);
 				history->session().api().sendMessage(std::move(message));
 			}
+		} else if (cmd == u"quit"_q) {
+			Core::Quit();
 		} else if (cmd == u"history"_q) {
 			History::ShowChatsBox(controller);
 		} else if (cmd == u"deleted"_q) {

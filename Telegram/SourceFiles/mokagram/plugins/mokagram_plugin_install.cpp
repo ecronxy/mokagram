@@ -45,6 +45,9 @@
 #include "window/window_session_controller.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QTimer>
 #include <QtCore/QMimeData>
 #include <QtCore/QUrl>
 #include <QtGui/QClipboard>
@@ -1302,6 +1305,36 @@ namespace {
 [[nodiscard]] const style::icon *MenuIconByName(QString name);
 } // namespace
 
+namespace {
+
+void RestoreFromBackupDocument(
+		not_null<DocumentData*> document,
+		FullMsgId fullId) {
+	const auto path = QDir::temp().filePath(
+		u"moka-restore-%1.zip"_q.arg(QString::number(document->id)));
+	QFile::remove(path);
+	document->save(fullId, path, LoadFromCloudOrLocal, false);
+	const auto timer = new QTimer(QCoreApplication::instance());
+	const auto started = crl::now();
+	QObject::connect(timer, &QTimer::timeout, [=] {
+		const auto info = QFileInfo(path);
+		if (!document->loading()
+			&& info.exists()
+			&& info.size() > 0
+			&& (document->size <= 0 || info.size() >= document->size)) {
+			timer->deleteLater();
+			RestoreBackupFile(path.toStdString(), [](const std::string &line) {
+				LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+			});
+		} else if (crl::now() - started > 120 * crl::time(1000)) {
+			timer->deleteLater();
+		}
+	});
+	timer->start(300);
+}
+
+} // namespace
+
 void AddMessageMenuItems(
 		not_null<Ui::PopupMenu*> menu,
 		HistoryItem *item,
@@ -1319,6 +1352,21 @@ void AddMessageMenuItems(
 	ctx.insert("date", double(item->date()));
 	const auto ctxJson = QJsonDocument(ctx).toJson(
 		QJsonDocument::Compact).toStdString();
+	// Бэкап mokaGram в Избранном: восстановление одним нажатием.
+	if (item->out() && item->history()->peer->isSelf()) {
+		if (const auto media = item->media()) {
+			if (const auto document = media->document()) {
+				const auto name = document->filename();
+				if (name.startsWith(u"moka-backup-"_q) && name.endsWith(u".zip"_q)) {
+					const auto fullId = item->fullId();
+					menu->addAction(
+						U(Mokagram::Lang::Tr("Восстановить из бэкапа")),
+						[=] { RestoreFromBackupDocument(document, fullId); },
+						&st::menuIconDownload);
+				}
+			}
+		}
+	}
 	const auto list = QJsonDocument::fromJson(
 		QByteArray::fromStdString(MenuItemsJson("message", ctxJson))).array();
 	for (const auto &value : list) {

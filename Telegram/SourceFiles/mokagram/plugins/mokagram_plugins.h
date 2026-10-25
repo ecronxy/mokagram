@@ -67,6 +67,9 @@ bool CallMessageFilter(const std::string &messageJson, LogFn log);
 // Замена текста плагинами: JSON сообщения -> пустая строка (без изменений) или "T"+новый текст.
 std::string CallTextHook(const std::string &messageJson, LogFn log);
 
+// Бэкап из Избранного: проверяет архив, спрашивает подтверждение, готовит восстановление.
+void RestoreBackupFile(const std::string &path, LogFn log);
+
 // Бейдж в пузыре: JSON сообщения -> короткая строка или пустая.
 std::string CallBadgeHook(const std::string &messageJson, LogFn log);
 

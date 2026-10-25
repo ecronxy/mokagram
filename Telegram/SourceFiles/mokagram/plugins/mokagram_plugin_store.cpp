@@ -14,12 +14,19 @@
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "window/window_session_controller.h"
+#include "mokagram/settings/mokagram_settings.h"
+#include "window/window_controller.h"
+#include "core/application.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
 #include "styles/style_widgets.h"
 
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDateTime>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QTimer>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -351,6 +358,167 @@ void StoreBox(
 			build(ParseIndex(index));
 		});
 	});
+}
+
+
+// ---- автообновление ----
+
+namespace {
+
+[[nodiscard]] bool VersionNewer(const QString &catalog, const QString &installed) {
+	const auto a = catalog.split('.');
+	const auto b = installed.split('.');
+	for (auto i = 0; i != std::max(a.size(), b.size()); ++i) {
+		const auto x = (i < a.size()) ? a[i].toInt() : 0;
+		const auto y = (i < b.size()) ? b[i].toInt() : 0;
+		if (x != y) {
+			return x > y;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] QStringList InstalledPermissions(const QString &id) {
+	auto result = QStringList();
+	const auto list = QJsonDocument::fromJson(
+		QByteArray::fromStdString(ListJson())).array();
+	for (const auto &value : list) {
+		const auto object = value.toObject();
+		if (object.value("id").toString() == id) {
+			for (const auto &item : object.value("permissions").toArray()) {
+				result.push_back(item.toString());
+			}
+		}
+	}
+	return result;
+}
+
+void Notify(const QString &text) {
+	if (const auto window = Core::App().activeWindow()) {
+		if (const auto controller = window->sessionController()) {
+			controller->showToast(text);
+		}
+	}
+}
+
+// Ставит файл поверх старого без окна: только если права не выросли.
+// Возвращает true, если обновил.
+[[nodiscard]] bool UpdateSilently(const Entry &entry, const QByteArray &bytes) {
+	const auto source = QString::fromUtf8(bytes).toStdString();
+	const auto info = QJsonDocument::fromJson(QByteArray::fromStdString(
+		ParseMetadataJson(source))).object();
+	const auto meta = info.value("meta").toObject();
+	if (!info.value("error").isNull() && !info.value("error").toString().isEmpty()) {
+		return false;
+	}
+	if (meta.value("__id__").toString() != entry.id) {
+		return false;
+	}
+	const auto have = InstalledPermissions(entry.id);
+	for (const auto &item : meta.value("__permissions__").toArray()) {
+		if (!have.contains(item.toString())) {
+			return false;
+		}
+	}
+	static const auto bad = QRegularExpression("[^A-Za-z0-9_.-]");
+	auto id = entry.id;
+	const auto fileName = id.replace(bad, "_") + u".plugin"_q;
+	const auto path = QDir(QString::fromStdString(PluginsDir())).filePath(fileName);
+	auto file = QFile(path);
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+		|| file.write(bytes) != bytes.size()) {
+		return false;
+	}
+	file.close();
+	const auto log = [](const std::string &line) {
+		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+	};
+	RecordInstall(fileName.toStdString(), log);
+	LoadFile(fileName.toStdString(), log);
+	return true;
+}
+
+} // namespace
+
+void CheckPluginUpdates() {
+	if (!Mokagram::Settings::Bool(u"plugins.autoupdate"_q)) {
+		LOG(("[mokagram] plugin updates: off"));
+		return;
+	}
+	LOG(("[mokagram] plugin updates: checking"));
+	const auto indexReply = Get(u"index.json"_q, kMaxIndexBytes);
+	QObject::connect(indexReply, &QNetworkReply::finished, [=] {
+		indexReply->deleteLater();
+		if (indexReply->error() != QNetworkReply::NoError) {
+			return;
+		}
+		const auto index = indexReply->readAll();
+		const auto signatureReply = Get(u"index.json.sig"_q, 1024);
+		QObject::connect(signatureReply, &QNetworkReply::finished, [=] {
+			signatureReply->deleteLater();
+			const auto signature = QByteArray::fromBase64(
+				signatureReply->readAll().trimmed());
+			if (signatureReply->error() != QNetworkReply::NoError
+				|| !Update::VerifyDetached("mokagram-plugins\n" + index, signature)) {
+				return;
+			}
+			const auto needApproval = std::make_shared<QStringList>();
+			const auto updated = std::make_shared<QStringList>();
+			const auto pending = std::make_shared<int>(0);
+			const auto finish = [=] {
+				if (--*pending > 0) {
+					return;
+				}
+				if (!updated->isEmpty()) {
+					Notify(U(Mokagram::Lang::Tr("Плагины обновлены: ")) + updated->join(u", "_q));
+				}
+				if (!needApproval->isEmpty()) {
+					Notify(U(Mokagram::Lang::Tr("Есть обновления, которым нужны новые права: "))
+						+ needApproval->join(u", "_q)
+						+ U(Mokagram::Lang::Tr(". Откройте магазин плагинов.")));
+				}
+			};
+			for (const auto &entry : ParseIndex(index)) {
+				const auto installed = InstalledVersion(entry.id);
+				LOG(("[mokagram] plugin updates: %1 catalog %2 installed %3").arg(entry.id, entry.version, installed));
+				if (installed.isEmpty() || !VersionNewer(entry.version, installed)) {
+					continue;
+				}
+				++*pending;
+				const auto reply = Get(entry.file, kMaxPluginBytes);
+				QObject::connect(reply, &QNetworkReply::finished, [=] {
+					reply->deleteLater();
+					const auto bytes = (reply->error() == QNetworkReply::NoError)
+						? reply->readAll()
+						: QByteArray();
+					if (bytes.size() == entry.size
+						&& QCryptographicHash::hash(
+							bytes,
+							QCryptographicHash::Sha256) == entry.sha256) {
+						if (UpdateSilently(entry, bytes)) {
+							updated->push_back(entry.name);
+						} else {
+							needApproval->push_back(entry.name);
+						}
+					}
+					finish();
+				});
+			}
+		});
+	});
+}
+
+void StartPluginAutoUpdate() {
+	static auto first = QTimer();
+	static auto repeat = QTimer();
+	first.setSingleShot(true);
+	QObject::connect(&first, &QTimer::timeout, [] {
+		CheckPluginUpdates();
+		repeat.start();
+	});
+	repeat.setInterval(12 * 3600 * 1000);
+	QObject::connect(&repeat, &QTimer::timeout, [] { CheckPluginUpdates(); });
+	first.start(90 * 1000);
 }
 
 } // namespace Mokagram::Plugins

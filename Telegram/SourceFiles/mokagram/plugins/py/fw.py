@@ -1171,3 +1171,117 @@ def _fw_export():
 
 
 _fw_export()
+
+
+# =====================================================================================
+# Этап 6: бэкап и восстановление
+# =====================================================================================
+
+import zipfile
+
+_FW_BACKUP_CLIENT = ('moka_settings.json', 'moka_notes.json', 'moka_snippets.json', 'mokagram_filters.json')
+_FW_BACKUP_LIMIT = 30 << 20
+
+
+def _fw_client_dir():
+    try:
+        return json.loads(_moka_native('client_data_dir', '{}')).get('dir', '')
+    except Exception:
+        return ''
+
+
+@_fw_builtin('backup', 'бэкап плагинов, их данных и настроек одним файлом в Избранное')
+def _fw_cmd_backup(ctx):
+    def work():
+        try:
+            import tempfile
+            stamp = time.strftime('%Y%m%d-%H%M')
+            path = os.path.join(tempfile.mkdtemp(prefix='moka_backup_'), 'moka-backup-%s.zip' % stamp)
+            total = 0
+            with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+                z.writestr('manifest.json', json.dumps({'format': 1, 'created': stamp}))
+                for name in sorted(os.listdir(_folder)) if os.path.isdir(_folder) else []:
+                    if name.endswith('.plugin'):
+                        z.write(os.path.join(_folder, name), 'plugins/' + name)
+                root = os.path.join(_data_root(), 'plugin_data')
+                for base, _dirs, files in os.walk(root):
+                    for fn in files:
+                        if fn in ('secrets.enc', 'secrets.key') or fn.endswith('.tmp'):
+                            continue
+                        full = os.path.join(base, fn)
+                        total += os.path.getsize(full)
+                        if total > _FW_BACKUP_LIMIT:
+                            raise RuntimeError('данные плагинов больше 30 МБ')
+                        z.write(full, 'plugin_data/' + os.path.relpath(full, root).replace(os.sep, '/'))
+                cdir = _fw_client_dir()
+                for fn in _FW_BACKUP_CLIENT:
+                    full = os.path.join(cdir, fn)
+                    if cdir and os.path.isfile(full):
+                        z.write(full, 'client/' + fn)
+            me = json.loads(_moka_native('get_me', '{}'))
+            if not me.get('ok'):
+                raise RuntimeError('нет открытой сессии')
+            res = json.loads(_moka_native('send_file', json.dumps({
+                'peer': os.environ.get('MOKAGRAM_BACKUP_PEER') or me['peer'], 'path': path, 'caption': 'Бэкап mokaGram %s. Секреты плагинов в него не входят.' % stamp,
+                'kind': 'file', 'silent': True})))
+            _fw_private('Бэкап', 'Отправлено в Избранное. Чтобы восстановить, нажмите на файл правой кнопкой и выберите «Восстановить из бэкапа».'
+                        if res.get('ok') else 'Не вышло: %s' % res.get('error', ''))
+        except BaseException as e:
+            _fw_private('Бэкап', 'Не вышло: %s' % e)
+    _fw_pool.submit(work)
+    _fw_private('Бэкап', 'Собираю...')
+
+
+def _moka_restore(path):
+    """Вызывается из меню файла в Избранном. Проверяет архив и спрашивает подтверждение."""
+    try:
+        z = zipfile.ZipFile(path)
+        names = z.namelist()
+        total = sum(i.file_size for i in z.infolist())
+        if total > 100 << 20 or 'manifest.json' not in names:
+            raise ValueError('это не бэкап mokaGram')
+        if json.loads(z.read('manifest.json')).get('format') != 1:
+            raise ValueError('неизвестный формат бэкапа')
+        for n in names:
+            if n.startswith('/') or '..' in n.split('/') or '\\' in n:
+                raise ValueError('в архиве небезопасные пути')
+        plugins = [n for n in names if n.startswith('plugins/') and n.endswith('.plugin')]
+    except Exception as e:
+        _fw_private('Восстановление', 'Файл не подходит: %s' % e)
+        return
+
+    def go(button):
+        if button != 'yes':
+            return
+        try:
+            stage = os.path.join(_fw_client_dir(), 'restore-pending')
+            import shutil
+            shutil.rmtree(stage, ignore_errors=True)
+            os.makedirs(stage, exist_ok=True)
+            for n in names:
+                if n.endswith('/'):
+                    continue
+                if n.startswith('client/') and n[7:] in _FW_BACKUP_CLIENT:
+                    target = os.path.join(stage, n[7:])
+                elif n.startswith('plugin_data/') and not n.endswith(('secrets.enc', 'secrets.key')):
+                    target = os.path.join(stage, n)
+                else:
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with z.open(n) as src, open(target, 'wb') as dst:
+                    dst.write(src.read())
+            import tempfile
+            tmp = tempfile.mkdtemp(prefix='moka_restore_')
+            for n in plugins:
+                p = os.path.join(tmp, os.path.basename(n))
+                with z.open(n) as src, open(p, 'wb') as dst:
+                    dst.write(src.read(1 << 20))
+                _moka_native('install_plugin_file', json.dumps({'path': p}))
+            _fw_private('Восстановление', 'Данные и настройки применятся при следующем запуске mokaGram. '
+                        'Плагины (%d) устанавливаются через обычное окно с правами, подтвердите каждый.' % len(plugins))
+        except BaseException as e:
+            _fw_private('Восстановление', 'Не вышло: %s' % e)
+    _fw_private('Восстановить из бэкапа?',
+                'В архиве плагинов: %d. Данные плагинов, настройки, заметки, сниппеты и фильтры заменят текущие '
+                '(старые файлы останутся рядом с суффиксом .bak). Плагины пройдут обычную установку с подтверждением прав.' % len(plugins),
+                [{'id': 'yes', 'text': 'Восстановить', 'style': 'red'}, {'id': 'no', 'text': 'Отмена', 'style': 'cancel'}], go)

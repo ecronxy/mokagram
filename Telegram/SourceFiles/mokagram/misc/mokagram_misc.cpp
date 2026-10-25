@@ -131,6 +131,15 @@ void RegisterSettings() {
 		.category = u"plugins"_q,
 	});
 	Settings::Register({
+		.key = u"plugins.autoupdate"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Команды плагинов")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Обновлять плагины из магазина")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Плагины из магазина обновляются сами раз в 12 часов, если новая версия не просит новых прав. Если просит, придёт подсказка открыть магазин.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = true,
+		.category = u"plugins"_q,
+	});
+	Settings::Register({
 		.key = u"plugins.dev_reload"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Команды плагинов")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Режим разработчика")),

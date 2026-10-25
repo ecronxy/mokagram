@@ -20,4 +20,8 @@ void StoreBox(
 	Window::SessionController *controller,
 	Fn<void()> changed);
 
+// Раз в 12 часов (первая проверка через 90 секунд после запуска) сверяет версии из магазина
+// и тихо обновляет плагины, если права не выросли; иначе подсказывает открыть магазин.
+void StartPluginAutoUpdate();
+
 } // namespace Mokagram::Plugins

@@ -520,6 +520,15 @@ std::string CallBadgeHook(const std::string &messageJson, LogFn log) {
 	return result;
 }
 
+void RestoreBackupFile(const std::string &path, LogFn log) {
+	if (!_started) {
+		return;
+	}
+	const auto gil = Gil();
+	CallStr("_moka_restore", { path });
+	Drain(log);
+}
+
 bool Invoke(
 		const std::string &pid,
 		const std::string &token,

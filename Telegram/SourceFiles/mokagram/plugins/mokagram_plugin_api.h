@@ -32,6 +32,9 @@ void TransformMessageText(
 [[nodiscard]] EntitiesInText EntitiesFromJsonArray(const QJsonArray &list, int textLength);
 [[nodiscard]] QJsonArray EntitiesToJsonArray(const EntitiesInText &list);
 
+// Применяет данные, подготовленные восстановлением из бэкапа (вызывается до загрузки настроек).
+void ApplyPendingRestore();
+
 // Открыт чат (событие chat_opened для плагинов).
 void EmitChatOpened(PeerData *peer);
 
