@@ -293,17 +293,41 @@ void Load() {
 
 } // namespace
 
+namespace {
+
+// Команда клиента по юзернейму (в нижнем регистре) и подпись под профилем.
+constexpr std::pair<const char*, const char*> kTeam[] = {
+	{ "litteraliy", "Maintainer mokaGram" },
+};
+
+[[nodiscard]] const char *TeamRole(not_null<UserData*> user) {
+	for (const auto &username : user->usernames()) {
+		const auto lower = username.toLower().toUtf8();
+		for (const auto &[name, role] : kTeam) {
+			if (lower == name) {
+				return role;
+			}
+		}
+	}
+	return nullptr;
+}
+
+} // namespace
+
 Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	Load();
 	const auto &state = Data();
 	const auto id = peerToUser(user->id).bare;
-	if (!state.users.contains(id) && !state.remote.contains(id)) {
+	const auto role = TeamRole(user);
+	if (!role && !state.users.contains(id) && !state.remote.contains(id)) {
 		return {};
 	}
 	return Ui::BotVerifyDetails{
 		.botId = UserId(0),
 		.iconId = state.icon,
-		.description = TextWithEntities{ QString::fromUtf8("Разработчик mokaGram") },
+		.description = TextWithEntities{
+			QString::fromUtf8(role ? role : "Разработчик mokaGram"),
+		},
 	};
 }
 

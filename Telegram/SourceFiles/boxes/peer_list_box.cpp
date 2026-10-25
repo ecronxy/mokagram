@@ -151,6 +151,10 @@ void PeerListBox::appendQueryChangedCallback(Fn<void(QString)> callback) {
 	_customQueryChangedCallback = std::move(callback);
 }
 
+Ui::RpWidget *PeerListBox::searchWrap() const {
+	return _select.data();
+}
+
 void PeerListBox::setAddedTopScrollSkip(int skip, bool aboveSearch) {
 	_addedTopScrollSkip = skip;
 	_addedTopScrollAboveSearch = aboveSearch;
@@ -1220,6 +1224,20 @@ PeerListContent::PeerListContent(
 	_repaintByStatus.setCallback([this] { update(); });
 }
 
+void PeerListContent::setRoundedRows(bool rounded) {
+	if (_roundedRows != rounded) {
+		_roundedRows = rounded;
+		update();
+	}
+}
+
+QRect PeerListContent::roundedRowRect(int outerWidth) const {
+	const auto sx = style::ConvertScale(8);
+	const auto sy = style::ConvertScale(2);
+	return QRect(0, 0, outerWidth, _rowHeight).marginsRemoved(
+		{ sx, sy, sx, sy });
+}
+
 void PeerListContent::setMode(Mode mode) {
 	if (mode == Mode::Default && _mode == Mode::Default) {
 		return;
@@ -1909,8 +1927,18 @@ void PeerListContent::mousePressEvent(QMouseEvent *e) {
 					std::move(updateCallback));
 			} else {
 				const auto maskGenerator = [&] {
-					return Ui::RippleAnimation::RectMask(
-						QSize(width(), _rowHeight));
+					const auto size = QSize(width(), _rowHeight);
+					if (_roundedRows) {
+						const auto pill = roundedRowRect(size.width());
+						const auto radius = pill.height() / 2.;
+						return Ui::RippleAnimation::MaskByDrawer(
+							size,
+							false,
+							[=](QPainter &p) {
+								p.drawRoundedRect(pill, radius, radius);
+							});
+					}
+					return Ui::RippleAnimation::RectMask(size);
 				};
 				row->addRipple(_st.item, maskGenerator, point, std::move(updateCallback));
 			}
@@ -2119,8 +2147,17 @@ void PeerListContent::paintRowContent(
 		}
 	});
 
-	// Mokagram: подсветка строки списка — скруглённая пилюля.
-	if (selected) {
+	if (_roundedRows) {
+		p.fillRect(0, 0, outerWidth, _rowHeight, st.button.textBg);
+		if (selected) {
+			const auto pill = roundedRowRect(outerWidth);
+			const auto radius = pill.height() / 2.;
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(bg);
+			p.drawRoundedRect(pill, radius, radius);
+		}
+	} else if (selected) {
 		p.fillRect(0, 0, outerWidth, _rowHeight, st.button.textBg);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);

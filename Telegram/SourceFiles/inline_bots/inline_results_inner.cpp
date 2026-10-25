@@ -238,7 +238,19 @@ void Inner::paintInlineItems(Painter &p, const QRect &r) {
 	context.pathGradient = _pathGradient.get();
 	context.pathGradient->startFrame(0, width(), width() / 2);
 
+	const auto selected = _mosaic.maybeItemAt(_selected);
 	auto paintItem = [&](not_null<const ItemBase*> item, QPoint point) {
+		if (item.get() == selected && item->isFullLine()) {
+			// Mokagram: подсветка строки скруглённой плашкой, как в меню.
+			const auto skip = st::inlineResultsRowOverSkip;
+			const auto radius = st::inlineResultsRowRadius;
+			const auto over = QRect(point, QSize(item->width(), item->height()))
+				.marginsAdded({ skip, 0, skip, 0 });
+			PainterHighQualityEnabler hq(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::emojiPanHover);
+			p.drawRoundedRect(over, radius, radius);
+		}
 		p.translate(point.x(), point.y());
 		item->paint(
 			p,

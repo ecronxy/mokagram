@@ -457,7 +457,8 @@ void Install(
 
 void ShowInstallBox(
 		Window::SessionController *controller,
-		const QByteArray &bytes) {
+		const QByteArray &bytes,
+		Fn<void()> installed = nullptr) {
 	const auto info = ParseInfo(bytes);
 	if (!info.error.isEmpty() || info.id.isEmpty()) {
 		controller->uiShow()->show(Ui::MakeInformBox(
@@ -467,20 +468,23 @@ void ShowInstallBox(
 				: (U("Не удалось прочитать плагин: ") + info.error)));
 		return;
 	}
-	auto installed = QString();
+	auto version = QString();
 	if (QFile::exists(TargetPath(info))) {
 		auto existing = QFile(TargetPath(info));
 		if (existing.open(QIODevice::ReadOnly)) {
-			installed = ParseInfo(existing.readAll()).version;
-			if (installed.isEmpty()) {
-				installed = U("(без номера)");
+			version = ParseInfo(existing.readAll()).version;
+			if (version.isEmpty()) {
+				version = U("(без номера)");
 			}
 		}
 	}
 	const auto weak = base::make_weak(controller);
 	controller->uiShow()->show(Box([=](not_null<Ui::GenericBox*> box) {
-		FillInstallBox(box, weak.get(), info, installed, [=] {
+		FillInstallBox(box, weak.get(), info, version, [=] {
 			Install(weak.get(), info, bytes);
+			if (installed) {
+				installed();
+			}
 		});
 	}));
 }
@@ -1104,8 +1108,8 @@ void PluginsBox(
 	if (list.isEmpty()) {
 		AddCenteredLabel(
 			content,
-			U("Плагинов пока нет. Отправьте себе файл .plugin "
-				"и нажмите на него в чате."),
+			U("Плагинов пока нет. Добавьте файл .plugin кнопкой ниже "
+				"или нажмите на него в чате."),
 			st::boxDividerLabel,
 			QMargins(24, 16, 24, 8));
 	}
@@ -1133,6 +1137,59 @@ void PluginsBox(
 			}));
 		}, reopen, log));
 	}
+
+	// Кнопка выбора файла .plugin с диска.
+	static const auto stAdd = [] {
+		auto result = st::defaultActiveButton;
+		result.height = 44;
+		result.textTop = 12;
+		result.radius = 22;
+		result.fullRadius = true;
+		return result;
+	}();
+	const auto addRow = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		QMargins(14, 8, 14, 0));
+	addRow->resize(addRow->width(), stAdd.height);
+	const auto add = Ui::CreateChild<Ui::RoundButton>(
+		addRow,
+		rpl::single(U("Добавить плагин")),
+		stAdd);
+	addRow->widthValue() | rpl::on_next([=](int width) {
+		add->setFullWidth(width);
+		add->moveToLeft(0, 0);
+	}, addRow->lifetime());
+	const auto weakBox = base::make_weak(box);
+	add->setClickedCallback([=] {
+		FileDialog::GetOpenPath(
+			box.get(),
+			U("Выберите плагин"),
+			U("Плагин mokaGram (*.plugin);;") + FileDialog::AllFilesFilter(),
+			crl::guard(box.get(), [=](FileDialog::OpenResult &&result) {
+				auto bytes = result.remoteContent;
+				if (bytes.isEmpty() && !result.paths.isEmpty()) {
+					auto file = QFile(result.paths.front());
+					if (file.open(QIODevice::ReadOnly)) {
+						bytes = file.readAll();
+					}
+				}
+				const auto strong = weak.get();
+				if (!strong) {
+					return;
+				}
+				if (bytes.isEmpty()) {
+					if (!result.paths.isEmpty()) {
+						strong->showToast(U("Не удалось прочитать файл плагина"));
+					}
+					return;
+				}
+				ShowInstallBox(strong, bytes, [=] {
+					if (weakBox) {
+						reopen();
+					}
+				});
+			}));
+	});
 	Ui::AddSkip(content, 14);
 
 	// Поиск: показывает поле вместо заголовка и скрывает неподходящие карточки.

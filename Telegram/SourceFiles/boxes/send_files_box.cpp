@@ -74,12 +74,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "styles/style_media_player.h"
+#include "styles/style_media_view.h"
 #include "styles/style_menu_icons.h"
 
 #include <QtCore/QMimeData>
@@ -728,8 +730,14 @@ SendFilesBox::SendFilesBox(QWidget*, SendFilesBoxDescriptor &&descriptor)
 , _st(descriptor.stOverride
 	? *descriptor.stOverride
 	: st::defaultComposeControls)
+, _moka(&_st != &st::storiesComposeControls)
+, _captionSt(_moka
+	? Mokagram::BoxParts::CardField(_st.files.caption)
+	: _st.files.caption)
 , _sendType(descriptor.sendType)
-, _titleHeight(st::boxTitleHeight)
+, _titleHeight(_moka
+	? (2 * 10 + Mokagram::BoxParts::kRoundSize)
+	: st::boxTitleHeight)
 , _list(std::move(descriptor.list))
 , _limits(descriptor.limits)
 , _sendMenuDetails(prepareSendMenuDetails(descriptor))
@@ -740,7 +748,7 @@ SendFilesBox::SendFilesBox(QWidget*, SendFilesBoxDescriptor &&descriptor)
 , _cancelledCallback(std::move(descriptor.cancelled))
 , _caption(
 	this,
-	_st.files.caption,
+	_captionSt,
 	Ui::InputField::Mode::MultiLine,
 	tr::lng_photo_caption())
 , _prefilledCaptionText(std::move(descriptor.caption))
@@ -918,6 +926,10 @@ void SendFilesBox::enqueueNextPrepare() {
 }
 
 void SendFilesBox::prepare() {
+	if (_moka) {
+		Mokagram::BoxParts::RoundLayer(this);
+		setStyle(Mokagram::BoxParts::PillButtonsBox());
+	}
 	initSendWay();
 	setupCaption();
 	setupSendWayControls();
@@ -1246,7 +1258,8 @@ void SendFilesBox::refreshButtons() {
 		(_sendType == Api::SendType::Normal
 			? tr::lng_send_button()
 			: tr::lng_create_group_next()),
-		[=] { send({}); });
+		[=] { send({}); },
+		(_moka ? Mokagram::BoxParts::PillActive() : st::defaultBoxButton));
 	refreshMessagesCount();
 
 	const auto ephemeralReply = _show->session().ephemeralMessages()
@@ -1267,17 +1280,28 @@ void SendFilesBox::refreshButtons() {
 			&_st.tabbed.menu,
 			&_st.tabbed.icons);
 	}
-	addButton(tr::lng_cancel(), [=] {
+	const auto cancel = [=] {
 		requestToTakeTextWithTags();
 		closeBox();
-	});
+	};
+	if (_moka) {
+		_mokaClose.reset(Mokagram::BoxParts::MakeRoundButton(
+			this,
+			Mokagram::BoxParts::RoundIcon::Close,
+			cancel));
+		_mokaClose->show();
+	} else {
+		addButton(tr::lng_cancel(), cancel);
+	}
 	_addFile = addLeftButton(
 		tr::lng_stickers_featured_add(),
 		base::fn_delayed(st::historyAttach.ripple.hideDuration, this, [=] {
 			openDialogToAddFileToAlbum();
-		}));
+		}),
+		(_moka ? Mokagram::BoxParts::PillLight() : st::defaultBoxButton));
 
 	addMenuButton();
+	updateControlsGeometry();
 }
 
 bool SendFilesBox::hasSendMenu(const MenuDetails &details) const {
@@ -1465,12 +1489,22 @@ QImage SendFilesBox::preparePriceTagBg(QSize size) const {
 }
 
 void SendFilesBox::addMenuButton() {
+	_mokaMenu = nullptr;
 	const auto details = _sendMenuDetails();
 	if (!hasSendMenu(details) && !canArchiveAll() && !hasArchives()) {
 		return;
 	}
 
-	const auto top = addTopButton(_st.files.menu);
+	const auto top = _moka
+		? Mokagram::BoxParts::MakeRoundButton(
+			this,
+			Mokagram::BoxParts::RoundIcon::Menu,
+			nullptr).get()
+		: addTopButton(_st.files.menu).data();
+	if (_moka) {
+		_mokaMenu.reset(top);
+		top->show();
+	}
 	top->setClickedCallback([=] {
 		const auto &tabbed = _st.tabbed;
 		_menu = base::make_unique_q<Ui::PopupMenu>(top, tabbed.menu);
@@ -2286,7 +2320,7 @@ void SendFilesBox::setupCaption() {
 			return show->paused(Window::GifPauseReason::Layer);
 		},
 		.allowPremiumEmoji = allow,
-		.fieldStyle = &_st.files.caption,
+		.fieldStyle = &_captionSt,
 	});
 	setupCaptionAutocomplete();
 	Ui::Emoji::SuggestionsController::Init(
@@ -2393,9 +2427,9 @@ void SendFilesBox::setupCaptionAutocomplete() {
 				st::defaultBox.margin.top(),
 				width(),
 				(field.y()
-					+ _st.files.caption.textMargins.top()
-					+ _st.files.caption.placeholderShift
-					+ _st.files.caption.placeholderFont->height
+					+ _captionSt.textMargins.top()
+					+ _captionSt.placeholderShift
+					+ _captionSt.placeholderFont->height
 					- st::defaultBox.margin.top())));
 		});
 	};
@@ -2663,10 +2697,21 @@ void SendFilesBox::refreshTitleText() {
 			? tr::lng_send_video(tr::now)
 			: tr::lng_send_file(tr::now);
 	}
-	_titleHeight = st::boxTitleHeight;
+	_titleHeight = _moka
+		? (2 * 10 + Mokagram::BoxParts::kRoundSize)
+		: st::boxTitleHeight;
 }
 
 void SendFilesBox::updateBoxSize() {
+	if (_moka) {
+		auto footerHeight = _replyHeaderHeight.current()
+			- layoutMokaOptions(0, false);
+		if (!_caption->isHidden()) {
+			footerHeight += st::boxPhotoCaptionSkip + _caption->height();
+		}
+		_footerHeight = footerHeight;
+		return;
+	}
 	auto footerHeight = 0;
 	if (!_caption->isHidden()) {
 		footerHeight += st::boxPhotoCaptionSkip + _caption->height();
@@ -2706,7 +2751,32 @@ void SendFilesBox::keyPressEvent(QKeyEvent *e) {
 void SendFilesBox::paintEvent(QPaintEvent *e) {
 	BoxContent::paintEvent(e);
 
-	if (!_titleText.isEmpty()) {
+	if (_moka) {
+		auto p = QPainter(this);
+		if (!_caption->isHidden()) {
+			Mokagram::BoxParts::PaintCard(p, _caption->geometry());
+		}
+		if (!_mokaOptionsCard.isEmpty()) {
+			Mokagram::BoxParts::PaintCard(p, _mokaOptionsCard);
+			auto line = st::windowSubTextFg->c;
+			line.setAlpha(40);
+			for (const auto y : _mokaDividers) {
+				p.fillRect(
+					_mokaOptionsCard.x() + 16,
+					y,
+					_mokaOptionsCard.width() - 16,
+					st::lineWidth,
+					line);
+			}
+		}
+		p.setFont(st::boxTitleFont);
+		p.setPen(getDelegate()->style().title.textFg);
+		const auto side = 2 * (10 + Mokagram::BoxParts::kRoundSize + 8);
+		p.drawText(
+			QRect(side / 2, 0, width() - side, _titleHeight.current()),
+			Qt::AlignCenter,
+			st::boxTitleFont->elided(_titleText, width() - side));
+	} else if (!_titleText.isEmpty()) {
 		Painter p(this);
 
 		p.setFont(st::boxTitleFont);
@@ -2726,7 +2796,30 @@ void SendFilesBox::resizeEvent(QResizeEvent *e) {
 
 void SendFilesBox::updateControlsGeometry() {
 	auto bottom = height();
-	if (!_caption->isHidden()) {
+	if (_mokaClose) {
+		_mokaClose->moveToLeft(10, 10);
+	}
+	if (_mokaMenu) {
+		_mokaMenu->moveToRight(10, 10);
+	}
+	if (_moka && !_caption->isHidden()) {
+		using namespace Mokagram::BoxParts;
+		_caption->resize(width() - 2 * kOuterSide, _caption->height());
+		_caption->moveToLeft(kOuterSide, bottom - _caption->height());
+		bottom -= st::boxPhotoCaptionSkip + _caption->height();
+		if (_emojiToggle) {
+			_emojiToggle->moveToLeft(
+				_caption->x() + _caption->width() - 8 - _emojiToggle->width(),
+				_caption->y()
+					+ (_captionSt.heightMin - _emojiToggle->height()) / 2);
+			_emojiToggle->update();
+		}
+		if (_aiButton) {
+			Ui::UpdateCaptionAiButtonGeometry(_aiButton, _caption.data());
+			_aiButton->raise();
+		}
+		update();
+	} else if (!_caption->isHidden()) {
 		_caption->resize(st::sendMediaPreviewSize, _caption->height());
 		_caption->moveToLeft(
 			st::boxPhotoPadding.left(),
@@ -2752,9 +2845,12 @@ void SendFilesBox::updateControlsGeometry() {
 		{ _sendImagesAsPhotos.data(), st::boxPhotoCompressedSkip },
 		{ _wayRemember.data(), st::boxPhotoCompressedSkip },
 	} };
+	if (_moka) {
+		bottom = layoutMokaOptions(bottom, true);
+	}
 	for (const auto &pair : ranges::views::reverse(pairs)) {
 		const auto pointer = pair.first;
-		if (pointer && !pointer->isHidden()) {
+		if (!_moka && pointer && !pointer->isHidden()) {
 			pointer->moveToLeft(
 				st::boxPhotoPadding.left(),
 				bottom - pointer->heightNoMargins());
@@ -2769,6 +2865,60 @@ void SendFilesBox::updateControlsGeometry() {
 	}
 	_scroll->resize(width(), bottom - replyTop - replyH);
 	_scroll->move(0, replyTop + replyH);
+}
+
+int SendFilesBox::layoutMokaOptions(int bottom, bool apply) {
+	using namespace Mokagram::BoxParts;
+	constexpr auto kPad = 14;
+	const auto left = kOuterSide + 16;
+	const auto place = [&](not_null<Ui::RpWidget*> widget) {
+		if (apply) {
+			widget->moveToLeft(left, bottom - widget->heightNoMargins());
+		}
+		bottom -= widget->heightNoMargins();
+	};
+	if (apply) {
+		_mokaOptionsCard = QRect();
+		_mokaDividers.clear();
+	}
+	const auto options = std::array<Ui::RpWidget*, 3>{
+		_wayRemember.data(),
+		_sendImagesAsPhotos.data(),
+		_groupFiles.data(),
+	};
+	auto cardBottom = -1;
+	for (const auto option : options) {
+		if (!option || option->isHidden()) {
+			continue;
+		}
+		if (cardBottom < 0) {
+			cardBottom = bottom;
+			bottom -= kPad;
+		} else {
+			bottom -= kPad;
+			if (apply) {
+				_mokaDividers.push_back(bottom);
+			}
+			bottom -= kPad;
+		}
+		place(option);
+	}
+	if (cardBottom >= 0) {
+		bottom -= kPad;
+		if (apply) {
+			_mokaOptionsCard = QRect(
+				kOuterSide,
+				bottom,
+				width() - 2 * kOuterSide,
+				cardBottom - bottom);
+		}
+		bottom -= st::boxPhotoCaptionSkip;
+	}
+	if (_hintLabel && !_hintLabel->isHidden()) {
+		place(_hintLabel.data());
+		bottom -= st::boxPhotoCaptionSkip;
+	}
+	return bottom;
 }
 
 void SendFilesBox::showFinished() {

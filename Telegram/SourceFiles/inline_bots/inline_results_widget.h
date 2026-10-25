@@ -9,7 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "ui/rp_widget.h"
 #include "ui/abstract_button.h"
-#include "ui/cached_round_corners.h"
 #include "ui/widgets/tooltip.h"
 #include "ui/effects/animations.h"
 #include "ui/effects/panel_animation.h"
@@ -97,13 +96,9 @@ private:
 	// Rounded rect which has shadow around it.
 	QRect innerRect() const;
 
-	// Inner rect with removed st::roundRadiusSmall from top and bottom.
-	// This one is allowed to be not rounded.
-	QRect horizontalRect() const;
-
-	// Inner rect with removed st::roundRadiusSmall from left and right.
-	// This one is allowed to be not rounded.
-	QRect verticalRect() const;
+	// Inner rect with st::inlineResultsPanelSkip removed from top and
+	// bottom, so the scrolled content stays inside the rounded corners.
+	QRect scrollRect() const;
 
 	QImage grabForPanelAnimation();
 	void startShowAnimation();
@@ -145,7 +140,6 @@ private:
 
 	object_ptr<Ui::ScrollArea> _scroll;
 	QPointer<Inner> _inner;
-	Ui::CornersPixmaps _innerRounding;
 
 	std::map<QString, std::unique_ptr<CacheEntry>> _inlineCache;
 	base::Timer _inlineRequestTimer;

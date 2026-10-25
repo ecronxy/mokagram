@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/misc/mokagram_misc.h"
+#include "mokagram/update/mokagram_update.h"
 
 #include "data/data_abstract_structure.h"
 #include "data/data_channel.h"
@@ -349,6 +350,8 @@ void Application::run() {
 	Mokagram::Scam::RegisterSettings();
 	Mokagram::Avatar::RegisterSettings();
 	Mokagram::Commands::RegisterSettings();
+	Mokagram::Update::RegisterSettings();
+	Mokagram::Update::Start();
 	Mokagram::Settings::StartDebugCommands();
 	Mokagram::Plugins::Start([](const std::string &line) {
 		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));

@@ -245,6 +245,8 @@ private:
 	ClickHandlerPtr _link;
 
 	mutable QPixmap _thumb;
+	mutable QPixmap _thumbRounded;
+	mutable qint64 _thumbRoundedKey = 0;
 	mutable std::shared_ptr<Data::DocumentMedia> _documentMedia;
 	Ui::Text::String _title, _description;
 	QString _duration;
@@ -426,6 +428,8 @@ private:
 
 	bool _withThumb;
 	mutable QPixmap _thumb;
+	mutable QPixmap _thumbRounded;
+	mutable qint64 _thumbRoundedKey = 0;
 	Ui::Text::String _title, _description;
 	QString _thumbLetter, _urlText;
 	int32 _urlWidth = 0;
