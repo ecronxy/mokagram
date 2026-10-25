@@ -800,14 +800,10 @@ struct IconState {
 			p.drawLine(QPointF(17, 17), QPointF(31, 31));
 			p.drawLine(QPointF(31, 17), QPointF(17, 31));
 		} else if (kind == 2) {
-			p.drawLine(QPointF(24, 15), QPointF(24, 33));
+			// Бургер: три полоски.
+			p.drawLine(QPointF(15, 17.5), QPointF(33, 17.5));
 			p.drawLine(QPointF(15, 24), QPointF(33, 24));
-		} else if (kind == 3) {
-			// Каталог: четыре плитки.
-			p.drawRoundedRect(QRectF(15, 15, 7.5, 7.5), 2, 2);
-			p.drawRoundedRect(QRectF(25.5, 15, 7.5, 7.5), 2, 2);
-			p.drawRoundedRect(QRectF(15, 25.5, 7.5, 7.5), 2, 2);
-			p.drawRoundedRect(QRectF(25.5, 25.5, 7.5, 7.5), 2, 2);
+			p.drawLine(QPointF(15, 30.5), QPointF(33, 30.5));
 		} else {
 			p.drawEllipse(QPointF(22.5, 22.5), 7.5, 7.5);
 			p.drawLine(QPointF(28, 28), QPointF(34, 34));
@@ -1046,8 +1042,7 @@ void PluginsBox(
 		true,
 		[=] { box->closeBox(); });
 	const auto searchButton = MakeRoundButton(header, 0, nullptr);
-	const auto addButton = MakeRoundButton(header, 2, nullptr);
-	const auto storeButton = MakeRoundButton(header, 3, nullptr);
+	const auto menuButton = MakeRoundButton(header, 2, nullptr);
 	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
 		header,
 		U("Плагины"),
@@ -1085,11 +1080,8 @@ void PluginsBox(
 		searchButton->move(
 			width - searchButton->width(),
 			(header->height() - searchButton->height()) / 2);
-		addButton->move(
-			searchButton->x() - 8 - addButton->width(),
-			searchButton->y());
-		storeButton->move(
-			addButton->x() - 8 - storeButton->width(),
+		menuButton->move(
+			searchButton->x() - 8 - menuButton->width(),
 			searchButton->y());
 		headerTitle->move(
 			(width - headerTitle->width()) / 2,
@@ -1164,7 +1156,7 @@ void PluginsBox(
 	}
 
 	const auto weakBox = base::make_weak(box);
-	addButton->setClickedCallback([=] {
+	const auto pickPlugin = [=] {
 		FileDialog::GetOpenPath(
 			box.get(),
 			U("Выберите плагин"),
@@ -1193,11 +1185,20 @@ void PluginsBox(
 					}
 				});
 			}));
-	});
-	storeButton->setClickedCallback([=] {
+	};
+	const auto openStore = [=] {
 		if (const auto strong = weak.get()) {
 			strong->show(Box(StoreBox, strong, reopen));
 		}
+	};
+	const auto menu = std::make_shared<base::unique_qptr<Ui::PopupMenu>>();
+	menuButton->setClickedCallback([=] {
+		*menu = base::make_unique_q<Ui::PopupMenu>(
+			menuButton,
+			st::popupMenuWithIcons);
+		(*menu)->addAction(U("Добавить плагин"), pickPlugin, &st::menuIconAdd);
+		(*menu)->addAction(U("Магазин плагинов"), openStore, &st::menuIconShop);
+		(*menu)->popup(QCursor::pos());
 	});
 	Ui::AddSkip(content, 14);
 
@@ -1217,8 +1218,7 @@ void PluginsBox(
 	searchButton->setClickedCallback([=] {
 		*searching = !*searching;
 		headerTitle->setVisible(!*searching);
-		addButton->setVisible(!*searching);
-		storeButton->setVisible(!*searching);
+		menuButton->setVisible(!*searching);
 		pill->setVisible(*searching);
 		field->setVisible(*searching);
 		field->raise();
