@@ -2578,6 +2578,24 @@ void StartDebugCommands() {
 					Quote::ShowQuoteBox(controller, std::move(ids));
 				}
 			}
+		} else if (cmd.startsWith(u"wheel:"_q)) {
+			const auto parts = cmd.mid(6).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt = QPoint(parts[0].toInt(), parts[1].toInt());
+			while (const auto child = w->childAt(pt)) {
+				pt = child->mapFrom(w, pt);
+				w = child;
+			}
+			auto e = QWheelEvent(
+				QPointF(pt),
+				QPointF(w->mapToGlobal(pt)),
+				QPoint(),
+				QPoint(0, parts[2].toInt()),
+				Qt::NoButton,
+				Qt::NoModifier,
+				Qt::NoScrollPhase,
+				false);
+			QCoreApplication::sendEvent(w, &e);
 		} else if (cmd.startsWith(u"mdrag:"_q)) {
 			const auto parts = cmd.mid(6).split(',');
 			auto w = (QWidget*)controller->widget();
