@@ -439,7 +439,7 @@ void MokagramSettings::setupContent() {
 			.title = rpl::single(QString::fromUtf8("Быстрые команды")),
 			.icon = { &st::menuIconChats },
 			.onClick = [=] {
-				Mokagram::Commands::ShowCommandsBox(controller);
+				Mokagram::Settings::ShowCommandsPage(controller);
 			},
 			.keywords = { u"commands"_q, u"alias"_q, u"mute"_q, u"ban"_q },
 		});

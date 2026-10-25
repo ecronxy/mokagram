@@ -51,4 +51,7 @@ void StartDebugCommands();
 // Грузит набор значков заранее, чтобы к открытию настроек он уже был.
 void PreloadRowIcons(not_null<Main::Session*> session);
 
+// Страница «Быстрые команды» в настройках mokaGram.
+void ShowCommandsPage(Window::SessionController *controller);
+
 } // namespace Mokagram::Settings

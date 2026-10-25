@@ -53,6 +53,7 @@
 #include "core/file_utilities.h"
 #include "settings.h"
 #include "ui/abstract_button.h"
+#include "mokagram/commands/mokagram_commands.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/effects/animations.h"
 #include "ui/effects/ripple_animation.h"
@@ -1882,6 +1883,238 @@ void CustomizeBox(
 void ShowCustomizeBox(Window::SessionController *controller) {
 	if (controller) {
 		controller->show(Box(CustomizeBox, controller));
+	}
+}
+
+namespace {
+
+struct CommandInfo {
+	const char *name;
+	const char *note;
+	const style::icon *icon;
+	QColor color;
+};
+
+void CommandsPage(
+		not_null<Ui::GenericBox*> box,
+		Window::SessionController *controller) {
+	RoundedNoButtons(box);
+	const auto content = box->verticalLayout();
+	const auto toast = [weak = base::make_weak(controller)](const QString &text) {
+		if (const auto strong = weak.get()) {
+			strong->showToast(text);
+		}
+	};
+
+	const auto pinned = box->setPinnedToTopContent(
+		object_ptr<Ui::VerticalLayout>(box));
+	const auto header = pinned->add(
+		object_ptr<Ui::RpWidget>(pinned),
+		QMargins(10, 10, 10, 8));
+	header->resize(header->width(), 40);
+	const auto close = MakeRoundButton(
+		header,
+		true,
+		[=] { box->closeBox(); });
+	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
+		header,
+		U("Быстрые команды"),
+		st::boxTitle);
+	header->widthValue() | rpl::on_next([=](int width) {
+		close->move(0, (header->height() - close->height()) / 2);
+		headerTitle->move(
+			(width - headerTitle->width()) / 2,
+			(header->height() - headerTitle->height()) / 2);
+	}, header->lifetime());
+
+	const auto body = content->add(object_ptr<Ui::VerticalLayout>(content));
+	const auto build = std::make_shared<Fn<void()>>();
+	const auto addHead = [=](const QString &text) {
+		const auto head = body->add(
+			object_ptr<Ui::RpWidget>(body),
+			QMargins(kOuterSide, 16, kOuterSide, 0));
+		head->resize(head->width(), 28);
+		const auto label = Ui::CreateChild<Ui::FlatLabel>(
+			head,
+			text.toUpper(),
+			HeadLabelStyle());
+		MakeTransparent(label);
+		label->move(kPad, 6);
+	};
+	const auto addCard = [=] {
+		const auto wrap = body->add(
+			object_ptr<Ui::VerticalLayout>(body),
+			QMargins(kOuterSide, 0, kOuterSide, 0));
+		PaintGroupBg(wrap);
+		return wrap;
+	};
+	const auto note = [=](const QString &text) {
+		const auto label = body->add(
+			object_ptr<Ui::FlatLabel>(
+				body,
+				text,
+				TextLabelStyle()),
+			QMargins(kOuterSide + kPad, 6, kOuterSide + kPad, 0));
+		Q_UNUSED(label);
+	};
+
+	*build = [=] {
+		body->clear();
+		const auto green = QColor(0x34, 0xC7, 0x59);
+		const auto blue = QColor(0x0A, 0x84, 0xFF);
+		const auto red = QColor(0xFF, 0x45, 0x3A);
+		const auto orange = QColor(0xFF, 0x9F, 0x0A);
+		const auto purple = QColor(0xAF, 0x52, 0xDE);
+		const auto gray = QColor(0x8E, 0x8E, 0x93);
+
+		// Включение.
+		const auto enabled = Settings::Bool(u"commands.enabled"_q);
+		{
+			const auto card = addCard();
+			AddActionRow(
+				card,
+				enabled ? U("Команды включены") : U("Команды выключены"),
+				U("Нажми, чтобы переключить. Команда срабатывает, только если в поле ввода больше ничего нет."),
+				st::menuIconChats,
+				enabled ? green : gray,
+				true,
+				[=] {
+					Settings::SetBool(u"commands.enabled"_q, !enabled);
+					(*build)();
+				});
+		}
+
+		addHead(U("Команды"));
+		const auto commands = std::vector<CommandInfo>{
+			{ ".mute [30m|2h|1d]", "Заглушить чат. Ответом в группе: запретить человеку писать", &st::menuIconMute, orange },
+			{ ".unmute", "Включить звук чата или снять запрет писать", &st::menuIconUnmute, orange },
+			{ ".ban", "Исключить человека (ответом в группе) или заблокировать в личке", &st::menuIconBlock, red },
+			{ ".unban", "Снять бан или разблокировать человека", &st::menuIconBlock, green },
+			{ ".kick", "Исключить без вечного бана, можно вернуться (ответом)", &st::menuIconRemove, red },
+			{ ".del", "Удалить сообщение, на которое ответил", &st::menuIconDelete, red },
+			{ ".del N", "Удалить свои последние N сообщений (ответом: N сообщений человека)", &st::menuIconDelete, red },
+			{ ".del all", "Ответом: удалить все сообщения человека. Без ответа: все твои загруженные", &st::menuIconDelete, red },
+			{ ".pin", "Закрепить сообщение (ответом)", &st::menuIconPin, blue },
+			{ ".unpin", "Открепить сообщение (ответом)", &st::menuIconUnpin, blue },
+			{ ".id", "Показать ID автора, чата и сообщения, ссылку на сообщение", &st::menuIconInfo, purple },
+			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple },
+		};
+		{
+			const auto card = addCard();
+			for (auto i = 0; i != int(commands.size()); ++i) {
+				const auto &c = commands[i];
+				const auto name = QString::fromUtf8(c.name);
+				AddActionRow(
+					card,
+					name,
+					U(c.note),
+					*c.icon,
+					c.color,
+					(i == 0),
+					[=] {
+						QGuiApplication::clipboard()->setText(
+							name.section(' ', 0, 0));
+						toast(U("Скопировано: ") + name.section(' ', 0, 0));
+					});
+			}
+		}
+		note(U("Нажми на команду, чтобы скопировать её."));
+
+		addHead(U("Алиасы"));
+		{
+			const auto card = addCard();
+			const auto aliases = Mokagram::Commands::Aliases();
+			auto first = true;
+			for (const auto &[alias, command] : aliases) {
+				AddActionRow(
+					card,
+					U(".") + alias,
+					U("то же, что .") + command + U(". Нажми, чтобы удалить."),
+					st::menuIconRemove,
+					gray,
+					first,
+					[=] {
+						auto list = Mokagram::Commands::Aliases();
+						list.erase(
+							std::remove_if(
+								list.begin(),
+								list.end(),
+								[&](const auto &pair) {
+									return pair.first == alias;
+								}),
+							list.end());
+						Mokagram::Commands::SetAliases(list);
+						(*build)();
+					});
+				first = false;
+			}
+			AddActionRow(
+				card,
+				U("Добавить алиас"),
+				U("Своё короткое имя для команды, например rm для .del"),
+				st::menuIconAdd,
+				blue,
+				first,
+				[=] {
+					controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
+						inner->setTitle(rpl::single(U("Новый алиас")));
+						inner->setWidth(360);
+						const auto layout = inner->verticalLayout();
+						const auto nameField = layout->add(
+							object_ptr<Ui::InputField>(
+								layout,
+								st::defaultInputField,
+								rpl::single(U("Имя, например rm")),
+								QString()),
+							QMargins(22, 10, 22, 4));
+						const auto commandField = layout->add(
+							object_ptr<Ui::InputField>(
+								layout,
+								st::defaultInputField,
+								rpl::single(U("Команда: ")
+									+ Mokagram::Commands::CommandNames().join(u", "_q)),
+								QString()),
+							QMargins(22, 4, 22, 10));
+						inner->setFocusCallback([=] {
+							nameField->setFocusFast();
+						});
+						inner->addButton(rpl::single(U("Добавить")), [=] {
+							auto alias = nameField->getLastText().trimmed().toLower();
+							auto command = commandField->getLastText().trimmed().toLower();
+							while (alias.startsWith('.')) {
+								alias = alias.mid(1);
+							}
+							while (command.startsWith('.')) {
+								command = command.mid(1);
+							}
+							if (alias.isEmpty()
+								|| alias.contains(QRegularExpression(u"[^\\p{L}\\d_]"_q))
+								|| !Mokagram::Commands::CommandNames().contains(command)) {
+								toast(U("Нужны имя из букв и цифр и существующая команда"));
+								return;
+							}
+							auto list = Mokagram::Commands::Aliases();
+							list.emplace_back(alias, command);
+							Mokagram::Commands::SetAliases(list);
+							inner->closeBox();
+							(*build)();
+						});
+						inner->addButton(rpl::single(U("Отмена")), [=] {
+							inner->closeBox();
+						});
+					}));
+				});
+		}
+		Ui::AddSkip(body, 16);
+	};
+	(*build)();
+}
+
+} // namespace
+
+void ShowCommandsPage(Window::SessionController *controller) {
+	if (controller) {
+		controller->show(Box(CommandsPage, controller));
 	}
 }
 

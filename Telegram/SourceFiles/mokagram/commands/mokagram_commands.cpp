@@ -472,55 +472,20 @@ bool Handle(
 	return true;
 }
 
-void ShowCommandsBox(not_null<Window::SessionController*> controller) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(U("Быстрые команды")));
-		box->setWidth(440);
-		const auto content = box->verticalLayout();
-		const auto enabled = content->add(
-			object_ptr<Ui::Checkbox>(
-				content,
-				U("Включить команды"),
-				S::Bool(u"commands.enabled"_q),
-				st::defaultCheckbox),
-			QMargins(22, 10, 22, 6));
-		enabled->checkedChanges() | rpl::on_next([=](bool on) {
-			S::SetBool(u"commands.enabled"_q, on);
-		}, enabled->lifetime());
-		content->add(
-			object_ptr<Ui::FlatLabel>(
-				content,
-				U("Напиши в поле ввода только команду и отправь: сообщение не уйдёт, команда выполнится."),
-				st::boxLabel),
-			QMargins(22, 4, 22, 8));
-		Ui::AddSubsectionTitle(content, rpl::single(U("Команды")));
-		content->add(
-			object_ptr<Ui::FlatLabel>(
-				content,
-				CommandsHelp(),
-				st::boxLabel),
-			QMargins(22, 4, 22, 8));
-		Ui::AddSubsectionTitle(content, rpl::single(U("Алиасы")));
-		content->add(
-			object_ptr<Ui::FlatLabel>(
-				content,
-				U("Свои короткие имена. По одной строке: имя = команда, например rm = del."),
-				st::boxLabel),
-			QMargins(22, 4, 22, 4));
-		const auto field = content->add(
-			object_ptr<Ui::InputField>(
-				content,
-				st::defaultInputField,
-				Ui::InputField::Mode::MultiLine,
-				rpl::single(U("Алиасы")),
-				S::String(u"commands.aliases"_q)),
-			QMargins(22, 4, 22, 8));
-		box->addButton(rpl::single(U("Сохранить")), [=] {
-			S::SetString(u"commands.aliases"_q, field->getLastText());
-			box->closeBox();
-		});
-		box->addButton(rpl::single(U("Закрыть")), [=] { box->closeBox(); });
-	}));
+std::vector<std::pair<QString, QString>> Aliases() {
+	return ParseAliases(S::String(u"commands.aliases"_q));
+}
+
+void SetAliases(const std::vector<std::pair<QString, QString>> &list) {
+	auto lines = QStringList();
+	for (const auto &[alias, command] : list) {
+		lines.push_back(alias + u" = "_q + command);
+	}
+	S::SetString(u"commands.aliases"_q, lines.join('\n'));
+}
+
+QStringList CommandNames() {
+	return KnownCommands();
 }
 
 } // namespace Mokagram::Commands

@@ -4,6 +4,9 @@
 #include "base/basic_types.h"
 #include "data/data_msg_id.h"
 
+#include <QtCore/QStringList>
+#include <vector>
+
 struct TextWithTags;
 class History;
 
@@ -22,7 +25,9 @@ void RegisterSettings();
 	const TextWithTags &text,
 	FullReplyTo replyTo);
 
-// Окно со списком команд и алиасами (кнопка в настройках mokaGram).
-void ShowCommandsBox(not_null<Window::SessionController*> controller);
+// Алиасы: пары (имя, команда) без точки.
+[[nodiscard]] std::vector<std::pair<QString, QString>> Aliases();
+void SetAliases(const std::vector<std::pair<QString, QString>> &list);
+[[nodiscard]] QStringList CommandNames();
 
 } // namespace Mokagram::Commands
