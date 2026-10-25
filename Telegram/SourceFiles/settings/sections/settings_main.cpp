@@ -462,6 +462,15 @@ void MokagramSettings::setupContent() {
 			.keywords = { u"history"_q, u"mokagram"_q },
 		});
 		builder.addButton({
+			.id = u"main/chats"_q,
+			.title = rpl::single(QString::fromUtf8("Чаты")),
+			.icon = { &st::menuIconChatBubble },
+			.onClick = [=] {
+				Mokagram::Settings::ShowSettingsPage(controller, u"chats"_q);
+			},
+			.keywords = { u"chats"_q, u"mokagram"_q },
+		});
+		builder.addButton({
 			.id = u"main/music"_q,
 			.title = rpl::single(QString::fromUtf8("Музыка")),
 			.icon = { &st::menuIconUnmute },

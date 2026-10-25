@@ -32,7 +32,7 @@ void CustomizeBox(
 	QString page = u"look"_q);
 
 void ShowCustomizeBox(Window::SessionController *controller);
-// Страницы: privacy, security, history, music, system, tools (look = Кастомизация).
+// Страницы: privacy, security, history, chats, music, system, tools (look = Кастомизация).
 void ShowSettingsPage(
 	Window::SessionController *controller,
 	const QString &page);

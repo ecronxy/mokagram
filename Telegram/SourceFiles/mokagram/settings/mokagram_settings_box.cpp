@@ -1360,8 +1360,11 @@ void PaintGroupBg(not_null<Ui::RpWidget*> card) {
 		return u"history"_q;
 	} else if (starts({ "player.", "lyrics." })) {
 		return u"music"_q;
-	} else if (starts({ "lag.", "misc.ping" })) {
+	} else if (starts({ "lag.", "misc.ping" })
+		|| group.name == U("Аккаунты")) {
 		return u"system"_q;
+	} else if (starts({ "chats.", "fx." })) {
+		return u"chats"_q;
 	} else if (starts({ "misc.stars", "quote." })) {
 		return u"tools"_q;
 	}
@@ -1374,6 +1377,7 @@ void PaintGroupBg(not_null<Ui::RpWidget*> card) {
 	if (page == u"history"_q) return U("Удалёнки");
 	if (page == u"music"_q) return U("Музыка");
 	if (page == u"system"_q) return U("Система");
+	if (page == u"chats"_q) return U("Чаты");
 	if (page == u"tools"_q) return U("Инструменты");
 	return U("Кастомизация");
 }
@@ -1597,7 +1601,8 @@ void CustomizeBox(
 			content,
 			object_ptr<Ui::VerticalLayout>(content),
 			QMargins(kOuterSide, 0, kOuterSide, 0)));
-	actionsWrap->toggle(true, anim::type::instant);
+	// Экспорт, импорт и сброс живут на странице «Система».
+	actionsWrap->toggle(page == u"system"_q, anim::type::instant);
 	{
 		const auto inner = actionsWrap->entity();
 		const auto head = inner->add(
