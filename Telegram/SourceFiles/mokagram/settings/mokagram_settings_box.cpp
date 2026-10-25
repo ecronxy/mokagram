@@ -2089,7 +2089,7 @@ void StartDebugCommands() {
 				if (dynamic_cast<HistoryInner*>(child)) inner = child;
 			}
 			if (inner) {
-				const auto dpr = inner->devicePixelRatioF();
+				const auto dpr = std::max(2., inner->devicePixelRatioF());
 				auto image = QImage(QSize(inner->width(), 190) * dpr, QImage::Format_ARGB32_Premultiplied);
 				image.setDevicePixelRatio(dpr);
 				image.fill(Qt::transparent);
@@ -2098,6 +2098,27 @@ void StartDebugCommands() {
 				rows.push_back(std::move(image));
 				Quote::ShowQuoteBox(controller, std::move(rows), {});
 			}
+		} else if (cmd.startsWith(u"mdrag:"_q)) {
+			const auto parts = cmd.mid(6).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt1 = QPoint(parts[0].toInt(), parts[1].toInt());
+			auto pt2 = QPoint(parts[2].toInt(), parts[3].toInt());
+			auto pos = pt1;
+			while (const auto child = w->childAt(pos)) {
+				pos = child->mapFrom(w, pos);
+				w = child;
+			}
+			const auto global1 = w->mapToGlobal(pos);
+			const auto delta = pt2 - pt1;
+			const auto send = [&](QEvent::Type type, QPoint p, Qt::MouseButton b, Qt::MouseButtons bs) {
+				auto e = QMouseEvent(type, QPointF(p), QPointF(w->mapToGlobal(p)), b, bs, Qt::NoModifier);
+				QCoreApplication::sendEvent(w, &e);
+			};
+			send(QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
+			send(QEvent::MouseMove, pos + delta / 2, Qt::NoButton, Qt::LeftButton);
+			send(QEvent::MouseMove, pos + delta, Qt::NoButton, Qt::LeftButton);
+			send(QEvent::MouseButtonRelease, pos + delta, Qt::LeftButton, Qt::NoButton);
+			Q_UNUSED(global1);
 		} else if (cmd == u"starsstats"_q) {
 			Stars::ShowSpendingStatsBox();
 		} else if (cmd == u"ping"_q) {

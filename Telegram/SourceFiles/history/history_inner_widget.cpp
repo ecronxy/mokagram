@@ -3755,7 +3755,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 									clearSelected();
 									repaint();
 								}
-								const auto dpr = devicePixelRatioF();
+								const auto dpr = std::max(2., devicePixelRatioF());
 								for (const auto item : items) {
 									const auto view = viewByItem(item);
 									if (!view) {

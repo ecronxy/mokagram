@@ -22,6 +22,7 @@
 #include "styles/style_widgets.h"
 
 #include <QtCore/QDateTime>
+#include <QtCore/QFile>
 #include <QtCore/QDir>
 #include <QtCore/QStandardPaths>
 #include <QtGui/QClipboard>
@@ -364,6 +365,9 @@ struct MaskRect {
 	if (content.isNull()) {
 		return content;
 	}
+	// Рисуем в пикселях, поэтому масштаб экрана на время снимаем.
+	const auto dpr = content.devicePixelRatio();
+	content.setDevicePixelRatio(1.);
 	auto p = QPainter(&content);
 	p.setRenderHint(QPainter::Antialiasing);
 	for (const auto &m : masks) {
@@ -387,6 +391,8 @@ struct MaskRect {
 		p.drawImage(r.topLeft(), Masked(part, m.mask));
 		p.setCompositionMode(QPainter::CompositionMode_SourceOver);
 	}
+	p.end();
+	content.setDevicePixelRatio(dpr);
 	return content;
 }
 
@@ -395,10 +401,10 @@ struct Composed {
 	QRectF content; // где в итоге лежат сообщения (пиксели итога)
 };
 
-[[nodiscard]] Composed Compose(const QImage &content, int gradient, int cardMode, int outer, bool shadow, bool dots) {
+[[nodiscard]] Composed Compose(const QImage &content, int gradient, int cardMode, int outer, bool shadow) {
 	const auto dpr = std::max(1., content.devicePixelRatio());
 	const auto innerPad = int(22 * dpr);
-	const auto dotsH = dots ? int(34 * dpr) : 0;
+	const auto dotsH = 0;
 	const auto pad = int(outer * dpr);
 	const auto cardW = content.width() + innerPad * 2;
 	const auto cardH = content.height() + innerPad * 2 + dotsH;
@@ -442,16 +448,9 @@ struct Composed {
 		p.setPen(Qt::NoPen);
 		p.setBrush(cardMode == 0 ? QColor(0x0e, 0x16, 0x21) : QColor(0xe9, 0xee, 0xf2));
 		p.drawRoundedRect(card, radius, radius);
-		if (dots) {
-			const auto colors = std::array<QColor, 3>{ QColor(0xff, 0x5f, 0x57), QColor(0xfe, 0xbc, 0x2e), QColor(0x28, 0xc8, 0x40) };
-			for (auto i = 0; i != 3; ++i) {
-				p.setBrush(colors[i]);
-				p.drawEllipse(QPointF(card.x() + (22 + i * 20) * dpr, card.y() + 20 * dpr), 6 * dpr, 6 * dpr);
-			}
-		}
 	}
 	const auto at = QPointF(card.x() + innerPad, card.y() + innerPad + dotsH);
-	p.drawImage(at, content);
+	p.drawImage(QRectF(at, QSizeF(content.size())), content);
 	p.end();
 	result.setDevicePixelRatio(1.);
 	return { result, QRectF(at, QSizeF(content.size())) };
@@ -561,6 +560,40 @@ private:
 
 };
 
+class PreviewWidget final : public Ui::RpWidget {
+public:
+	using RpWidget::RpWidget;
+
+	Fn<void(QPainter&)> paint;
+	Fn<void(QPointF)> pressed;
+	Fn<void(QPointF)> moved;
+	Fn<void(QPointF)> released;
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		if (paint) {
+			paint(p);
+		}
+	}
+	void mousePressEvent(QMouseEvent *e) override {
+		if (pressed) {
+			pressed(e->position());
+		}
+	}
+	void mouseMoveEvent(QMouseEvent *e) override {
+		if (moved) {
+			moved(e->position());
+		}
+	}
+	void mouseReleaseEvent(QMouseEvent *e) override {
+		if (released) {
+			released(e->position());
+		}
+	}
+
+};
+
 } // namespace
 
 void RegisterSettings() {
@@ -579,9 +612,9 @@ void RegisterSettings() {
 	add({
 		.key = u"quote.bg"_q,
 		.title = U("Фон картинки"),
-		.description = U("Меню «Картинка» на сообщении собирает скриншот как у окна."),
+		.description = U("Меню «Скриншот сообщений» собирает картинку из сообщений как в чате."),
 		.kind = S::Kind::Choice,
-		.defaultValue = 3,
+		.defaultValue = 7,
 		.choices = bgs,
 	});
 	add({
@@ -595,7 +628,7 @@ void RegisterSettings() {
 		.key = u"quote.padding"_q,
 		.title = U("Отступ от края, px"),
 		.kind = S::Kind::Int,
-		.defaultValue = 36,
+		.defaultValue = 20,
 		.minValue = 0,
 		.maxValue = 120,
 	});
@@ -603,13 +636,7 @@ void RegisterSettings() {
 		.key = u"quote.shadow"_q,
 		.title = U("Тень под карточкой"),
 		.kind = S::Kind::Bool,
-		.defaultValue = true,
-	});
-	add({
-		.key = u"quote.dots"_q,
-		.title = U("Кнопки окна как на macOS"),
-		.kind = S::Kind::Bool,
-		.defaultValue = true,
+		.defaultValue = false,
 	});
 	add({
 		.key = u"quote.width"_q,
@@ -649,8 +676,9 @@ void ShowQuoteBox(
 		const auto maskKind = std::make_shared<int>(0);
 		const auto result = std::make_shared<Composed>();
 		const auto preview = layout->add(
-			object_ptr<Ui::RpWidget>(layout),
+			object_ptr<PreviewWidget>(layout),
 			QMargins(24, 8, 24, 8));
+		preview->setCursor(style::cur_cross);
 		const auto drag = std::make_shared<std::pair<bool, QPointF>>(false, QPointF());
 		const auto dragRect = std::make_shared<QRectF>();
 		const auto composedFor = [=](bool fresh = false) {
@@ -661,8 +689,7 @@ void ShowQuoteBox(
 				S::Int(u"quote.bg"_q),
 				S::Int(u"quote.theme"_q),
 				S::Int(u"quote.padding"_q),
-				S::Bool(u"quote.shadow"_q),
-				S::Bool(u"quote.dots"_q));
+				S::Bool(u"quote.shadow"_q));
 		};
 		const auto refresh = [=] {
 			*result = composedFor();
@@ -673,7 +700,7 @@ void ShowQuoteBox(
 			}
 			preview->update();
 		};
-		preview->paintOn([=](QPainter &p) {
+		preview->paint = [=](QPainter &p) {
 			if (result->image.isNull()) {
 				return;
 			}
@@ -687,7 +714,7 @@ void ShowQuoteBox(
 				p.setBrush(QColor(255, 255, 255, 40));
 				p.drawRect(*dragRect);
 			}
-		});
+		};
 		const auto toNorm = [=](QRectF r) {
 			const auto k = result->image.width() / double(preview->width());
 			const auto px = QRectF(r.x() * k, r.y() * k, r.width() * k, r.height() * k)
@@ -698,24 +725,28 @@ void ShowQuoteBox(
 				px.width() / result->content.width(),
 				px.height() / result->content.height());
 		};
-		preview->events() | rpl::on_next([=](not_null<QEvent*> e) {
-			if (e->type() == QEvent::MouseButtonPress) {
-				const auto pos = static_cast<QMouseEvent*>(e.get())->position();
-				drag->first = true;
-				drag->second = pos;
-				*dragRect = QRectF(pos, pos);
-			} else if (e->type() == QEvent::MouseMove && drag->first) {
-				const auto pos = static_cast<QMouseEvent*>(e.get())->position();
+		preview->pressed = [=](QPointF pos) {
+			drag->first = true;
+			drag->second = pos;
+			*dragRect = QRectF(pos, pos);
+		};
+		preview->moved = [=](QPointF pos) {
+			if (drag->first) {
 				*dragRect = QRectF(drag->second, pos).normalized();
 				preview->update();
-			} else if (e->type() == QEvent::MouseButtonRelease && drag->first) {
-				drag->first = false;
-				if (dragRect->width() > 6 && dragRect->height() > 6) {
-					masks->push_back({ toNorm(*dragRect), Mask(*maskKind + 1) });
-				}
-				refresh();
 			}
-		}, preview->lifetime());
+		};
+		preview->released = [=](QPointF pos) {
+			if (!drag->first) {
+				return;
+			}
+			drag->first = false;
+			*dragRect = QRectF(drag->second, pos).normalized();
+			if (dragRect->width() > 6 && dragRect->height() > 6) {
+				masks->push_back({ toNorm(*dragRect), Mask(*maskKind + 1) });
+			}
+			refresh();
+		};
 
 		const auto hint = layout->add(
 			object_ptr<Ui::FlatLabel>(
@@ -745,13 +776,6 @@ void ShowQuoteBox(
 				*maskKind = i;
 			}),
 			QMargins(24, 4, 24, 8));
-		const auto dots = layout->add(
-			object_ptr<Ui::Checkbox>(layout, U("Кнопки окна как на macOS"), S::Bool(u"quote.dots"_q), st::defaultCheckbox),
-			QMargins(24, 6, 24, 2));
-		dots->checkedChanges() | rpl::on_next([=](bool on) {
-			S::SetBool(u"quote.dots"_q, on);
-			refresh();
-		}, dots->lifetime());
 		const auto shadow = layout->add(
 			object_ptr<Ui::Checkbox>(layout, U("Тень под карточкой"), S::Bool(u"quote.shadow"_q), st::defaultCheckbox),
 			QMargins(24, 2, 24, 8));
