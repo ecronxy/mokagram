@@ -769,6 +769,26 @@ void RegisterSettings() {
 		.minValue = 0,
 		.maxValue = 50,
 	});
+	S::Register({
+		.key = u"lag.autostart"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Запуск и фон")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Запускать вместе с системой")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Нужно, чтобы расписания и команды плагинов работали сразу после включения компьютера.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = false,
+		.category = u"look"_q,
+		.sectionIcon = u"storage"_q,
+	});
+	S::Register({
+		.key = u"lag.background"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Запуск и фон")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Крестик убирает окно в фон")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Клиент продолжает работать со свёрнутым окном: плагины, расписания и уведомления не останавливаются. Если выключить, крестик закрывает клиент.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+		.category = u"look"_q,
+		.sectionIcon = u"storage"_q,
+	});
 	lag({
 		.key = u"lag.toaster"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Режим тостера")),

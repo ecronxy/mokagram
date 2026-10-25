@@ -3,6 +3,11 @@
 
 #include "mokagram/settings/mokagram_settings.h"
 #include "base/timer.h"
+#include "storage/localstorage.h"
+#include "platform/platform_specific.h"
+#include "core/core_settings.h"
+#include "core/application.h"
+#include "settings.h"
 #include "ui/text/text_emoji_budget.h"
 
 #include <QtCore/QTimer>
@@ -100,10 +105,39 @@ void Start() {
 	// Переключатели в настройках действуют сразу.
 	static auto lifetime = rpl::lifetime();
 	S::Changed() | rpl::on_next([](QString key) {
-		if (key.startsWith(u"lag."_q)) {
+		if (key == u"lag.autostart"_q) {
+			// Автозапуск и «крестик сворачивает в фон» это обычные настройки клиента,
+			// здесь только удобные переключатели рядом с остальным.
+			const auto on = S::Bool(key);
+			if (on != cAutoStart() && Platform::AutostartSupported()) {
+				cSetAutoStart(on);
+				Platform::AutostartToggle(on, [=](bool enabled) {
+					if (enabled != on) {
+						cSetAutoStart(enabled);
+						S::SetBool(u"lag.autostart"_q, enabled);
+					}
+					Local::writeSettings();
+				});
+			}
+		} else if (key == u"lag.background"_q) {
+			const auto behavior = S::Bool(key)
+				? Core::Settings::CloseBehavior::RunInBackground
+				: Core::Settings::CloseBehavior::Quit;
+			auto &settings = Core::App().settings();
+			if (settings.closeBehavior() != behavior) {
+				settings.setCloseBehavior(behavior);
+				Local::writeSettings();
+			}
+		} else if (key.startsWith(u"lag."_q)) {
 			Apply();
 		}
 	}, lifetime);
+	// Переключатели показывают то, что реально включено в клиенте.
+	S::SetBool(u"lag.autostart"_q, cAutoStart());
+	S::SetBool(
+		u"lag.background"_q,
+		Core::App().settings().closeBehavior()
+			== Core::Settings::CloseBehavior::RunInBackground);
 	Apply();
 }
 

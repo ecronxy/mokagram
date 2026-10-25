@@ -46,6 +46,7 @@
 #include "data/data_document.h"
 #include "api/api_common.h"
 #include "core/application.h"
+#include "data/data_changes.h"
 #include "mainwindow.h"
 #include "data/data_session.h"
 #include "main/main_session.h"
@@ -235,6 +236,8 @@ struct Category {
 		{ "history.filters_enabled", "📑" },
 		{ "hide_blocked", "🚫" },
 		{ "lag.idle", "💤" },
+		{ "lag.autostart", "▶️" },
+		{ "lag.background", "🔽" },
 		{ "lag.toaster", "⚙️" },
 		{ "lag.emoji_cap", "😜" },
 		{ "plugins.prefix", "🔧" },
@@ -2355,6 +2358,16 @@ void StartDebugCommands() {
 				auto message = Api::MessageToSend(Api::SendAction(history));
 				message.textWithTags.text = cmd.mid(9);
 				history->session().api().sendMessage(std::move(message));
+			}
+		} else if (cmd == u"fakereact"_q) {
+			// Проверка цепочки события on_new_reaction в тестовом чате: настоящую реакцию может поставить только другой человек.
+			const auto history = controller->activeChatCurrent().history();
+			if (history && history->peer->id.value == 562954397233167ULL) {
+				if (const auto item = history->lastMessage()) {
+					history->session().changes().messageUpdated(
+						item,
+						Data::MessageUpdate::Flag::NewUnreadReaction);
+				}
 			}
 		} else if (cmd == u"quit"_q) {
 			Core::Quit();

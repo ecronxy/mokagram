@@ -1306,3 +1306,60 @@ def _fw_password_dialog(entry, key, title):
         'buttons': [{'id': 'save', 'text': 'Сохранить', 'style': 'primary'}, {'id': 'clear', 'text': 'Удалить', 'style': 'red'},
                     {'id': 'no', 'text': 'Отмена', 'style': 'cancel'}],
         'cb': cb, 'close_cb': ''}, ensure_ascii=False))
+
+
+def _fw_tl_id(peer):
+    n = int(peer)
+    if n >= (1 << 49):
+        return '-100%d' % (n - (1 << 49))
+    if n >= (1 << 48):
+        return '-%d' % (n - (1 << 48))
+    return str(n)
+
+
+@_fw_builtin('id', 'номера: этот чат, вы, а в ответе на сообщение ещё и автор: .id')
+def _fw_cmd_id(ctx):
+    lines = ['Чат: %s' % _fw_tl_id(ctx.peer)]
+    try:
+        me = json.loads(_moka_native('get_me', '{}'))
+        if me.get('ok'):
+            lines.append('Вы: %s' % me['peer'])
+        if ctx.reply_to:
+            m = json.loads(_moka_native('get_message', json.dumps({'peer': str(ctx.peer), 'id': str(ctx.reply_to)})))
+            if m.get('ok'):
+                lines.append('Сообщение: %s' % ctx.reply_to)
+                lines.append('Автор: %s' % _fw_tl_id(m.get('from', '0')))
+    except Exception:
+        pass
+    _fw_private('ID', '\n'.join(lines))
+
+
+@_fw_builtin('ping', 'задержка до серверов Telegram и состояние плагинов: .ping')
+def _fw_cmd_ping(ctx):
+    tl = sys.modules['mokagram_sdk.tl']
+    started = time.monotonic()
+    answered = [False]
+
+    def silent():
+        if not answered[0]:
+            answered[0] = True
+            _fw_private('Пинг', 'Сервер не ответил за 10 секунд: нет соединения.')
+    t = threading.Timer(10, silent)
+    t.daemon = True
+    t.start()
+
+    def done(payload):
+        if answered[0]:
+            return
+        answered[0] = True
+        t.cancel()
+        ms = int((time.monotonic() - started) * 1000)
+        loaded = sum(1 for e in _plugins.values() if e.get('state') == 'loaded')
+        text = ('Ответ сервера: %d мс\nПлагинов работает: %d из %d' % (ms, loaded, len(_plugins))
+                if payload.get('ok') else 'Сервер не ответил: %s' % payload.get('type', ''))
+        _fw_private('Пинг', text)
+    token = _fw_cb(done)
+    res = json.loads(_moka_native('invoke_raw', json.dumps({
+        'pid': '_fw', 'token': token, 'hex': tl.encode_request('help.getNearestDc', {}).hex()})))
+    if not res.get('ok'):
+        _fw_private('Пинг', 'Не вышло: %s' % res.get('error', ''))
