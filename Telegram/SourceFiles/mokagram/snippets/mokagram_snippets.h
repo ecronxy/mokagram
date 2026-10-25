@@ -6,12 +6,17 @@
 namespace Mokagram::Snippets {
 
 [[nodiscard]] QStringList Names();
-[[nodiscard]] QString Get(const QString &name);
-void Set(const QString &name, const QString &text);
+[[nodiscard]] TextWithTags Get(const QString &name);
+void Set(const QString &name, const TextWithTags &text);
+
+// Часть текста с разметкой (эмодзи, жирный и т.д.), сдвинутая к нулю.
+[[nodiscard]] TextWithTags Slice(
+	const TextWithTags &text,
+	int from,
+	int length);
 bool Remove(const QString &name);
 
-// Заменяет ;имя в тексте перед отправкой. Если что-то заменилось, разметка
-// сбрасывается: смещения после правки уже неверны.
+// Заменяет ;имя в тексте перед отправкой с сохранением разметки и премиум-эмодзи.
 void Expand(TextWithTags &text);
 
 } // namespace Mokagram::Snippets

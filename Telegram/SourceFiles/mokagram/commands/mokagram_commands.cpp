@@ -500,12 +500,18 @@ bool Handle(
 		} else if (!nameRe.match(first).hasMatch()) {
 			toast(U("Имя сниппета: буквы, цифры и _"));
 		} else if (rest.isEmpty()) {
-			const auto text = Snippets::Get(first);
-			toast(text.isEmpty()
+			const auto value = Snippets::Get(first);
+			toast(value.text.isEmpty()
 				? U("Такого сниппета нет. Пример: .snip ") + first + U(" текст")
-				: text.left(200));
+				: value.text.left(200));
 		} else {
-			Snippets::Set(first, rest);
+			// Берём текст вместе с разметкой и премиум-эмодзи из поля ввода.
+			const auto at = text.text.lastIndexOf(rest);
+			Snippets::Set(
+				first,
+				(at >= 0)
+					? Snippets::Slice(text, at, rest.size())
+					: TextWithTags{ rest });
 			toast(U("Сохранено. Пиши ;") + first.toLower() + U(" в тексте"));
 		}
 		return true;
