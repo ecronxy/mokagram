@@ -4,6 +4,7 @@
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/stars/mokagram_stars_stats.h"
 #include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/quote/mokagram_quote.h"
 #include "history/history_inner_widget.h"
 #include "history/history_widget.h"
 
@@ -2081,6 +2082,16 @@ void StartDebugCommands() {
 			if (inner && widget) {
 				const auto top = inner->height() - 110;
 				Effects::PlayDelete(widget, inner, QRect(0, top, inner->width(), 100), true);
+			}
+		} else if (cmd == u"quote"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto last = history->lastMessage()) {
+					auto ids = std::vector<FullMsgId>();
+					for (auto i = 0; i != 4; ++i) {
+						ids.push_back(FullMsgId(history->peer->id, last->id - i));
+					}
+					Quote::ShowQuoteBox(controller, std::move(ids));
+				}
 			}
 		} else if (cmd == u"starsstats"_q) {
 			Stars::ShowSpendingStatsBox();

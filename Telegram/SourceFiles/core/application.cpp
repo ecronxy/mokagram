@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/plugins/mokagram_plugins.h"
 #include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/quote/mokagram_quote.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/streamer/mokagram_streamer.h"
@@ -341,6 +342,7 @@ void Application::run() {
 	Mokagram::Misc::RegisterSettings();
 	Mokagram::Appearance::RegisterSettings();
 	Mokagram::Effects::RegisterSettings();
+	Mokagram::Quote::RegisterSettings();
 	Mokagram::Settings::StartDebugCommands();
 	Mokagram::Plugins::Start([](const std::string &line) {
 		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));

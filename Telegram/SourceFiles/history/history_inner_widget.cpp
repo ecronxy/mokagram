@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/appearance/mokagram_appearance.h"
 #include "history/history_inner_widget.h"
 #include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/quote/mokagram_quote.h"
 #include "mokagram/history/mokagram_history.h"
 
 #include "api/api_polls.h"
@@ -3724,6 +3725,19 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 										Mokagram::Misc::CopyWithAuthor(item);
 									}
 								}
+							},
+							&st::menuIconCopy);
+						_menu->addAction(
+							QString::fromUtf8("Цитата-картинка"),
+							[=] {
+								auto ids = std::vector<FullMsgId>();
+								for (const auto selected : _selected) {
+									ids.push_back(selected->fullId());
+								}
+								if (ids.empty()) {
+									ids.push_back(itemId);
+								}
+								Mokagram::Quote::ShowQuoteBox(_controller, std::move(ids));
 							},
 							&st::menuIconCopy);
 					}
