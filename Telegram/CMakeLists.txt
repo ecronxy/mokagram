@@ -86,6 +86,8 @@ PRIVATE
     mokagram/avatar/mokagram_avatar_shape.cpp
     mokagram/commands/mokagram_commands.cpp
     mokagram/commands/mokagram_commands.h
+    mokagram/lang/mokagram_lang.cpp
+    mokagram/lang/mokagram_lang.h
     mokagram/msginfo/mokagram_message_info.cpp
     mokagram/msginfo/mokagram_message_info.h
     mokagram/snippets/mokagram_snippets.cpp
