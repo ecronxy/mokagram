@@ -50,10 +50,21 @@ void RegisterSettings() {
 	S::Register({
 		.key = u"scam.enabled"_q,
 		.section = U("Защита от скама"),
-		.title = U("Предупреждать о фейковых офферах"),
-		.description = U("Настоящий оффер выглядит как карточка подарка по центру чата. Если то же самое прислал человек обычным сообщением, клиент пометит его и спросит перед нажатием на кнопки."),
+		.title = U("Предупреждать о скаме"),
+		.description = U("Помечает фейковые офферы, покупателей юзернеймов, гарант-боты и ссылки, спрятанные за текстом (псевдо-Fragment, мини-аппы). Настоящий оффер выглядит как карточка подарка по центру чата."),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
+		.category = u"privacy"_q,
+		.sectionIcon = u"block"_q,
+	});
+	S::Register({
+		.key = u"scam.test"_q,
+		.section = U("Защита от скама"),
+		.title = U("Проверять и мои сообщения (для теста)"),
+		.description = U("Обычно плашка ставится только на чужие сообщения. Включи, напиши себе в «Избранное» текст скамера и увидишь, как он будет помечен. Новые сообщения после включения."),
+		.kind = S::Kind::Bool,
+		.defaultValue = false,
+		.dependsOn = u"scam.enabled"_q,
 		.category = u"privacy"_q,
 		.sectionIcon = u"block"_q,
 	});
@@ -196,7 +207,8 @@ bool BypassLinkGuard = false;
 void MarkText(
 		not_null<const HistoryItem*> item,
 		TextWithEntities &text) {
-	const auto testing = qEnvironmentVariableIsSet("MOKAGRAM_SCAM_TEST");
+	const auto testing = qEnvironmentVariableIsSet("MOKAGRAM_SCAM_TEST")
+		|| S::Bool(u"scam.test"_q);
 	if (!S::Bool(u"scam.enabled"_q)
 		|| item->isService()
 		|| (item->out() && !testing)
