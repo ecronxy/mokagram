@@ -2185,6 +2185,7 @@ void CommandsPage(
 			{ ".calc 2+2*3", "Посчитать: в поле останется «2+2*3 = 8»", &st::menuIconEdit, orange, "#️⃣" },
 			{ ".archive", "Отправить чат в архив (.unarchive вернёт)", &st::menuIconShowInFolder, gray, "📁" },
 			{ ".dl", "Скачать файл или фото из сообщения (ответом) в загрузки", &st::menuIconDownload, green, "🔽" },
+			{ ".show", "Скачать видео или картинки по ссылке (TikTok, Pinterest, X, YouTube) и показать перед отправкой", &st::menuIconDownload, green, "🔽" },
 			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple, "📁" },
 		};
 		{
