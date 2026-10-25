@@ -59,6 +59,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/chat_filters_tabs_strip.h"
 #include "ui/widgets/labels.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
@@ -149,6 +150,22 @@ namespace Window {
 namespace {
 
 constexpr auto kTopicsSearchMinCount = 1;
+
+// Mokagram: поиск в окне пересылки на скруглённой карточке.
+[[nodiscard]] const style::MultiSelect &ForwardSearchSt() {
+	static const auto result = [] {
+		using Mokagram::BoxParts::kOuterSide;
+		auto result = st::defaultMultiSelect;
+		result.bg = st::transparent;
+		result.padding = style::margins(
+			kOuterSide + 12,
+			12,
+			kOuterSide + 8,
+			12);
+		return result;
+	}();
+	return result;
+}
 
 void ShareBotGame(
 		not_null<UserData*> bot,
@@ -3257,6 +3274,14 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			return PeerListBox::content();
 		}
 
+		void setSearchCard(QRect area, QRect card) {
+			if (_searchArea != area || _searchCard != card) {
+				_searchArea = area;
+				_searchCard = card;
+				update();
+			}
+		}
+
 		void setFilterId(FilterId filterId) {
 			_filterId = filterId;
 		}
@@ -3264,10 +3289,24 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			return _filterId;
 		}
 
+	protected:
+		void paintEvent(QPaintEvent *e) override {
+			PeerListBox::paintEvent(e);
+			if (!_searchCard.isEmpty()) {
+				auto p = QPainter(this);
+				// WHY: PeerListBox не заливает полосу над вкладками,
+				// раньше её закрывал непрозрачный фон поиска.
+				p.fillRect(_searchArea, getDelegate()->style().bg);
+				Mokagram::BoxParts::PaintCard(p, _searchCard);
+			}
+		}
+
 	private:
 		rpl::event_stream<> _focusRequests;
 		Ui::ForwardOptions _forwardOptions;
 		FilterId _filterId = 0;
+		QRect _searchArea;
+		QRect _searchCard;
 
 	};
 
@@ -3440,6 +3479,7 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			controller->setStyleOverrides(listSt());
 			const auto content = inner->add(
 				object_ptr<PeerListContent>(inner, controller));
+			content->setRoundedRows(true);
 			nested->setContent(content);
 			controller->setDelegate(nested);
 			if (!nested->peerListFullRowsCount()) {
@@ -3553,9 +3593,26 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			session,
 			suggestedChannel);
 		const auto controllerRaw = controller.get();
+		controllerRaw->setStyleOverrides(nullptr, &ForwardSearchSt());
 		auto init = [=](not_null<ListBox*> box) {
 			controllerRaw->setSearchNoResultsText(
 				tr::lng_bot_chats_not_found(tr::now));
+			Mokagram::BoxParts::RoundLayer(box);
+			box->setStyle(Mokagram::BoxParts::PillButtonsBox());
+			box->peerListContent()->setRoundedRows(true);
+			if (const auto wrap = box->searchWrap()) {
+				wrap->geometryValue(
+				) | rpl::on_next([=](QRect geometry) {
+					using Mokagram::BoxParts::kOuterSide;
+					const auto card = geometry.marginsRemoved(
+						{ kOuterSide, 6, kOuterSide, 6 });
+					const auto hidden = wrap->isHidden()
+						|| (card.height() <= 0);
+					box->setSearchCard(
+						hidden ? QRect() : geometry,
+						hidden ? QRect() : card);
+				}, box->lifetime());
+			}
 			const auto lastFilterId = box->lifetime().make_state<FilterId>(0);
 			const auto chatsFilters = Ui::AddChatFiltersTabsStrip(
 				box,
@@ -3889,7 +3946,8 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 					if (const auto onstack = state->submit) {
 						onstack({});
 					}
-				});
+				},
+				Mokagram::BoxParts::PillActive());
 			send->setAcceptBoth();
 			send->clicks(
 			) | rpl::on_next([=](Qt::MouseButton button) {
@@ -3903,7 +3961,7 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 		}
 		state->box->addButton(tr::lng_cancel(), [=] {
 			state->box->closeBox();
-		});
+		}, Mokagram::BoxParts::PillLight());
 	}, state->box->lifetime());
 
 	return base::make_weak(state->box);

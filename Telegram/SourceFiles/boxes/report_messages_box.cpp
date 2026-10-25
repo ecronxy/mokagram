@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item.h"
 #include "main/main_session.h"
+#include "mokagram/ui/mokagram_report_box.h"
 #include "lang/lang_keys.h"
 #include "ui/boxes/report_box_graphics.h"
 #include "ui/layers/generic_box.h"
@@ -109,6 +110,16 @@ void ShowReportFlowBox(
 				return;
 			}
 			if (!result.options.empty() || result.commentOption) {
+				if (!stOverride) {
+					show->show(Box(
+						Mokagram::Report::FlowBox,
+						result,
+						reportInput,
+						Fn<void(Data::ReportInput)>([=](Data::ReportInput copy) {
+							repeatRequest(repeatRequest, std::move(copy));
+						})));
+					return;
+				}
 				show->show(Box([=](not_null<Ui::GenericBox*> box) {
 					box->setTitle(result.title.isEmpty()
 						? reportInput.optionText

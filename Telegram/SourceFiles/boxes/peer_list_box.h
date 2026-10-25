@@ -708,6 +708,9 @@ public:
 	};
 	void setMode(Mode mode);
 
+	// Mokagram: подсветка строки скруглённой плашкой, как в меню.
+	void setRoundedRows(bool rounded);
+
 	[[nodiscard]] rpl::producer<int> selectedIndexValue() const;
 	[[nodiscard]] int selectedIndex() const;
 	[[nodiscard]] bool hasSelection() const;
@@ -897,6 +900,7 @@ private:
 		Fn<void(not_null<Ui::PopupMenu*>)> destroyed = nullptr);
 
 	crl::time paintRow(Painter &p, crl::time now, RowIndex index);
+	[[nodiscard]] QRect roundedRowRect(int outerWidth) const;
 	void paintRowContent(
 		Painter &p,
 		crl::time now,
@@ -938,6 +942,7 @@ private:
 	PeerListSearchMode _searchMode = PeerListSearchMode::Disabled;
 
 	Mode _mode = Mode::Default;
+	bool _roundedRows = false;
 	int _rowHeight = 0;
 	int _visibleTop = 0;
 	int _visibleBottom = 0;
@@ -1228,6 +1233,9 @@ public:
 	void showFinished() override;
 
 	void appendQueryChangedCallback(Fn<void(QString)>);
+
+	// Mokagram: обёртка поля поиска, если оно есть.
+	[[nodiscard]] Ui::RpWidget *searchWrap() const;
 
 protected:
 	void prepare() override;
