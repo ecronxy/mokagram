@@ -308,7 +308,7 @@ namespace {
 struct State {
 	base::flat_set<quint64> users;
 	base::flat_set<quint64> remote;
-	DocumentId icon = 5397879498492389616ULL;
+	DocumentId icon = 5400163321582236772ULL;
 	bool loaded = false;
 };
 
@@ -408,13 +408,107 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 		.botId = UserId(0),
 		.iconId = state.icon,
 		.description = TextWithEntities{
-			QString::fromUtf8(role ? role : Mokagram::Lang::Tr("Разработчик mokaGram")),
+			QString::fromUtf8(role ? role : (state.remote.contains(id) ? Mokagram::Lang::Tr("Поддерживает mokaGram") : Mokagram::Lang::Tr("Разработчик mokaGram"))),
 		},
 	};
 }
 
+// Список выданных галочек пришёл (из бота или из файла): обновляем значки у уже загруженных людей.
+void ApplyRemote(const std::vector<quint64> &ids, quint64 icon) {
+	auto &state = Data();
+	const auto old = base::take(state.remote);
+	if (icon) {
+		state.icon = icon;
+	}
+	for (const auto id : ids) {
+		state.remote.emplace(id);
+	}
+	auto all = old;
+	for (const auto id : state.remote) {
+		all.emplace(id);
+	}
+	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
+	if (const auto session = account ? account->maybeSession() : nullptr) {
+		for (const auto id : all) {
+			if (const auto user = session->data().userLoaded(UserId(id))) {
+				user->setBotVerifyDetails(Synthetic(user));
+			}
+		}
+	}
+}
+
+// Основной путь: inline-запрос «list» к @mokagent (без сообщений в чатах, нужна только сессия).
+void RefreshInline(Fn<void()> fail) {
+	constexpr auto kBotId = 8687512401LL;
+	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
+	const auto session = account ? account->maybeSession() : nullptr;
+	if (!session) {
+		fail();
+		return;
+	}
+	const auto weak = base::make_weak(session);
+	const auto ask = [=](not_null<UserData*> bot) {
+		session->api().request(MTPmessages_GetInlineBotResults(
+			MTP_flags(0),
+			bot->inputUser(),
+			MTP_inputPeerSelf(),
+			MTPInputGeoPoint(),
+			MTP_string(u"list"_q),
+			MTP_string()
+		)).done([=](const MTPmessages_BotResults &result) {
+			auto ids = std::vector<quint64>();
+			auto icon = quint64();
+			result.match([&](const MTPDmessages_botResults &data) {
+				for (const auto &item : data.vresults().v) {
+					item.match([&](const MTPDbotInlineResult &r) {
+						const auto id = qs(r.vid());
+						const auto title = r.vtitle() ? qs(*r.vtitle()) : QString();
+						if (id == u"e"_q) {
+							icon = title.toULongLong();
+						} else if (id.startsWith('l')) {
+							for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
+								if (const auto value = part.toULongLong()) {
+									ids.push_back(value);
+								}
+							}
+						}
+					}, [](const auto &) {});
+				}
+			});
+			ApplyRemote(ids, icon);
+		}).fail([=] {
+			fail();
+		}).send();
+	};
+	if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
+		ask(bot);
+		return;
+	}
+	session->api().request(MTPcontacts_Search(
+		MTP_flags(0),
+		MTP_string(u"mokagent"_q),
+		MTP_int(5)
+	)).done([=](const MTPcontacts_Found &result) {
+		result.match([&](const MTPDcontacts_found &data) {
+			session->data().processUsers(data.vusers());
+		});
+		if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
+			ask(bot);
+		} else {
+			fail();
+		}
+	}).fail([=] {
+		fail();
+	}).send();
+}
+
 void Refresh(int index = 0) {
 	Load();
+	if (index == 0) {
+		RefreshInline([] { Refresh(1); });
+		return;
+	}
+	index -= 1;
 	if (index >= int(std::size(kBadgesUrls))) {
 		return;
 	}
@@ -430,41 +524,28 @@ void Refresh(int index = 0) {
 			: QJsonDocument();
 		if (!document.isObject()) {
 			// Сервер недоступен: пробуем следующий источник.
-			Refresh(index + 1);
+			Refresh(index + 2);
 			return;
 		}
 		const auto object = document.object();
-		auto &state = Data();
-		const auto old = base::take(state.remote);
-		const auto icon = object.value(u"emoji_id"_q).toVariant().toString().toULongLong();
-		if (icon) {
-			state.icon = icon;
-		}
+		auto ids = std::vector<quint64>();
 		for (const auto &value : object.value(u"users"_q).toArray()) {
 			if (const auto id = value.toVariant().toULongLong()) {
-				state.remote.emplace(id);
+				ids.push_back(id);
 			}
 		}
-		// Пересчитываем значок у тех, кто уже загружен, и у тех, кого убрали.
-		auto all = old;
-		for (const auto id : state.remote) {
-			all.emplace(id);
-		}
-		const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
-		if (const auto session = account ? account->maybeSession() : nullptr) {
-			for (const auto id : all) {
-				if (const auto user = session->data().userLoaded(UserId(id))) {
-					user->setBotVerifyDetails(Synthetic(user));
-				}
-			}
-		}
+		ApplyRemote(ids, object.value(u"emoji_id"_q).toVariant().toString().toULongLong());
 	});
 }
 
 void Start() {
 	Refresh(0);
+	// При старте клиент ещё может быть не авторизован: пробуем ещё раз позже.
+	for (const auto delay : { 20000, 90000 }) {
+		QTimer::singleShot(delay, [] { Refresh(0); });
+	}
 	static auto timer = new QTimer();
-	timer->setInterval(30 * 60 * 1000);
+	timer->setInterval(10 * 60 * 1000);
 	QObject::connect(timer, &QTimer::timeout, [] { Refresh(0); });
 	timer->start();
 }

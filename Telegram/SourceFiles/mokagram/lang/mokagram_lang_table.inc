@@ -444,6 +444,7 @@
 	{ "Размеры в чате", "Sizes in chat" },
 	{ "Размытие", "Blur" },
 	{ "Разработчик mokaGram", "mokaGram developer" },
+	{ "Поддерживает mokaGram", "Supports mokaGram" },
 	{ "Разработчик и владелец mokaGram", "mokaGram developer and owner" },
 	{ "Расписание", "Schedule" },
 	{ "Расписание призрака", "Ghost schedule" },
