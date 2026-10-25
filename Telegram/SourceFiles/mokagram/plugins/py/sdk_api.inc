@@ -248,8 +248,22 @@ def run_on_queue(fn, delay_ms=0):
 
 # ---- сообщения ----
 
-def send_message(peer, text, reply_to=None, silent=False):
-    """Отправка от имени пользователя. peer это id чата, как в send_message_hook (params['peer'])."""
+def _clean_entities(entities, text):
+    out = []
+    for e in (entities or [])[:200]:
+        if not isinstance(e, dict):
+            continue
+        item = {k: e[k] for k in ('type', 'offset', 'length', 'url', 'language') if k in e}
+        if 'document_id' in e:
+            item['document_id'] = str(int(e['document_id']))
+        out.append(item)
+    return out
+
+
+def send_message(peer, text, reply_to=None, silent=False, entities=None):
+    """Отправка от имени пользователя. peer это id чата, как в send_message_hook (params['peer']).
+    entities: [{'type': 'bold|italic|underline|strike|code|pre|spoiler|quote|link|custom_emoji', 'offset': 0,
+    'length': 3, 'url': ..., 'document_id': ...}], смещения в UTF-16 как в Telegram. custom_emoji это премиум-эмодзи."""
     target = str(peer)
     entry = _gate('send_message', 'messages.send', target)
     if entry is None:
@@ -274,7 +288,8 @@ def send_message(peer, text, reply_to=None, silent=False):
     peers[target] = now
     res = _native('send_message', {
         'peer': target, 'text': text,
-        'reply_to': int(reply_to) if reply_to else 0, 'silent': bool(silent)})
+        'reply_to': int(reply_to) if reply_to else 0, 'silent': bool(silent),
+        'entities': _clean_entities(entities, text)})
     if res.get('ok'):
         _h['audit'](entry, 'send_message', target, 'allowed', len(text))
         return True
@@ -332,8 +347,8 @@ def get_message(peer, msg_id):
     return {k: v for k, v in res.items() if k != 'ok'} if res.get('ok') else None
 
 
-def edit_message(peer, msg_id, text):
-    """Правка своего сообщения."""
+def edit_message(peer, msg_id, text, entities=None):
+    """Правка своего сообщения (entities как у send_message)."""
     peer, msg, ok = _ids(peer, msg_id)
     entry = _gate('edit_message', 'messages.edit', peer)
     if entry is None or not ok or not isinstance(text, str) or not text.strip() or len(text) > 4096:
@@ -341,7 +356,7 @@ def edit_message(peer, msg_id, text):
     if not _limit(entry, 'edit', 20, 60):
         _h['say']('[%s] edit_message: больше 20 правок в минуту, отказ' % entry['id'])
         return None
-    res = _native('edit_message', {'peer': peer, 'id': msg, 'text': text})
+    res = _native('edit_message', {'peer': peer, 'id': msg, 'text': text, 'entities': _clean_entities(entities, text)})
     _h['audit'](entry, 'edit_message', peer, 'allowed' if res.get('ok') else 'failed', len(text))
     return True if res.get('ok') else None
 

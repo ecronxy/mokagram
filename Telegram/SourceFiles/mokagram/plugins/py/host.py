@@ -410,12 +410,14 @@ def _moka_filter(message_json):
 
 
 def _moka_text_hook(message_json):
-    """Главный поток: цепочка плагинов меняет текст. '' без изменений, иначе 'T' + текст."""
+    """Главный поток: цепочка плагинов меняет текст. '' без изменений, 'T'+текст или 'J'+json {text, entities}.
+    Плагин возвращает строку, dict {'text', 'entities'} или кортеж (текст, сущности)."""
     try:
         message = json.loads(message_json)
     except Exception:
         return ''
     changed = False
+    with_entities = False
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')
         if inst is None or not entry.get('text_hook') or 'message_text_hook' in entry.get('hooks_off', ()):
@@ -429,10 +431,30 @@ def _moka_text_hook(message_json):
         if time.monotonic() - started > 0.05:
             _hook_slow(entry, 'message_text_hook', time.monotonic() - started, 0.05)
             continue
-        if isinstance(res, str) and res != message['text']:
-            message['text'] = res
+        text = ents = None
+        if isinstance(res, str):
+            text = res
+        elif isinstance(res, dict) and isinstance(res.get('text'), str):
+            text, ents = res['text'], res.get('entities')
+        elif isinstance(res, (tuple, list)) and len(res) == 2 and isinstance(res[0], str):
+            text, ents = res
+        if text is None:
+            continue
+        if ents is not None and isinstance(ents, list):
+            message['entities'] = ents
+            with_entities = True
             changed = True
-    return ('T' + message['text']) if changed else ''
+        if text != message['text']:
+            message['text'] = text
+            changed = True
+            if ents is None:
+                message['entities'] = []   # текст изменился, старые смещения не подходят
+                with_entities = True
+    if not changed:
+        return ''
+    if with_entities:
+        return 'J' + json.dumps({'text': message['text'], 'entities': message.get('entities', [])}, ensure_ascii=False)
+    return 'T' + message['text']
 
 
 def _moka_event(name, payload_json):

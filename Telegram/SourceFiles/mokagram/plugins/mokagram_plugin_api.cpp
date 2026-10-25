@@ -31,6 +31,7 @@
 #include "data/data_chat.h"
 #include "data/data_drafts.h"
 #include "data/data_user.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "history/history_item.h"
 #include "ui/text/text_utilities.h"
 #include "apiwrap.h"
@@ -139,11 +140,109 @@ std::string ShowToast(const QJsonObject &args) {
 	});
 }
 
+// ---- форматирование: сущности <-> JSON ----
+
+[[nodiscard]] EntitiesInText EntitiesFromJson(
+		const QJsonArray &list,
+		int textLength) {
+	auto result = EntitiesInText();
+	for (const auto &value : list) {
+		const auto o = value.toObject();
+		const auto type = o.value("type").toString();
+		const auto offset = o.value("offset").toInt();
+		const auto length = o.value("length").toInt();
+		if (offset < 0 || length <= 0 || offset + length > textLength) {
+			continue;
+		}
+		auto kind = EntityType::Invalid;
+		auto data = QString();
+		if (type == u"bold"_q) {
+			kind = EntityType::Bold;
+		} else if (type == u"italic"_q) {
+			kind = EntityType::Italic;
+		} else if (type == u"underline"_q) {
+			kind = EntityType::Underline;
+		} else if (type == u"strike"_q) {
+			kind = EntityType::StrikeOut;
+		} else if (type == u"code"_q) {
+			kind = EntityType::Code;
+		} else if (type == u"pre"_q) {
+			kind = EntityType::Pre;
+			data = o.value("language").toString().left(32);
+		} else if (type == u"spoiler"_q) {
+			kind = EntityType::Spoiler;
+		} else if (type == u"quote"_q) {
+			kind = EntityType::Blockquote;
+		} else if (type == u"link"_q) {
+			kind = EntityType::CustomUrl;
+			data = o.value("url").toString().left(2048);
+			if (data.isEmpty()) {
+				continue;
+			}
+		} else if (type == u"custom_emoji"_q) {
+			kind = EntityType::CustomEmoji;
+			const auto id = o.value("document_id").toString().toULongLong();
+			if (!id) {
+				continue;
+			}
+			data = Data::SerializeCustomEmojiId(DocumentId(id));
+		} else {
+			continue;
+		}
+		result.push_back(EntityInText(kind, offset, length, data));
+		if (result.size() >= 200) {
+			break;
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] QJsonArray EntitiesToJson(const EntitiesInText &list) {
+	auto result = QJsonArray();
+	for (const auto &entity : list) {
+		auto name = QString();
+		auto o = QJsonObject();
+		switch (entity.type()) {
+		case EntityType::Bold: name = u"bold"_q; break;
+		case EntityType::Italic: name = u"italic"_q; break;
+		case EntityType::Underline: name = u"underline"_q; break;
+		case EntityType::StrikeOut: name = u"strike"_q; break;
+		case EntityType::Code: name = u"code"_q; break;
+		case EntityType::Pre:
+			name = u"pre"_q;
+			o.insert("language", entity.data());
+			break;
+		case EntityType::Spoiler: name = u"spoiler"_q; break;
+		case EntityType::Blockquote: name = u"quote"_q; break;
+		case EntityType::CustomUrl:
+			name = u"link"_q;
+			o.insert("url", entity.data());
+			break;
+		case EntityType::Url: name = u"url"_q; break;
+		case EntityType::Mention: name = u"mention"_q; break;
+		case EntityType::Hashtag: name = u"hashtag"_q; break;
+		case EntityType::BotCommand: name = u"bot_command"_q; break;
+		case EntityType::CustomEmoji:
+			name = u"custom_emoji"_q;
+			o.insert("document_id", QString::number(
+				Data::ParseCustomEmojiData(entity.data())));
+			break;
+		default: continue;
+		}
+		o.insert("type", name);
+		o.insert("offset", entity.offset());
+		o.insert("length", entity.length());
+		result.push_back(o);
+	}
+	return result;
+}
+
 std::string SendMessage(const QJsonObject &args) {
 	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
 	const auto text = args.value("text").toString();
 	const auto replyTo = int64(args.value("reply_to").toDouble());
 	const auto silent = args.value("silent").toBool();
+	const auto entities = args.value("entities").toArray();
 	if (!peerId || text.isEmpty()) {
 		return Reply(false, U("неверные параметры"));
 	}
@@ -170,6 +269,10 @@ std::string SendMessage(const QJsonObject &args) {
 			}
 			auto message = Api::MessageToSend(Api::SendAction(history));
 			message.textWithTags.text = text;
+			if (!entities.isEmpty()) {
+				message.textWithTags.tags = TextUtilities::ConvertEntitiesToTextTags(
+					EntitiesFromJson(entities, text.size()));
+			}
 			message.action.options.silent = silent;
 			if (replyTo > 0) {
 				message.action.replyTo.messageId = FullMsgId(
@@ -317,6 +420,7 @@ std::string GetMessage(const QJsonObject &args) {
 
 std::string EditMessage(const QJsonObject &args) {
 	const auto text = args.value("text").toString();
+	const auto entities = args.value("entities").toArray();
 	if (text.isEmpty()) {
 		return Reply(false, U("пустой текст"));
 	}
@@ -328,7 +432,7 @@ std::string EditMessage(const QJsonObject &args) {
 		MarkFromPlugin(true);
 		Api::EditTextMessage(
 			item,
-			TextWithEntities{ text },
+			TextWithEntities{ text, EntitiesFromJson(entities, text.size()) },
 			Data::WebPageDraft(),
 			Api::SendOptions(),
 			[](mtpRequestId) {},
@@ -729,6 +833,7 @@ void EmitMessageEvent(
 	payload.insert("date", double(item->date()));
 	payload.insert("has_media", item->media() != nullptr);
 	payload.insert("reply_to", QString::number(item->replyToId().bare));
+	payload.insert("entities", EntitiesToJson(item->originalText().entities));
 	QueueEvent(name, Json(payload));
 }
 
@@ -868,6 +973,7 @@ std::string SendFile(const QJsonObject &args) {
 	result.insert("out", item->out());
 	result.insert("date", double(item->date()));
 	result.insert("has_media", item->media() != nullptr);
+	result.insert("entities", EntitiesToJson(item->originalText().entities));
 	return result;
 }
 
@@ -1350,14 +1456,26 @@ void TransformMessageText(
 	message.insert("id", QString::number(item->id.bare));
 	message.insert("peer", QString::number(item->history()->peer->id.value));
 	message.insert("text", text.text);
+	message.insert("entities", EntitiesToJson(text.entities));
 	message.insert("date", double(item->date()));
 	const auto answer = CallTextHook(Json(message), PluginLog);
-	if (answer.size() < 1 || answer[0] != 'T') {
+	if (answer.size() < 1) {
 		return;
 	}
-	const auto changed = QString::fromStdString(answer.substr(1));
-	if (changed != text.text) {
-		text = TextWithEntities{ changed.left(8192) };
+	if (answer[0] == 'T') {
+		const auto changed = QString::fromStdString(answer.substr(1));
+		if (changed != text.text) {
+			text = TextWithEntities{ changed.left(8192) };
+		}
+	} else if (answer[0] == 'J') {
+		// Плагин вернул и текст, и сущности.
+		const auto object = QJsonDocument::fromJson(
+			QByteArray::fromStdString(answer.substr(1))).object();
+		const auto changed = object.value("text").toString().left(8192);
+		text = TextWithEntities{
+			changed,
+			EntitiesFromJson(object.value("entities").toArray(), changed.size()),
+		};
 	}
 }
 
