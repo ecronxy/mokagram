@@ -310,8 +310,19 @@ void Fill(
 			peerFromChannel(ChannelId(p.first)) }) {
 			if (const auto peer = session->data().peerLoaded(id)) {
 				name = peer->name();
-				if (name.isEmpty()) {
-					name = U("Удалённый аккаунт");
+				const auto printable = std::any_of(
+					name.begin(),
+					name.end(),
+					[](QChar c) {
+						return c.isLetterOrNumber()
+							|| c.isPunct()
+							|| c.isSymbol();
+					});
+				if (!printable) {
+					// Имя из невидимых символов: показываем юзернейм или ID.
+					name = !peer->username().isEmpty()
+						? '@' + peer->username()
+						: U("ID ") + QString::number(p.first);
 				}
 				break;
 			}
