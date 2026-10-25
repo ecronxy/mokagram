@@ -47,6 +47,42 @@ void RegisterSettings() {
 	});
 }
 
+namespace {
+
+[[nodiscard]] bool OfferText(const QString &text) {
+	return ContainsAny(text, {
+		"предложение действует", "offer is valid",
+	}) || (ContainsAny(text, { "предлагает вам", "offers you" })
+		&& ContainsAny(text, {
+			"за подарок", "за коллекционный", "for your gift",
+			"for your collectible", " gram",
+		}));
+}
+
+} // namespace
+
+void MarkText(
+		not_null<const HistoryItem*> item,
+		TextWithEntities &text) {
+	const auto testing = qEnvironmentVariableIsSet("MOKAGRAM_SCAM_TEST");
+	if (!S::Bool(u"scam.enabled"_q)
+		|| item->isService()
+		|| (item->out() && !testing)
+		|| item->isPost()
+		|| !OfferText(text.text)) {
+		return;
+	}
+	const auto from = item->from();
+	if (from->isVerified() || from->id.value == kTelegramServiceId) {
+		return;
+	}
+	const auto mark = U("\xE2\x9A\xA0 Возможный фейк-оффер. Настоящий приходит карточкой подарка по центру чата.");
+	auto result = TextWithEntities{ mark + u"\n\n"_q };
+	result.entities.push_back(EntityInText(EntityType::Bold, 0, mark.size()));
+	result.append(std::move(text));
+	text = std::move(result);
+}
+
 bool IsFakeOffer(not_null<const HistoryItem*> item) {
 	if (!S::Bool(u"scam.enabled"_q)
 		|| item->isService()
