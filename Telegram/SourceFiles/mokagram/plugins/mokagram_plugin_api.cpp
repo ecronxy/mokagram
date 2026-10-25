@@ -41,11 +41,15 @@
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "data/data_changes.h"
+#include "data/data_peer_values.h"
+#include "base/unixtime.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -85,6 +89,10 @@ rpl::lifetime BridgeLifetime;
 }
 
 [[nodiscard]] Main::Session *ActiveSession() {
+	// До появления аккаунтов activeAccount() падает на проверке: плагин может спросить раньше.
+	if (Core::App().domain().accounts().empty()) {
+		return nullptr;
+	}
 	return Core::App().activeAccount().maybeSession();
 }
 
@@ -660,49 +668,52 @@ std::string ShowBulletin(const QJsonObject &args) {
 
 // ---- события клиента ----
 
-enum EventBit : uint32 {
-	kEventNewMessage = 1,
-	kEventEdited = 2,
-	kEventDeleted = 4,
-};
+[[nodiscard]] QJsonObject PeerBrief(not_null<PeerData*> peer);
 
 std::mutex EventMutex;
-std::map<std::string, uint32> EventSubscribers;
-std::atomic<uint32> EventMask = 0;
+std::map<std::string, std::set<std::string>> EventSubscribers;
+std::set<std::string> EventWanted;
 rpl::lifetime SessionLifetime;
 
+[[nodiscard]] const std::set<std::string> &KnownEvents() {
+	static const auto result = std::set<std::string>{
+		"new_message", "message_edited", "message_deleted",
+		"peer_updated", "user_status", "new_reaction", "chat_opened",
+	};
+	return result;
+}
+
+[[nodiscard]] bool WantEvent(const std::string &name) {
+	const auto lock = std::lock_guard(EventMutex);
+	return EventWanted.contains(name);
+}
+
 std::string EventsSubscribe(const QJsonObject &args) {
-	auto bits = uint32(0);
+	auto names = std::set<std::string>();
 	for (const auto &name : args.value("events").toArray()) {
-		const auto value = name.toString();
-		if (value == u"new_message"_q) {
-			bits |= kEventNewMessage;
-		} else if (value == u"message_edited"_q) {
-			bits |= kEventEdited;
-		} else if (value == u"message_deleted"_q) {
-			bits |= kEventDeleted;
+		const auto value = name.toString().toStdString();
+		if (KnownEvents().contains(value)) {
+			names.insert(value);
 		}
 	}
 	const auto lock = std::lock_guard(EventMutex);
 	const auto pid = args.value("pid").toString().toStdString();
-	if (bits) {
-		EventSubscribers[pid] = bits;
+	if (!names.empty()) {
+		EventSubscribers[pid] = std::move(names);
 	} else {
 		EventSubscribers.erase(pid);
 	}
-	auto all = uint32(0);
-	for (const auto &[_, mask] : EventSubscribers) {
-		all |= mask;
+	EventWanted.clear();
+	for (const auto &[_, list] : EventSubscribers) {
+		EventWanted.insert(list.begin(), list.end());
 	}
-	EventMask = all;
 	return Reply(true);
 }
 
 void EmitMessageEvent(
-		uint32 bit,
 		const char *name,
 		not_null<const HistoryItem*> item) {
-	if (!(EventMask.load() & bit)) {
+	if (!WantEvent(name)) {
 		return;
 	}
 	auto payload = QJsonObject();
@@ -726,16 +737,66 @@ void SubscribeSession(Main::Session *session) {
 	}
 	session->data().newItemAdded(
 	) | rpl::on_next([](not_null<HistoryItem*> item) {
-		EmitMessageEvent(kEventNewMessage, "new_message", item);
+		EmitMessageEvent("new_message", item);
 	}, SessionLifetime);
 	session->data().itemRemoved(
 	) | rpl::on_next([](not_null<const HistoryItem*> item) {
-		EmitMessageEvent(kEventDeleted, "message_deleted", item);
+		EmitMessageEvent("message_deleted", item);
 	}, SessionLifetime);
 	session->changes().messageUpdates(
 		Data::MessageUpdate::Flag::Edited
 	) | rpl::on_next([](const Data::MessageUpdate &update) {
-		EmitMessageEvent(kEventEdited, "message_edited", update.item);
+		EmitMessageEvent("message_edited", update.item);
+	}, SessionLifetime);
+	session->changes().messageUpdates(
+		Data::MessageUpdate::Flag::NewUnreadReaction
+	) | rpl::on_next([](const Data::MessageUpdate &update) {
+		EmitMessageEvent("new_reaction", update.item);
+	}, SessionLifetime);
+
+	using PeerFlag = Data::PeerUpdate::Flag;
+	session->changes().peerUpdates(
+		PeerFlag::Name
+			| PeerFlag::Username
+			| PeerFlag::Photo
+			| PeerFlag::About
+			| PeerFlag::IsBlocked
+			| PeerFlag::EmojiStatus
+	) | rpl::on_next([](const Data::PeerUpdate &update) {
+		if (!WantEvent("peer_updated")) {
+			return;
+		}
+		auto changed = QJsonArray();
+		const auto add = [&](PeerFlag flag, const char *name) {
+			if (update.flags & flag) {
+				changed.push_back(QString::fromLatin1(name));
+			}
+		};
+		add(PeerFlag::Name, "name");
+		add(PeerFlag::Username, "username");
+		add(PeerFlag::Photo, "photo");
+		add(PeerFlag::About, "about");
+		add(PeerFlag::IsBlocked, "blocked");
+		add(PeerFlag::EmojiStatus, "emoji_status");
+		auto payload = PeerBrief(update.peer);
+		payload.insert("changed", changed);
+		QueueEvent("peer_updated", Json(payload));
+	}, SessionLifetime);
+	session->changes().peerUpdates(
+		PeerFlag::OnlineStatus
+	) | rpl::on_next([](const Data::PeerUpdate &update) {
+		if (!WantEvent("user_status")) {
+			return;
+		}
+		const auto user = update.peer->asUser();
+		if (!user) {
+			return;
+		}
+		auto payload = PeerBrief(user);
+		payload.insert(
+			"online",
+			Data::OnlineTextActive(user, base::unixtime::now()));
+		QueueEvent("user_status", Json(payload));
 	}, SessionLifetime);
 }
 
@@ -895,6 +956,105 @@ std::string MarkRead(const QJsonObject &args) {
 	});
 }
 
+std::string GetUserInfo(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto peer = (session && peerId)
+			? session->data().peerLoaded(peerId)
+			: nullptr;
+		if (!peer) {
+			return Reply(false, U("чата нет среди загруженных"));
+		}
+		auto result = PeerBrief(peer);
+		result.insert("ok", true);
+		result.insert("about", peer->about());
+		if (const auto user = peer->asUser()) {
+			result.insert("premium", user->isPremium());
+			result.insert("verified", user->isVerified());
+			result.insert("scam", user->isScam());
+			result.insert("fake", user->isFake());
+			result.insert("contact", user->isContact());
+			result.insert("blocked", user->isBlocked());
+			result.insert(
+				"online",
+				Data::OnlineTextActive(user, base::unixtime::now()));
+		}
+		return Json(result);
+	});
+}
+
+std::string GetMe(const QJsonObject &) {
+	return OnMain([]() -> std::string {
+		const auto session = ActiveSession();
+		if (!session) {
+			return Reply(false, U("нет открытой сессии"));
+		}
+		auto result = PeerBrief(session->user());
+		result.insert("ok", true);
+		result.insert("premium", session->user()->isPremium());
+		return Json(result);
+	});
+}
+
+std::string ClipboardGet(const QJsonObject &) {
+	return OnMain([]() -> std::string {
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("text", QGuiApplication::clipboard()->text().left(100000));
+		return Json(result);
+	});
+}
+
+std::string PinMessage(const QJsonObject &args) {
+	const auto pin = args.value("pin").toBool(true);
+	return OnMain([=]() -> std::string {
+		const auto item = FindItem(args);
+		if (!item || !item->id.bare || item->isService()) {
+			return Reply(false, U("сообщение не найдено"));
+		}
+		const auto peer = item->history()->peer;
+		const auto session = &peer->session();
+		auto flags = MTPmessages_UpdatePinnedMessage::Flags(0);
+		if (!pin) {
+			flags |= MTPmessages_UpdatePinnedMessage::Flag::f_unpin;
+		}
+		session->api().request(MTPmessages_UpdatePinnedMessage(
+			MTP_flags(flags),
+			peer->input(),
+			MTP_int(item->id.bare)
+		)).done([=](const MTPUpdates &result) {
+			session->api().applyUpdates(result);
+		}).send();
+		return Reply(true);
+	});
+}
+
+std::string DeleteMessages(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto revoke = args.value("revoke").toBool();
+	const auto list = args.value("ids").toArray();
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		if (!session || !peerId || list.isEmpty() || list.size() > 100) {
+			return Reply(false, U("нет сообщений для удаления"));
+		}
+		auto ids = MessageIdsList();
+		for (const auto &value : list) {
+			const auto id = MsgId(value.toString().toLongLong());
+			if (const auto item = session->data().message(peerId, id)) {
+				ids.push_back(item->fullId());
+			}
+		}
+		if (ids.empty()) {
+			return Reply(false, U("сообщения не найдены"));
+		}
+		session->data().histories().deleteMessages(ids, revoke);
+		session->data().sendHistoryChangeNotifications();
+		return Reply(true);
+	});
+}
+
 // ---- фильтр скрытия сообщений ----
 
 std::atomic<int> FilterCount = 0;
@@ -957,6 +1117,16 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return CurrentChat(args);
 	} else if (op == "mark_read") {
 		return MarkRead(args);
+	} else if (op == "get_user_info") {
+		return GetUserInfo(args);
+	} else if (op == "get_me") {
+		return GetMe(args);
+	} else if (op == "clipboard_get") {
+		return ClipboardGet(args);
+	} else if (op == "pin_message") {
+		return PinMessage(args);
+	} else if (op == "delete_messages") {
+		return DeleteMessages(args);
 	} else if (op == "send_file") {
 		return SendFile(args);
 	} else if (op == "run_main") {
@@ -996,6 +1166,13 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 }
 
 } // namespace
+
+void EmitChatOpened(PeerData *peer) {
+	if (!peer || !WantEvent("chat_opened")) {
+		return;
+	}
+	QueueEvent("chat_opened", Json(PeerBrief(peer)));
+}
 
 void InstallBridge() {
 	SetBridge(Bridge);

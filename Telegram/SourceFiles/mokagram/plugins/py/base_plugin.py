@@ -69,6 +69,12 @@ class BasePlugin:
     def on_new_message(self, message: dict) -> None: ...
     def on_message_edited(self, message: dict) -> None: ...
     def on_message_deleted(self, message: dict) -> None: ...
+    def on_new_reaction(self, message: dict) -> None: ...   # на ваше сообщение поставили реакцию (поля как у on_new_message)
+
+    # люди и чаты (нужно право messages.read)
+    def on_chat_opened(self, peer: dict) -> None: ...        # {peer, title, username, kind}
+    def on_peer_updated(self, peer: dict) -> None: ...       # + changed: name|username|photo|about|blocked|emoji_status
+    def on_user_status(self, peer: dict) -> None: ...        # + online: bool
 
     # интерфейс
     def add_menu_item(self, item: MenuItem) -> None:

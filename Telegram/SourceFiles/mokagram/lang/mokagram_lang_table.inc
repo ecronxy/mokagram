@@ -733,4 +733,5 @@
 	{ "Эта ссылка уже скачивается.", "This link is already being downloaded." },
 	{ "Сколько стикеров играет одновременно", "How many stickers play at once" },
 	{ "Остальные анимированные стикеры замирают на кадре. 0 значит без ограничения.", "The rest of the animated stickers freeze on a frame. 0 means no limit." },
+	{ "чтение буфера обмена", "reading the clipboard" },
 	{ "Яндекс Музыка", "Yandex Music" },

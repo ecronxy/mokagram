@@ -122,6 +122,7 @@ struct Info {
 	if (key == "messages.delete") return U(Mokagram::Lang::Tr("удаление сообщений"));
 	if (key == "dialogs.read") return U(Mokagram::Lang::Tr("список чатов"));
 	if (key == "storage") return U(Mokagram::Lang::Tr("своё хранилище"));
+	if (key == "clipboard") return U(Mokagram::Lang::Tr("чтение буфера обмена"));
 	if (key == "background") return U(Mokagram::Lang::Tr("фоновые задачи"));
 	return key;
 }

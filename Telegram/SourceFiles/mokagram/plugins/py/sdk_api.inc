@@ -415,6 +415,61 @@ def mark_read(peer):
     return True if _native('mark_read', {'peer': peer}).get('ok') else None
 
 
+def get_user_info(peer):
+    """Сведения о чате или человеке из загруженных: {peer, title, username, kind, about, premium, verified, online, ...}."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('get_user_info', 'messages.read', peer)
+    if entry is None or not ok or not _limit(entry, 'read', 120, 60):
+        return None
+    res = _native('get_user_info', {'peer': peer})
+    return {k: v for k, v in res.items() if k != 'ok'} if res.get('ok') else None
+
+
+def get_me():
+    """Ваш аккаунт: {peer, title, username, premium}."""
+    entry = _gate('get_me', 'messages.read')
+    if entry is None:
+        return None
+    res = _native('get_me', {})
+    return {k: v for k, v in res.items() if k != 'ok'} if res.get('ok') else None
+
+
+def clipboard_get():
+    """Текст из буфера обмена или None. Нужно право clipboard."""
+    entry = _gate('clipboard_get', 'clipboard')
+    if entry is None or not _limit(entry, 'clipboard', 30, 60):
+        return None
+    res = _native('clipboard_get', {})
+    _h['audit'](entry, 'clipboard_get', '', 'allowed' if res.get('ok') else 'failed')
+    return res.get('text') if res.get('ok') else None
+
+
+def pin_message(peer, msg_id, pin=True):
+    """Закрепить или открепить сообщение. Нужно право messages.edit."""
+    peer, msg, ok = _ids(peer, msg_id)
+    entry = _gate('pin_message', 'messages.edit', peer)
+    if entry is None or not ok or not _limit(entry, 'pin', 10, 60):
+        return None
+    res = _native('pin_message', {'peer': peer, 'id': msg, 'pin': bool(pin)})
+    _h['audit'](entry, 'pin_message', peer, 'allowed' if res.get('ok') else 'failed')
+    return True if res.get('ok') else None
+
+
+def delete_messages(peer, msg_ids, revoke=False):
+    """Удалить сообщения (до 100 за раз). revoke=True удаляет и у других. Нужно право messages.delete."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('delete_messages', 'messages.delete', peer)
+    if entry is None or not ok or not isinstance(msg_ids, (list, tuple)) or not 0 < len(msg_ids) <= 100:
+        return None
+    if not _limit(entry, 'delete', 5, 60):
+        _h['say']('[%s] delete_messages: больше 5 удалений в минуту, отказ' % entry['id'])
+        return None
+    ids = [str(int(i)) for i in msg_ids]
+    res = _native('delete_messages', {'peer': peer, 'ids': ids, 'revoke': bool(revoke)})
+    _h['audit'](entry, 'delete_messages', peer, 'allowed' if res.get('ok') else 'failed', len(ids))
+    return True if res.get('ok') else None
+
+
 def register_command(name, handler, description=''):
     """Команда в композере: пользователь пишет /name аргументы, сообщение не уходит, зовётся
     handler(ctx) с ctx = {'args': 'аргументы', 'peer': id чата, 'text': весь текст}."""

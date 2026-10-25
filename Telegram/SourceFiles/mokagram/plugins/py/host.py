@@ -52,10 +52,14 @@ def _moka_parse(source):
                     detected.add('native')
                 if f.attr in ('send_message', 'send_file'):
                     detected.add('messages.send')
-                if f.attr in ('get_message', 'chat_info', 'get_dialogs', 'get_history', 'current_chat', 'mark_read'):
+                if f.attr in ('get_message', 'chat_info', 'get_dialogs', 'get_history', 'current_chat', 'mark_read', 'get_user_info', 'get_me'):
                     detected.add('messages.read')
-                if f.attr == 'edit_message':
+                if f.attr in ('edit_message', 'pin_message'):
                     detected.add('messages.edit')
+                if f.attr == 'delete_messages':
+                    detected.add('messages.delete')
+                if f.attr == 'clipboard_get':
+                    detected.add('clipboard')
     out['meta'] = meta
     out['detected'] = sorted(detected)
     return json.dumps(out, ensure_ascii=False)
@@ -340,7 +344,8 @@ def _activate(entry, source):
 
 # ---- события клиента (новое, изменённое, удалённое сообщение) ----
 
-_EVENTS = ('new_message', 'message_edited', 'message_deleted')
+_EVENTS = ('new_message', 'message_edited', 'message_deleted', 'new_reaction',
+           'chat_opened', 'peer_updated', 'user_status')
 
 
 def _register_events(entry):

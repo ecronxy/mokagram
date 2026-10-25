@@ -5,6 +5,7 @@
 #include "ui/text/text_entity.h"
 
 class HistoryItem;
+class PeerData;
 
 namespace Mokagram::Plugins {
 
@@ -23,5 +24,8 @@ void RunUpdatesHook(const MTPUpdates &updates);
 void TransformMessageText(
 	not_null<const HistoryItem*> item,
 	TextWithEntities &text);
+
+// Открыт чат (событие chat_opened для плагинов).
+void EmitChatOpened(PeerData *peer);
 
 } // namespace Mokagram::Plugins
