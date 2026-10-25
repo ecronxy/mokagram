@@ -2489,6 +2489,102 @@ void HistoryInner::performDrag() {
 	}
 }
 
+void HistoryInner::mokaScreenshot(std::vector<FullMsgId> ids) {
+	if (ids.empty()) {
+		for (const auto selected : _selected) {
+			ids.push_back(selected->fullId());
+		}
+		}
+	auto rows = std::vector<QImage>();
+	auto items = std::vector<not_null<HistoryItem*>>();
+	for (const auto &id : ids) {
+		if (const auto item = _history->owner().message(id)) {
+			items.push_back(item);
+		}
+}
+std::sort(items.begin(), items.end(), [&](auto a, auto b) {
+	const auto va = viewByItem(a);
+	const auto vb = viewByItem(b);
+	return (va && vb) ? (itemTop(va) < itemTop(vb)) : (a->id < b->id);
+});
+// Выделение закрашивает пузыри: на снимке его не должно быть.
+const auto hadSelection = !_selected.empty();
+if (hadSelection) {
+	clearSelected();
+	repaint();
+}
+const auto dpr = std::max(2. + Mokagram::Settings::Int(u"quote.quality"_q), devicePixelRatioF());
+for (const auto item : items) {
+	const auto view = viewByItem(item);
+	if (!view) {
+		continue;
+	}
+	const auto top = itemTop(view);
+	if (top < 0
+		|| top + view->height() <= _visibleAreaTop
+		|| top >= _visibleAreaBottom) {
+		continue;
+	}
+	auto image = QImage(
+		QSize(width(), view->height()) * dpr,
+		QImage::Format_ARGB32_Premultiplied);
+	image.setDevicePixelRatio(dpr);
+	image.fill(Qt::transparent);
+	{
+		// Рисуем элемент сами: сглаживание включено, поэтому
+		// мелкие картинки (углы, эмодзи) не дают ступенек.
+		Painter p(&image);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setRenderHint(QPainter::SmoothPixmapTransform);
+		p.setRenderHint(QPainter::TextAntialiasing);
+		_pathGradient->startFrame(
+			0,
+			width(),
+			std::min(st::msgMaxWidth / 2, width() / 2));
+		auto context = preparePaintContext(
+			QRect(0, top, width(), view->height()));
+		context.highlightPathCache = &_highlightPathCache;
+		context.translate(0, -top);
+		context.outbg = view->hasOutLayout();
+		context.selection = {};
+		context.fullMessageSelected = false;
+		view->draw(p, context);
+	}
+	// Аватарка рисуется у последнего сообщения серии; если её
+	// нет на снимке, подставляем свою в лучшем качестве.
+	if (!item->out()
+		&& item->from()
+		&& (_history->peer->isChat() || _history->peer->isMegagroup())) {
+		auto empty = true;
+		const auto probe = int(48 * dpr);
+		for (auto y = 0; y != image.height() && empty; ++y) {
+			const auto line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+			for (auto x = 0; x != std::min(probe, image.width()); ++x) {
+				if (qAlpha(line[x]) > 6) {
+					empty = false;
+					break;
+				}
+			}
+		}
+		if (empty) {
+			auto p = QPainter(&image);
+			p.setRenderHint(QPainter::Antialiasing);
+			p.setRenderHint(QPainter::SmoothPixmapTransform);
+			auto userpic = item->from()->createUserpicView();
+			const auto size = 40;
+			item->from()->paintUserpic(
+				p,
+				userpic,
+				8,
+				std::max(0, view->height() - size - 4),
+				size);
+		}
+	}
+	rows.push_back(std::move(image));
+}
+Mokagram::Quote::ShowQuoteBox(_controller, std::move(rows), std::move(ids));
+}
+
 void HistoryInner::itemRemoved(not_null<const HistoryItem*> item) {
 	if (_pinnedItem == item) {
 		_pinnedItem = nullptr;
@@ -3731,85 +3827,18 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						_menu->addAction(
 							QString::fromUtf8("Скриншот сообщений"),
 							[=] {
-								auto ids = std::vector<FullMsgId>();
-								for (const auto selected : _selected) {
-									ids.push_back(selected->fullId());
-								}
-								if (ids.empty()) {
-									ids.push_back(itemId);
-								}
-								auto rows = std::vector<QImage>();
-								auto items = std::vector<not_null<HistoryItem*>>();
-								for (const auto &id : ids) {
-									if (const auto item = _history->owner().message(id)) {
-										items.push_back(item);
+								{
+									auto ids = std::vector<FullMsgId>();
+									for (const auto selected : _selected) {
+										ids.push_back(selected->fullId());
 									}
-								}
-								std::sort(items.begin(), items.end(), [&](auto a, auto b) {
-									const auto va = viewByItem(a);
-									const auto vb = viewByItem(b);
-									return (va && vb) ? (itemTop(va) < itemTop(vb)) : (a->id < b->id);
-								});
-								// Выделение закрашивает пузыри: на снимке его не должно быть.
-								const auto hadSelection = !_selected.empty();
-								if (hadSelection) {
-									clearSelected();
-									repaint();
-								}
-								const auto dpr = std::max(2. + Mokagram::Settings::Int(u"quote.quality"_q), devicePixelRatioF());
-								for (const auto item : items) {
-									const auto view = viewByItem(item);
-									if (!view) {
-										continue;
+									if (ids.empty()) {
+										ids.push_back(itemId);
 									}
-									const auto top = itemTop(view);
-									if (top < 0
-										|| top + view->height() <= _visibleAreaTop
-										|| top >= _visibleAreaBottom) {
-										continue;
-									}
-									auto image = QImage(
-										QSize(width(), view->height()) * dpr,
-										QImage::Format_ARGB32_Premultiplied);
-									image.setDevicePixelRatio(dpr);
-									image.fill(Qt::transparent);
-									render(
-										&image,
-										QPoint(),
-										QRegion(QRect(0, top, width(), view->height())),
-										QWidget::DrawChildren);
-									// Аватарка рисуется у последнего сообщения серии; если её
-									// нет на снимке, подставляем свою в лучшем качестве.
-									if (!item->out()
-										&& item->from()
-										&& (_history->peer->isChat() || _history->peer->isMegagroup())) {
-										auto empty = true;
-										const auto probe = int(48 * dpr);
-										for (auto y = 0; y != image.height() && empty; ++y) {
-											const auto line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
-											for (auto x = 0; x != std::min(probe, image.width()); ++x) {
-												if (qAlpha(line[x]) > 6) {
-													empty = false;
-													break;
-												}
-											}
-										}
-										if (empty) {
-											auto p = QPainter(&image);
-											p.setRenderHint(QPainter::Antialiasing);
-											auto userpic = item->from()->createUserpicView();
-											const auto size = 40;
-											item->from()->paintUserpic(
-												p,
-												userpic,
-												8,
-												std::max(0, view->height() - size - 4),
-												size);
-										}
-									}
-									rows.push_back(std::move(image));
+									mokaScreenshot(std::move(ids));
 								}
-								Mokagram::Quote::ShowQuoteBox(_controller, std::move(rows), std::move(ids));
+								// выделенные сообщения берутся внутри, если они есть
+							
 							},
 							&st::menuIconCopy);
 					}

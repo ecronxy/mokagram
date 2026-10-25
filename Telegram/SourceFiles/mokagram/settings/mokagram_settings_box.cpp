@@ -2084,19 +2084,20 @@ void StartDebugCommands() {
 				Effects::PlayDelete(widget, inner, QRect(0, top, inner->width(), 100), true);
 			}
 		} else if (cmd == u"quote"_q) {
-			QWidget *inner = nullptr;
+			HistoryInner *inner = nullptr;
 			for (const auto child : controller->widget()->findChildren<QWidget*>()) {
-				if (dynamic_cast<HistoryInner*>(child)) inner = child;
+				if (const auto cast = dynamic_cast<HistoryInner*>(child)) inner = cast;
 			}
 			if (inner) {
-				const auto dpr = std::max(3., inner->devicePixelRatioF());
-				auto image = QImage(QSize(inner->width(), 190) * dpr, QImage::Format_ARGB32_Premultiplied);
-				image.setDevicePixelRatio(dpr);
-				image.fill(Qt::transparent);
-				inner->render(&image, QPoint(), QRegion(QRect(0, inner->height() - 200, inner->width(), 190)), QWidget::DrawChildren);
-				auto rows = std::vector<QImage>();
-				rows.push_back(std::move(image));
-				Quote::ShowQuoteBox(controller, std::move(rows), {});
+				if (const auto history = controller->activeChatCurrent().history()) {
+					if (const auto last = history->lastMessage()) {
+						auto ids = std::vector<FullMsgId>();
+						for (auto i = 0; i != 4; ++i) {
+							ids.push_back(FullMsgId(history->peer->id, last->id - i));
+						}
+						inner->mokaScreenshot(std::move(ids));
+					}
+				}
 			}
 		} else if (cmd.startsWith(u"mdrag:"_q)) {
 			const auto parts = cmd.mid(6).split(',');

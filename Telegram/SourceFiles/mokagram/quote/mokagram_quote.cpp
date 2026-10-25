@@ -485,7 +485,7 @@ struct Composed {
 		lg.setColorAt(1, g.b);
 		p.setPen(Qt::NoPen);
 		p.setBrush(lg);
-		p.drawRoundedRect(all, 18 * dpr, 18 * dpr);
+		p.drawRect(all);
 	}
 	const auto card = QRectF(fullPad, fullPad, cardW, cardH);
 	const auto radius = 20 * dpr;
