@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
+#include "mokagram/effects/mokagram_effects.h"
 #include <QtWidgets/QGraphicsEffect>
 
 #include "api/api_compose_with_ai.h"

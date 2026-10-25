@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mokagram/appearance/mokagram_appearance.h"
 #include "history/history_inner_widget.h"
+#include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/history/mokagram_history.h"
 
 #include "api/api_polls.h"
@@ -2495,6 +2496,19 @@ void HistoryInner::itemRemoved(not_null<const HistoryItem*> item) {
 	}
 	if (_reactionsItem.current() == item) {
 		_reactionsItem = nullptr;
+	}
+	if (const auto view = viewByItem(item)) {
+		// Mokagram: сообщение рассыпается, если оно сейчас на экране.
+		const auto top = itemTop(view);
+		if (top >= 0
+			&& top + view->height() > _visibleAreaTop
+			&& top < _visibleAreaBottom) {
+			Mokagram::Effects::PlayDelete(
+				_widget,
+				this,
+				QRect(0, top, width(), view->height()),
+				item->out());
+		}
 	}
 	_animatedStickersPlayed.remove(item);
 	_reactionsManager->remove(item->fullId());

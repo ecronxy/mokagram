@@ -20,6 +20,8 @@
 #include "data/data_chat_filters.h"
 #include "data/data_session.h"
 #include "history/history_item.h"
+#include "data/data_histories.h"
+#include "data/data_session.h"
 
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
@@ -2049,6 +2051,18 @@ void StartDebugCommands() {
 					if (f.id() && f.id() == want) {
 						ChooseFilterValidator(history).add(f.id());
 					}
+				}
+			}
+		} else if (cmd == u"enter"_q) {
+			if (const auto w = QApplication::focusWidget()) {
+				auto press = QKeyEvent(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QString(QChar('\r')));
+				QCoreApplication::sendEvent(w, &press);
+			}
+		} else if (cmd == u"dellast"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto item = history->lastMessage(); item && item->originalText().text.startsWith(u"test fx hello"_q)) {
+					history->session().data().histories().deleteMessages({ item->fullId() }, true);
+					history->session().data().histories().sendPendingReadInbox(history);
 				}
 			}
 		} else if (cmd == u"starsstats"_q) {
