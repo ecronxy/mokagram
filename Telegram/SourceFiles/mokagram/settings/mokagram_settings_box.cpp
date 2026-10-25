@@ -2,6 +2,7 @@
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/stars/mokagram_stars_stats.h"
 
 #include <QtWidgets/QApplication>
 
@@ -2050,6 +2051,8 @@ void StartDebugCommands() {
 					}
 				}
 			}
+		} else if (cmd == u"starsstats"_q) {
+			Stars::ShowSpendingStatsBox();
 		} else if (cmd == u"ping"_q) {
 			Mokagram::Misc::ShowPingBox();
 		} else if (cmd == u"player"_q) {

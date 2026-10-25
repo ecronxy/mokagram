@@ -2,6 +2,7 @@
 #include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/misc/mokagram_datereg.h"
 #include "mokagram/misc/mokagram_ping.h"
+#include "mokagram/stars/mokagram_stars_stats.h"
 
 #include "api/api_stickers_creator.h"
 #include "base/unixtime.h"
@@ -120,6 +121,17 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.sectionIcon = u"storage"_q,
 		.action = [] { ShowPingBox(); },
+	});
+	Settings::Register({
+		.key = u"misc.stars_stats"_q,
+		.section = QString::fromUtf8("Профиль"),
+		.title = QString::fromUtf8("Траты звёзд"),
+		.description = QString::fromUtf8("Сколько звёзд потрачено: по месяцам, категориям и получателям."),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString::fromUtf8("Открыть"),
+		.category = u"other"_q,
+		.sectionIcon = u"person"_q,
+		.action = [] { Stars::ShowSpendingStatsBox(); },
 	});
 	RegisterDateRegSettings();
 	Guard::RegisterSettings();
