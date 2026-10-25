@@ -18,7 +18,17 @@
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/view/history_view_element.h"
+#include "core/application.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/layers/generic_box.h"
+#include "ui/vertical_list.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/labels.h"
+#include "ui/wrap/vertical_layout.h"
+#include "styles/style_layers.h"
+#include "styles/style_boxes.h"
+#include "styles/style_widgets.h"
+#include "window/window_controller.h"
 #include "ui/text/text_entity.h"
 #include "window/window_peer_menu.h"
 #include "main/main_session.h"
@@ -62,6 +72,76 @@ namespace S = Mokagram::Settings;
 		| ChatRestriction::SendVoiceMessages
 		| ChatRestriction::SendFiles
 		| ChatRestriction::EmbedLinks;
+}
+
+[[nodiscard]] const QStringList &KnownCommands() {
+	static const auto result = QStringList{
+		u"mute"_q, u"unmute"_q, u"ban"_q, u"unban"_q, u"kick"_q,
+		u"del"_q, u"pin"_q, u"unpin"_q, u"id"_q, u"save"_q,
+	};
+	return result;
+}
+
+// Строки вида «rm = del», по одной на строку.
+[[nodiscard]] std::vector<std::pair<QString, QString>> ParseAliases(
+		const QString &text) {
+	auto result = std::vector<std::pair<QString, QString>>();
+	for (const auto &raw : text.split('\n', Qt::SkipEmptyParts)) {
+		auto line = raw.trimmed();
+		auto parts = line.contains('=')
+			? line.split('=')
+			: line.split(QRegularExpression(u"\\s+"_q));
+		if (parts.size() != 2) {
+			continue;
+		}
+		auto alias = parts[0].trimmed().toLower();
+		auto command = parts[1].trimmed().toLower();
+		while (alias.startsWith('.')) {
+			alias = alias.mid(1);
+		}
+		while (command.startsWith('.')) {
+			command = command.mid(1);
+		}
+		if (!alias.isEmpty() && KnownCommands().contains(command)) {
+			result.emplace_back(alias, command);
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] QString ResolveAlias(const QString &word) {
+	for (const auto &[alias, command] : ParseAliases(
+			S::String(u"commands.aliases"_q))) {
+		if (alias == word) {
+			return command;
+		}
+	}
+	return word;
+}
+
+[[nodiscard]] QString CommandsHelp() {
+	auto lines = QStringList{
+		U(".mute [30m|2h|1d] глушит чат, а ответом на сообщение в группе запрещает человеку писать"),
+		U(".unmute включает звук чата или снимает запрет писать"),
+		U(".ban исключает человека (в группе, ответом) или блокирует его в личке"),
+		U(".unban снимает бан или разблокирует человека"),
+		U(".kick исключает человека, но он может вернуться (ответом, в группе)"),
+		U(".del удаляет сообщение, на которое ответил"),
+		U(".del N удаляет твои последние N сообщений (с ответом: N сообщений того человека)"),
+		U(".del all с ответом удаляет все сообщения человека в группе, без ответа все твои загруженные"),
+		U(".pin / .unpin закрепляет или открепляет сообщение (ответом)"),
+		U(".id показывает ID автора, чата и сообщения, ссылку на сообщение"),
+		U(".save пересылает сообщение (ответом) в «Избранное»"),
+	};
+	const auto aliases = ParseAliases(S::String(u"commands.aliases"_q));
+	if (!aliases.empty()) {
+		lines.push_back(QString());
+		lines.push_back(U("Твои алиасы:"));
+		for (const auto &[alias, command] : aliases) {
+			lines.push_back(U(".") + alias + U(" = .") + command);
+		}
+	}
+	return lines.join('\n');
 }
 
 [[nodiscard]] QString MessageLink(not_null<HistoryItem*> item) {
@@ -130,7 +210,16 @@ void RegisterSettings() {
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 		.category = u"chats"_q,
-		.sectionIcon = u"chats"_q,
+		.hidden = true,
+	});
+	S::Register({
+		.key = u"commands.aliases"_q,
+		.section = U("Быстрые команды"),
+		.title = U("Алиасы"),
+		.kind = S::Kind::String,
+		.defaultValue = QString(),
+		.category = u"chats"_q,
+		.hidden = true,
 	});
 }
 
@@ -143,15 +232,19 @@ bool Handle(
 		return false;
 	}
 	static const auto re = QRegularExpression(
-		u"^\\.(mute|unmute|ban|unban|kick|del|pin|unpin|id|save)(?:\\s+(\\d+)\\s*([mhdwмчдн]?))?$"_q,
+		u"^\\.([\\p{L}\\d_]+)(?:\\s+(all|\\d+)\\s*([mhdwмчдн]?))?$"_q,
 		QRegularExpression::CaseInsensitiveOption);
 	const auto match = re.match(text.text.trimmed());
 	if (!match.hasMatch()) {
 		return false;
 	}
-	const auto command = match.captured(1).toLower();
+	const auto command = ResolveAlias(match.captured(1).toLower());
+	if (!KnownCommands().contains(command)) {
+		return false;
+	}
+	const auto all = (match.captured(2).toLower() == u"all"_q);
 	auto seconds = 0;
-	if (!match.captured(2).isEmpty()) {
+	if (!all && !match.captured(2).isEmpty()) {
 		const auto count = match.captured(2).toInt();
 		const auto unit = match.captured(3).toLower();
 		seconds = count * ((unit == u"h"_q || unit == u"ч"_q) ? 3600
@@ -215,12 +308,31 @@ bool Handle(
 	}
 	if (command == u"del"_q) {
 		auto ids = MessageIdsList();
-		const auto limit = std::clamp(
-			(seconds > 0) ? match.captured(2).toInt() : 1,
-			1,
-			100);
+		const auto limit = all
+			? 1000000
+			: std::clamp(
+				match.captured(2).isEmpty() ? 1 : match.captured(2).toInt(),
+				1,
+				100);
 		const auto byUser = replied ? replied->from().get() : nullptr;
-		if (replied && match.captured(2).isEmpty()) {
+		if (all && byUser && channel && channel->canDeleteMessages()) {
+			const auto name = byUser->name();
+			controller->show(Ui::MakeConfirmBox({
+				.text = TextWithEntities{
+					U("Удалить все сообщения «%1» в этом чате?").arg(name) },
+				.confirmed = [=](Fn<void()> close) {
+					channel->session().api().deleteAllFromParticipant(
+						channel,
+						byUser);
+					close();
+				},
+				.confirmText = U("Удалить всё"),
+				.cancelText = U("Отмена"),
+				.title = rpl::single(U("Удаление")),
+			}));
+			return true;
+		}
+		if (replied && match.captured(2).isEmpty() && !all) {
 			if (replied->canDelete()) {
 				ids.push_back(replied->fullId());
 			}
@@ -358,6 +470,57 @@ bool Handle(
 	}
 	toast(U("В группе ответь командой на сообщение человека"));
 	return true;
+}
+
+void ShowCommandsBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(U("Быстрые команды")));
+		box->setWidth(440);
+		const auto content = box->verticalLayout();
+		const auto enabled = content->add(
+			object_ptr<Ui::Checkbox>(
+				content,
+				U("Включить команды"),
+				S::Bool(u"commands.enabled"_q),
+				st::defaultCheckbox),
+			QMargins(22, 10, 22, 6));
+		enabled->checkedChanges() | rpl::on_next([=](bool on) {
+			S::SetBool(u"commands.enabled"_q, on);
+		}, enabled->lifetime());
+		content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				U("Напиши в поле ввода только команду и отправь: сообщение не уйдёт, команда выполнится."),
+				st::boxLabel),
+			QMargins(22, 4, 22, 8));
+		Ui::AddSubsectionTitle(content, rpl::single(U("Команды")));
+		content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				CommandsHelp(),
+				st::boxLabel),
+			QMargins(22, 4, 22, 8));
+		Ui::AddSubsectionTitle(content, rpl::single(U("Алиасы")));
+		content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				U("Свои короткие имена. По одной строке: имя = команда, например rm = del."),
+				st::boxLabel),
+			QMargins(22, 4, 22, 4));
+		const auto field = content->add(
+			object_ptr<Ui::InputField>(
+				content,
+				st::defaultInputField,
+				Ui::InputField::Mode::MultiLine,
+				rpl::single(U("Алиасы")),
+				S::String(u"commands.aliases"_q)),
+			QMargins(22, 4, 22, 8));
+		box->addButton(rpl::single(U("Сохранить")), [=] {
+			S::SetString(u"commands.aliases"_q, field->getLastText());
+			box->closeBox();
+		});
+		box->addButton(rpl::single(U("Закрыть")), [=] { box->closeBox(); });
+	}));
 }
 
 } // namespace Mokagram::Commands

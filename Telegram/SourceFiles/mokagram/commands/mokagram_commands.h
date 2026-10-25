@@ -22,4 +22,7 @@ void RegisterSettings();
 	const TextWithTags &text,
 	FullReplyTo replyTo);
 
+// Окно со списком команд и алиасами (кнопка в настройках mokaGram).
+void ShowCommandsBox(not_null<Window::SessionController*> controller);
+
 } // namespace Mokagram::Commands

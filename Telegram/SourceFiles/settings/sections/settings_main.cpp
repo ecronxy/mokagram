@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_main.h"
+
+#include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/ui/mokagram_glass.h"
 
 #include "settings/settings_common_session.h"
@@ -431,6 +433,15 @@ void MokagramSettings::setupContent() {
 				Mokagram::Settings::ShowCustomizeBox(controller);
 			},
 			.keywords = { u"customize"_q, u"mokagram"_q },
+		});
+		builder.addButton({
+			.id = u"main/commands"_q,
+			.title = rpl::single(QString::fromUtf8("Быстрые команды")),
+			.icon = { &st::menuIconChats },
+			.onClick = [=] {
+				Mokagram::Commands::ShowCommandsBox(controller);
+			},
+			.keywords = { u"commands"_q, u"alias"_q, u"mute"_q, u"ban"_q },
 		});
 		builder.addSkip();
 	};
