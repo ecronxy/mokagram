@@ -308,7 +308,7 @@ namespace {
 struct State {
 	base::flat_set<quint64> users;
 	base::flat_set<quint64> remote;
-	DocumentId icon = 5397879498492389616ULL;
+	DocumentId icon = 5400163321582236772ULL;
 	bool loaded = false;
 };
 
@@ -363,14 +363,33 @@ struct TeamEntry {
 	const char *name;
 	const char *ru;
 	const char *en;
+	bool blue;
 };
 constexpr TeamEntry kTeam[] = {
-	{ "litteraliy", "Разработчик mokaGram", "Maintainer mokaGram" },
+	{ "litteraliy", "Разработчик mokaGram", "Maintainer mokaGram", false },
+	{ "xdshka", "Разработчик mokaGram", "Maintainer mokaGram", true },
 };
 constexpr auto kOwnerId = 6612638154ULL;
 
 [[nodiscard]] bool Russian() {
 	return ::Lang::Id().startsWith(u"ru"_q);
+}
+
+constexpr auto kBlueIcon = 5397879498492389616ULL;
+
+[[nodiscard]] bool BlueIcon(not_null<UserData*> user) {
+	if (peerToUser(user->id).bare == kOwnerId) {
+		return true;
+	}
+	for (const auto &username : user->usernames()) {
+		const auto lower = username.toLower().toUtf8();
+		for (const auto &entry : kTeam) {
+			if (entry.blue && lower == entry.name) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 [[nodiscard]] const char *TeamRole(not_null<UserData*> user) {
@@ -406,7 +425,7 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	}
 	return Ui::BotVerifyDetails{
 		.botId = UserId(0),
-		.iconId = state.icon,
+		.iconId = BlueIcon(user) ? kBlueIcon : state.icon,
 		.description = TextWithEntities{
 			QString::fromUtf8(role ? role : (state.remote.contains(id) ? Mokagram::Lang::Tr("Поддерживает mokaGram") : Mokagram::Lang::Tr("Разработчик mokaGram"))),
 		},
