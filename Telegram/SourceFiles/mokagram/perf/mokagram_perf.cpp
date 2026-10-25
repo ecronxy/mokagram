@@ -85,7 +85,12 @@ void Start() {
 			data.looking = true;
 			idleTimer.stop();
 			data.idleEconomy = false;
-			Apply();
+			// Смена фокуса приходит как системное событие, вне цикла событий приложения.
+			// Apply() запускает анимации и откладывает вызовы, а это допустимо только
+			// внутри обработки события, поэтому уходим в очередь.
+			QMetaObject::invokeMethod(qApp, [] {
+				Apply();
+			}, Qt::QueuedConnection);
 		} else {
 			data.looking = false;
 			idleTimer.start();
