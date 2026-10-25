@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_peer.h"
 
+#include "mokagram/avatar/mokagram_avatar_shape.h"
+
 #include "api/api_sensitive_content.h"
 #include "data/data_user.h"
 #include "data/data_chat.h"
@@ -453,12 +455,18 @@ void PeerData::paintUserpic(
 	if (context.shape == Ui::PeerUserpicShape::Auto) {
 		context.shape = userpicShape();
 	}
-	Ui::ValidateUserpicCache(
-		view,
-		cloud,
-		cloud ? nullptr : ensureEmptyUserpic().get(),
-		size * ratio,
-		context.shape);
+	{
+		const auto mokaShape = Mokagram::Avatar::Scope(
+			(context.shape == Ui::PeerUserpicShape::Monoforum)
+				? 0
+				: Mokagram::Avatar::ShapeFor(this));
+		Ui::ValidateUserpicCache(
+			view,
+			cloud,
+			cloud ? nullptr : ensureEmptyUserpic().get(),
+			size * ratio,
+			context.shape);
+	}
 	p.drawImage(QRect(context.position, QSize(size, size)), view.cached);
 }
 

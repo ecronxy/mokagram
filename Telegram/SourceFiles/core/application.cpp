@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/quote/mokagram_quote.h"
 #include "mokagram/scam/mokagram_scam.h"
+#include "mokagram/avatar/mokagram_avatar_shape.h"
+#include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/streamer/mokagram_streamer.h"
@@ -345,6 +347,8 @@ void Application::run() {
 	Mokagram::Effects::RegisterSettings();
 	Mokagram::Quote::RegisterSettings();
 	Mokagram::Scam::RegisterSettings();
+	Mokagram::Avatar::RegisterSettings();
+	Mokagram::Commands::RegisterSettings();
 	Mokagram::Settings::StartDebugCommands();
 	Mokagram::Plugins::Start([](const std::string &line) {
 		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
