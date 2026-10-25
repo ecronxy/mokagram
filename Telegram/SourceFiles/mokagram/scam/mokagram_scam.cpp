@@ -57,17 +57,6 @@ void RegisterSettings() {
 		.category = u"privacy"_q,
 		.sectionIcon = u"block"_q,
 	});
-	S::Register({
-		.key = u"scam.test"_q,
-		.section = U("Защита от скама"),
-		.title = U("Проверять и мои сообщения (для теста)"),
-		.description = U("Обычно плашка ставится только на чужие сообщения. Включи, напиши себе в «Избранное» текст скамера и увидишь, как он будет помечен. Новые сообщения после включения."),
-		.kind = S::Kind::Bool,
-		.defaultValue = false,
-		.dependsOn = u"scam.enabled"_q,
-		.category = u"privacy"_q,
-		.sectionIcon = u"block"_q,
-	});
 }
 
 namespace {
@@ -113,6 +102,35 @@ bool BypassLinkGuard = false;
 		"(playerok|funpay|plati|fanpay|player0k)\\W{0,3}(гарант|garant|escrow))"_q,
 		QRegularExpression::CaseInsensitiveOption);
 	return re.match(text).hasMatch();
+}
+
+// «Профиль заблокирован, пройдите верификацию»: пугалка с кнопкой на
+// фишинговый мини-апп, обычно через inline-бота.
+[[nodiscard]] bool AlarmText(const QString &text) {
+	static const auto re = QRegularExpression(
+		u"(profile (has been|is|was) (blocked|restricted|frozen|suspended|limited)|"
+		"account (has been|is|was) (blocked|restricted|frozen|suspended|limited)|"
+		"unlock (your )?(profile|account|wallet)|"
+		"(profile|account|wallet|identity) verification|"
+		"verif(y|ication) (to|in order to) (confirm|unlock|restore|continue)|"
+		"account will be (deleted|removed|closed|banned)|"
+		"assets? will be (burned|lost|frozen|deleted)|"
+		"deposit error|pending limits|"
+		"(профиль|аккаунт) (был |была |будет )?(заблокирован|ограничен|заморожен|удал)|"
+		"разблокир\\w+ (профиль|аккаунт|кошел)|"
+		"пройдите верификацию|подтвердите (личность|профиль)|"
+		"активы будут (сожжены|утеряны|заморожены))"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	// Одной фразы мало: в обычной переписке тоже бывает «верификация».
+	auto count = 0;
+	auto i = re.globalMatch(text);
+	while (i.hasNext()) {
+		i.next();
+		if (++count >= 2) {
+			return true;
+		}
+	}
+	return false;
 }
 
 [[nodiscard]] QString HostOf(const QString &url) {
@@ -207,8 +225,7 @@ bool BypassLinkGuard = false;
 void MarkText(
 		not_null<const HistoryItem*> item,
 		TextWithEntities &text) {
-	const auto testing = qEnvironmentVariableIsSet("MOKAGRAM_SCAM_TEST")
-		|| S::Bool(u"scam.test"_q);
+	const auto testing = qEnvironmentVariableIsSet("MOKAGRAM_SCAM_TEST");
 	if (!S::Bool(u"scam.enabled"_q)
 		|| item->isService()
 		|| (item->out() && !testing)
@@ -224,6 +241,7 @@ void MarkText(
 	const auto user = from->asUser();
 	const auto stranger = testing || !user || !user->isContact();
 	const auto suspicious = OfferText(text.text)
+		|| AlarmText(text.text)
 		|| HasBadLink(text)
 		|| (stranger && (BuyerBait(text.text) || GarantMention(text.text)));
 	if (!suspicious) {
