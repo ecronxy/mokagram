@@ -2,6 +2,7 @@
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/msginfo/mokagram_message_info.h"
 #include "mokagram/stars/mokagram_stars_stats.h"
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/quote/mokagram_quote.h"
@@ -2470,6 +2471,12 @@ void StartDebugCommands() {
 			Core::App().openLocalUrl(cmd.mid(4), {});
 		} else if (cmd == u"menu"_q) {
 			controller->widget()->showMainMenu();
+		} else if (cmd == u"msginfo"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto item = history->lastMessage()) {
+					Mokagram::MessageInfo::Show(controller, item);
+				}
+			}
 		} else if (cmd == u"copyauthor"_q) {
 			if (const auto history = controller->activeChatCurrent().history()) {
 				if (const auto item = history->lastMessage()) {

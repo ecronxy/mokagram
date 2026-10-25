@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mokagram/appearance/mokagram_appearance.h"
 #include "history/history_inner_widget.h"
+#include "mokagram/msginfo/mokagram_message_info.h"
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/quote/mokagram_quote.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -3463,6 +3464,16 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 		}
 		addItemActions(item, item);
 		if (item || isUponSelected > 0) {
+			if (item && isUponSelected <= 0) {
+				_menu->addAction(
+					QString::fromUtf8("Информация о сообщении"),
+					[=] {
+						if (const auto strong = _controller->session().data().message(itemId)) {
+							Mokagram::MessageInfo::Show(_controller, strong);
+						}
+					},
+					&st::menuIconInfo);
+			}
 			// Mokagram: скриншот выбранных сообщений (или одного).
 			_menu->addAction(
 				QString::fromUtf8("Скриншот сообщений"),
@@ -3789,6 +3800,16 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}, &st::menuIconLink);
 		}
 		if (item || isUponSelected > 0) {
+			if (item && isUponSelected <= 0) {
+				_menu->addAction(
+					QString::fromUtf8("Информация о сообщении"),
+					[=] {
+						if (const auto strong = _controller->session().data().message(itemId)) {
+							Mokagram::MessageInfo::Show(_controller, strong);
+						}
+					},
+					&st::menuIconInfo);
+			}
 			// Mokagram: скриншот выбранных сообщений (или одного).
 			_menu->addAction(
 				QString::fromUtf8("Скриншот сообщений"),
