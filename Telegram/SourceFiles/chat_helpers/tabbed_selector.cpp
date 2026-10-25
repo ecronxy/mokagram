@@ -796,18 +796,17 @@ void TabbedSelector::updateTabsSliderGeometry() {
 	const auto w = (mediaEditor() && hasMasksTab() && masks()->mySetsEmpty())
 		? width() / 2
 		: width();
-	_tabsSlider->resizeToWidth(w);
-	_tabsSlider->moveToLeft(0, 0);
+	// Mokagram: пилюли не прижаты к краям панели.
+	constexpr auto kSide = 10;
+	_tabsSlider->resizeToWidth(w - 2 * kSide);
+	_tabsSlider->moveToLeft(kSide, 0);
 }
 
 void TabbedSelector::resizeEvent(QResizeEvent *e) {
 	updateTabsSliderGeometry();
 	if (_topShadow && _tabsSlider) {
-		_topShadow->setGeometry(
-			_tabsSlider->x(),
-			_tabsSlider->bottomNoMargins() - st::lineWidth,
-			_tabsSlider->width(),
-			st::lineWidth);
+		// Mokagram: линии под пилюлями нет.
+		_topShadow->setGeometry(0, 0, 0, 0);
 	}
 	updateScrollGeometry(e->oldSize());
 	updateRestrictedLabelGeometry();
@@ -820,13 +819,15 @@ void TabbedSelector::contextMenuEvent(QContextMenuEvent *e) {
 }
 
 void TabbedSelector::updateScrollGeometry(QSize oldSize) {
-	auto scrollWidth = width() - st::emojiPanRadius;
+	// Mokagram: радиус панели больше не двигает содержимое.
+	constexpr auto kScrollLeft = 10;
+	auto scrollWidth = width() - 2 * kScrollLeft;
 	auto scrollHeight = height() - scrollTop() - scrollBottom();
 	auto inner = currentTab()->widget();
-	auto innerWidth = scrollWidth - _st.scroll.width;
+	auto innerWidth = scrollWidth;
 	auto setScrollGeometry = [&] {
 		_scroll->setGeometryToLeft(
-			st::emojiPanRadius,
+			kScrollLeft,
 			scrollTop(),
 			scrollWidth,
 			scrollHeight);
@@ -969,13 +970,8 @@ void TabbedSelector::paintContent(QPainter &p) {
 	if (_restrictedLabel) {
 		p.fillRect(0, sidesTop, width(), sidesHeight, st::emojiPanBg);
 	} else {
-		p.fillRect(
-			myrtlrect(
-				width() - _st.scroll.width,
-				sidesTop,
-				_st.scroll.width,
-				sidesHeight),
-			_st.bg);
+		// Mokagram: боковые поля тоже закрашены (скролл отступает от краёв).
+		p.fillRect(0, sidesTop, width(), sidesHeight, _st.bg);
 		p.fillRect(
 			myrtlrect(0, sidesTop, st::emojiPanRadius, sidesHeight),
 			_st.bg);

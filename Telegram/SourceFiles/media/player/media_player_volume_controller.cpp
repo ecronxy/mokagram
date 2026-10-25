@@ -97,12 +97,11 @@ void PrepareVolumeDropdown(
 		const auto inner = rect.marginsRemoved(dropdown->getMargin());
 		volume->setGeometry(
 			inner.x(),
-			inner.y() - st::lineWidth,
+			inner.y() - st::lineWidth + 8,
 			inner.width(),
 			(inner.height()
 				+ st::lineWidth
-				- ((st::mediaPlayerVolumeSize.width()
-					- st::mediaPlayerPanelPlayback.width) / 2)));
+				- 14));
 	}, volume->lifetime());
 
 	std::move(

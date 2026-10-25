@@ -28,9 +28,14 @@ namespace Mokagram::Settings {
 
 void CustomizeBox(
 	not_null<Ui::GenericBox*> box,
-	Window::SessionController *controller);
+	Window::SessionController *controller,
+	QString page = u"look"_q);
 
 void ShowCustomizeBox(Window::SessionController *controller);
+// Страницы: privacy, security, history, chats, music, system, tools (look = Кастомизация).
+void ShowSettingsPage(
+	Window::SessionController *controller,
+	const QString &page);
 void StartDebugCommands();
 
 // Значок строки настроек из набора iOSTelegram; nullptr, если для значка
@@ -50,5 +55,8 @@ void StartDebugCommands();
 [[nodiscard]] bool HasRowIcon(const void *icon);
 // Грузит набор значков заранее, чтобы к открытию настроек он уже был.
 void PreloadRowIcons(not_null<Main::Session*> session);
+
+// Страница «Быстрые команды» в настройках mokaGram.
+void ShowCommandsPage(Window::SessionController *controller);
 
 } // namespace Mokagram::Settings

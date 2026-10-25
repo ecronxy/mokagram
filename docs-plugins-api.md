@@ -1,0 +1,50 @@
+# Mokagram: API плагинов (Python)
+
+Файл `.plugin` с классом, наследующим `BasePlugin`. Метаданные: `__id__`, `__name__`, `__description__`, `__author__`, `__version__`, `__permissions__`.
+`from base_plugin import ...` и `from mokagram_sdk import api` (или `import moka`).
+
+## Права
+`messages.read` (чтение, события, chat_info), `messages.send` (send_message, send_file), `messages.edit`, `network`, `files`.
+Без права вызов возвращает `None`, плагин не падает. Всё пишется в журнал действий. Выдаются при установке.
+
+## Пункты интерфейса
+`self.add_menu_item(MenuItemData(menu_type=..., text, on_click(ctx), icon, priority, condition))` возвращает id, `remove_menu_item(id)`.
+Кнопки с иконкой: `HEADER_BUTTON` (шапка чата), `COMPOSER_BUTTON` (рядом с полем ввода), ctx: peer, title, kind, username.
+Места меню: `MESSAGE_CONTEXT_MENU` (ctx: id, peer, text, selected, out, has_media, date), `CHAT_ACTION_MENU` (меню чата и строки списка),
+`PROFILE_ACTION_MENU`, `ATTACH_MENU` (скрепка), `DRAWER_MENU`/`MAIN_MENU` (боковое меню). Для чатов ctx: peer, title, kind, username.
+Иконки по имени: copy, delete, edit, info, send, settings, search, translate, share, link, pin, forward, reply, bot, lock, palette, premium, timer и ещё ~70 (см. `MenuIconByName`).
+
+## Окна и тосты
+`api.show_dialog(title, message, fields, buttons, on_result(button_id, values), on_close)` -> id.
+Поля: `Header, Text, Switch, Selector, Input` из base_plugin или dict `{'type': 'progress', 'default': 40}`.
+`api.update_dialog(id, message=, progress=, title=)`, `api.close_dialog(id)`, `api.confirm(...)`, `api.prompt(...)`.
+`api.show_toast(text)`, `api.show_bulletin(text, kind, subtitle, button, on_click, duration)`.
+
+## События (право messages.read)
+`on_new_message(m)`, `on_message_edited(m)`, `on_message_deleted(m)`; m: id, peer, peer_title, from, text, out, date, has_media, reply_to.
+
+## Действия
+`send_message`, `send_file(peer, path, caption, as_photo)`, `edit_message(peer, id, text)`, `get_message(peer, id)`, `chat_info(peer)`,
+`open_chat(peer)`, `open_url(url)`, `copy_text(text)`.
+`get_dialogs(limit)`, `get_history(peer, limit)` (только загруженные), `current_chat()`, `mark_read(peer)`.
+Команды в композере: `api.register_command('name', handler, description)`: пишешь `/name аргументы`, сообщение не уходит, зовётся `handler({'args', 'peer', 'text'})`.
+
+## Скрытие сообщений
+`message_filter_hook(m)` возвращает True, чтобы скрыть сообщение у себя (на сервере ничего не меняется). Вызывается один раз на сообщение, результат кэшируется. Нужно право `messages.read`.
+
+## Замена текста
+`message_text_hook(m)` (m: id, peer, text, date) возвращает новую строку или None. Работает для входящих сообщений при показе, на сервере ничего не меняется; копирование и поиск видят уже новый текст. Форматирование (жирный, ссылки-сущности) в заменённом тексте теряется, обычные ссылки определяются заново. Нужно право `messages.read`.
+
+## Потоки и таймеры
+`set_timeout(fn, sec)`, `set_interval(fn, sec)`, `cancel_timer(id)`, `run_on_ui_thread(fn, delay_ms)`, `run_on_queue(fn, delay_ms)`.
+
+## Хранилище и настройки
+`api.storage` (get/set/delete/keys), `get_setting/set_setting`, `create_settings()` со списком Header/Switch/Selector/Input/Text/Divider.
+
+## Настройки плагина
+`create_settings()` возвращает `Header(text)` (начинает новую группу), `Switch`, `Selector`, `Input`, `Text` и `Button(text, subtext, icon, on_click)`. `Button` (или `Text` с `on_click`) это строка-кнопка в Кастомизация → Плагины; из `on_click` можно открыть `show_dialog` как подстраницу.
+
+## Хуки
+`send_message_hook(params)`, `on_update_hook`, `on_updates_hook`, `pre_request_hook`, `post_request_hook` с `HookResult(strategy, value)`.
+
+Пример со всем сразу: `examples/showcase.plugin`.

@@ -679,8 +679,10 @@ std::vector<ForwardRange> CollectForwardRanges(
 				item)) {
 			continue;
 		}
+		// Mokagram: сервер принимает не больше 100 сообщений за запрос.
 		if (result.empty()
-			|| result.back().fromEphemeral != fromEphemeral) {
+			|| result.back().fromEphemeral != fromEphemeral
+			|| result.back().items.size() >= 100) {
 			result.push_back({ .fromEphemeral = fromEphemeral });
 		}
 		result.back().items.push_back(item);

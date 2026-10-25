@@ -5,7 +5,12 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "history/history_inner_widget.h"
+#include "mokagram/msginfo/mokagram_message_info.h"
+#include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/quote/mokagram_quote.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/history/mokagram_history.h"
 
 #include "api/api_polls.h"
@@ -2496,6 +2501,19 @@ void HistoryInner::itemRemoved(not_null<const HistoryItem*> item) {
 	if (_reactionsItem.current() == item) {
 		_reactionsItem = nullptr;
 	}
+	if (const auto view = viewByItem(item)) {
+		// Mokagram: сообщение рассыпается, если оно сейчас на экране.
+		const auto top = itemTop(view);
+		if (top >= 0
+			&& top + view->height() > _visibleAreaTop
+			&& top < _visibleAreaBottom) {
+			Mokagram::Effects::PlayDelete(
+				_widget,
+				this,
+				QRect(0, top, width(), view->height()),
+				item->out());
+		}
+	}
 	_animatedStickersPlayed.remove(item);
 	_reactionsManager->remove(item->fullId());
 	_replyButtonManager->remove(item->fullId());
@@ -3295,7 +3313,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 				}
 				const auto start = (topToBottom ? nearestItem : toItem);
 				const auto end = (topToBottom ? toItem : nearestItem);
-				const auto left = MaxSelectedItems
+				const auto left = Mokagram::Appearance::SelectionLimit()
 					- selectedState.count
 					+ (topToBottom ? 0 : 1);
 				if (collectBetween(start, end, left).empty()) {
@@ -3445,6 +3463,34 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}
 		}
 		addItemActions(item, item);
+		if (item || isUponSelected > 0) {
+			if (item && isUponSelected <= 0) {
+				_menu->addAction(
+					QString::fromUtf8("Информация о сообщении"),
+					[=] {
+						if (const auto strong = _controller->session().data().message(itemId)) {
+							Mokagram::MessageInfo::Show(_controller, strong);
+						}
+					},
+					&st::menuIconInfo);
+			}
+			// Mokagram: скриншот выбранных сообщений (или одного).
+			_menu->addAction(
+				QString::fromUtf8("Скриншот сообщений"),
+				[=] {
+					auto ids = std::vector<FullMsgId>();
+					if (isUponSelected > 0) {
+						for (const auto selected : _selected) {
+							ids.push_back(selected->fullId());
+						}
+					}
+					if (ids.empty()) {
+						ids.push_back(itemId);
+					}
+					Mokagram::Quote::ShowQuoteBox(_controller, std::move(ids));
+				},
+				&st::menuIconCopy);
+		}
 		if (!selectedState.count) {
 			if (lnkPhoto) {
 				addPhotoActions(lnkPhoto, item);
@@ -3752,6 +3798,36 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			_menu->addAction(item->history()->peer->isMegagroup() ? tr::lng_context_copy_message_link(tr::now) : tr::lng_context_copy_post_link(tr::now), [=] {
 				HistoryView::CopyPostLink(controller, itemId, HistoryView::Context::History);
 			}, &st::menuIconLink);
+		}
+		if (item || isUponSelected > 0) {
+			if (item && isUponSelected <= 0) {
+				_menu->addAction(
+					QString::fromUtf8("Информация о сообщении"),
+					[=] {
+						if (const auto strong = _controller->session().data().message(itemId)) {
+							Mokagram::MessageInfo::Show(_controller, strong);
+						}
+					},
+					&st::menuIconInfo);
+			}
+			// Mokagram: скриншот выбранных сообщений (или одного).
+			_menu->addAction(
+				QString::fromUtf8("Скриншот сообщений"),
+				[=] {
+					auto ids = std::vector<FullMsgId>();
+					if (isUponSelected > 0) {
+						for (const auto selected : _selected) {
+							ids.push_back(selected->fullId());
+						}
+					}
+					if (ids.empty() && itemId) {
+						ids.push_back(itemId);
+					}
+					if (!ids.empty()) {
+						Mokagram::Quote::ShowQuoteBox(_controller, std::move(ids));
+					}
+				},
+				&st::menuIconCopy);
 		}
 		if (item
 			&& !sponsored
@@ -6100,7 +6176,7 @@ void HistoryInner::changeSelection(
 	const auto add = (action == SelectAction::Select);
 	if (add
 		&& goodForSelection(toItems, item, total)
-		&& total <= MaxSelectedItems) {
+		&& total <= Mokagram::Appearance::SelectionLimit()) {
 		addToSelection(toItems, item);
 	} else {
 		removeFromSelection(toItems, item);
@@ -6127,7 +6203,7 @@ void HistoryInner::changeSelectionAsGroup(
 				return false;
 			}
 		}
-		return (total <= MaxSelectedItems);
+		return (total <= Mokagram::Appearance::SelectionLimit());
 	}();
 	if (action == SelectAction::Select && canSelect) {
 		for (const auto &other : group->items) {
@@ -6395,7 +6471,7 @@ void HistoryInner::addSelectionRange(
 				auto item = block->messages[fromitem]->data();
 				changeSelectionAsGroup(toItems, item, SelectAction::Select);
 			}
-			if (toItems->size() >= MaxSelectedItems) break;
+			if (toItems->size() >= Mokagram::Appearance::SelectionLimit()) break;
 			fromitem = 0;
 		}
 	}

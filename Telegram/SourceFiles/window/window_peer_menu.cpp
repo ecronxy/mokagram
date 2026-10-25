@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
 #include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/history/mokagram_history.h"
@@ -353,6 +354,9 @@ private:
 	void addExportChat();
 	void addMokagramHistory();
 	void addMokagramGhost();
+	void addMokagramPlugins(const QString &location);
+	void addMokagramDeleteMine();
+	void addMokagramToStart();
 	void addMokagramGuard();
 	void addTranslate();
 	void addReport();
@@ -1144,6 +1148,49 @@ void Filler::addMokagramGhost() {
 			: QString::fromUtf8("Призрак: не скрывать прочтение здесь"),
 		[=] { Mokagram::Ghost::ToggleReadException(peer); },
 		&st::menuIconRestore);
+}
+
+void Filler::addMokagramPlugins(const QString &location) {
+	if (!_peer || (_thread && _thread->asTopic())) {
+		return;
+	}
+	Mokagram::Plugins::AddPeerMenuItems(
+		location,
+		_peer,
+		[&](const QString &text, Fn<void()> handler, const style::icon *icon) {
+			_addAction(text, std::move(handler), icon);
+		});
+}
+
+void Filler::addMokagramDeleteMine() {
+	if (!_peer
+		|| (_thread && _thread->asTopic())
+		|| !Mokagram::History::CanDeleteMyMessages(_peer)) {
+		return;
+	}
+	const auto peer = _peer;
+	const auto controller = _controller;
+	_addAction(
+		QString::fromUtf8("Удалить все мои сообщения"),
+		[=] { Mokagram::History::ShowDeleteMyMessages(controller, peer); },
+		&st::menuIconDelete);
+}
+
+void Filler::addMokagramToStart() {
+	if (!_peer || (_thread && _thread->asTopic())) {
+		return;
+	}
+	const auto peer = _peer;
+	const auto controller = _controller;
+	_addAction(
+		QString::fromUtf8("В начало чата"),
+		[=] {
+			controller->showPeerHistory(
+				peer,
+				SectionShow::Way::Forward,
+				MsgId(1));
+		},
+		&st::menuIconAbove);
 }
 
 void Filler::addMokagramGuard() {
@@ -2007,12 +2054,14 @@ void Filler::fillContextMenuActions() {
 	addToggleFolder();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPlugins(u"chat"_q);
 	if (const auto user = _peer->asUser()) {
 		if (!user->isContact()) {
 			addBlockUser();
 		}
 	}
 	addBanFromChannel();
+	addMokagramDeleteMine();
 	addClearHistory();
 	addDeleteChat();
 	addLeaveChat();
@@ -2023,6 +2072,7 @@ void Filler::fillHistoryActions() {
 	addToggleMuteSubmenu(true);
 	addCreateTopic();
 	addInfo();
+	addMokagramToStart();
 	addViewAsTopics();
 	addManageChat();
 	addStoryArchive();
@@ -2038,8 +2088,10 @@ void Filler::fillHistoryActions() {
 	addMokagramHistory();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPlugins(u"chat"_q);
 	addTranslate();
 	addReport();
+	addMokagramDeleteMine();
 	addClearHistory();
 	addDeleteChat();
 	addLeaveChat();
@@ -2068,6 +2120,7 @@ void Filler::fillProfileActions() {
 	addMokagramHistory();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPlugins(u"profile"_q);
 	addToggleNoForwards();
 	addToggleFolder();
 	addBlockUser();

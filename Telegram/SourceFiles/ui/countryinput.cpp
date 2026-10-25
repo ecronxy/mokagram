@@ -34,10 +34,17 @@ void CountryInput::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 
 	QRect r(rect().intersected(e->rect()));
-	if (_st.textBg->c.alphaF() > 0.) {
+	const auto round = _st.borderRadius > 0;
+	if (round) {
+		// Mokagram: поле страны — скруглённая плашка, как остальные поля.
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(_st.textBg);
+		p.drawRoundedRect(rect(), _st.borderRadius, _st.borderRadius);
+	} else if (_st.textBg->c.alphaF() > 0.) {
 		p.fillRect(r, _st.textBg);
 	}
-	if (_st.border) {
+	if (_st.border && !round) {
 		p.fillRect(
 			0,
 			height() - _st.border,
@@ -56,7 +63,10 @@ void CountryInput::paintEvent(QPaintEvent *e) {
 
 	p.setFont(_st.style.font);
 	p.setPen(_st.textFg);
-	p.drawText(rect().marginsRemoved(_st.textMargins), _text, _st.textAlign);
+	p.drawText(
+		rect().marginsRemoved(_st.textMargins + QMargins(round ? 13 : 0, 0, 0, 0)),
+		_text,
+		_st.textAlign);
 }
 
 void CountryInput::mouseMoveEvent(QMouseEvent *e) {

@@ -1,5 +1,6 @@
 // Mokagram: фильтры сообщений, реализация.
 #include "mokagram/history/mokagram_history_filters.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 
@@ -313,7 +314,8 @@ rpl::producer<> FiltersChanged() {
 
 bool FilterHidden(not_null<const HistoryItem*> item) {
 	auto &data = Data();
-	if (!data.enabled && !data.hideBlocked) {
+	const auto plugins = Plugins::HasMessageFilter();
+	if (!data.enabled && !data.hideBlocked && !plugins) {
 		return false;
 	} else if (item->out() || item->isService() || item->isLocal()) {
 		return false;
@@ -321,6 +323,9 @@ bool FilterHidden(not_null<const HistoryItem*> item) {
 	const auto peerId = item->history()->peer->id.value;
 	if (!data.showHidden.empty() && data.showHidden.contains(peerId)) {
 		return false;
+	}
+	if (plugins && Plugins::HiddenByPlugin(item)) {
+		return true;
 	}
 	if (data.hideBlocked && item->from()->isBlocked()) {
 		return true;

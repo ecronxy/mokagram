@@ -659,7 +659,7 @@ walletCollectibleCommentField: InputField(walletCommentField) {
 	textMargins: margins(0px, 4px, 0px, 4px);
 	heightMin: 28px;
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
 }
 
 walletReceiveTitleHeight: boxTitleHeight;

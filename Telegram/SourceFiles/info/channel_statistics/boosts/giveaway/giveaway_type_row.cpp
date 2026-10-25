@@ -104,7 +104,12 @@ void GiveawayTypeRow::paintEvent(QPaintEvent *e) {
 		|| (!_customUserpic.isNull());
 
 	if (paintOver) {
-		p.fillRect(e->rect(), _st.button.textBgOver);
+		{
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(_st.button.textBgOver);
+			p.drawRoundedRect(QRectF(rect()).marginsRemoved({ 6., 1., 6., 1. }), 16, 16);
+		}
 	}
 	Ui::RippleButton::paintRipple(p, 0, 0);
 	if (hasUserpic) {

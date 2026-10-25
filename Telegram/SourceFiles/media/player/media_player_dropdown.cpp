@@ -121,7 +121,6 @@ SpeedSliderItem::SpeedSliderItem(
 	) | rpl::on_next([=](const QRect &clip) {
 		auto p = Painter(this);
 
-		p.fillRect(clip, _st.dropdown.menu.itemBg);
 
 		const auto left = (_st.sliderPadding.left() - _text.maxWidth()) / 2;
 		const auto top = _st.dropdown.menu.itemPadding.top();
@@ -391,20 +390,11 @@ void Dropdown::paintEvent(QPaintEvent *e) {
 
 	// draw shadow
 	auto shadowedRect = rect().marginsRemoved(getMargin());
-	auto shadowedSides = RectPart::Left | RectPart::Right | RectPart::Bottom;
-	Ui::Shadow::paint(p, shadowedRect, width(), st::roundShadowRadius8px, shadowedSides);
-	const auto &corners = Ui::CachedCornerPixmaps(Ui::MenuCorners);
-	const auto fill = Ui::CornersPixmaps{
-		.p = { QPixmap(), QPixmap(), corners.p[2], corners.p[3] },
-	};
-	Ui::FillRoundRect(
-		p,
-		shadowedRect.x(),
-		0,
-		shadowedRect.width(),
-		shadowedRect.y() + shadowedRect.height(),
-		st::menuBg,
-		fill);
+	// Mokagram: круглая панель, без тени-трапеции.
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(QPen(QColor(255, 255, 255, 22), 1.));
+	p.setBrush(st::menuBg);
+	p.drawRoundedRect(QRectF(shadowedRect).adjusted(0.5, 0.5, -0.5, -0.5), 13, 13);
 }
 
 void Dropdown::enterEventHook(QEnterEvent *e) {

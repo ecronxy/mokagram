@@ -26,6 +26,11 @@ if [[ ! -f "$key" ]]; then
 	echo "Нет ключа подписи: $key" >&2
 	exit 1
 fi
+mode=$(stat -c %a "$key")
+if [[ "$mode" != "600" && "$mode" != "400" ]]; then
+	echo "Права на ключ $key: $mode. Нужны 600 (chmod 600 $key)." >&2
+	exit 1
+fi
 
 published=$(curl -fsSL "https://raw.githubusercontent.com/ecronxy/mokagram/$branch/update.json" 2>/dev/null \
 	| python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])' 2>/dev/null || echo 0)

@@ -30,6 +30,8 @@ class MenuItem:
     icon: Optional[str] = None
     condition: Optional[Callable[[Any], bool]] = None
     action: Optional[Callable[[Any], None]] = None
+    priority: int = 0                  # больше значит выше в меню
+    item_id: Optional[str] = None
 
 
 class BasePlugin:
@@ -54,12 +56,37 @@ class BasePlugin:
     def pre_request_hook(self, request: Any) -> HookResult: return HookResult()
     def post_request_hook(self, response: Any, error: Any = None) -> HookResult: return HookResult()
 
+    # скрыть сообщение в чате (только у вас, на сервере ничего не меняется): верните True или HookResult(CANCEL).
+    # Зовётся один раз на сообщение (результат кэшируется), нужно право messages.read.
+    def message_filter_hook(self, message: dict) -> Any: return False
+
+    # заменить текст входящего сообщения при показе (только у вас): верните новую строку или None.
+    # message: {id, peer, text, date}. Копирование и поиск увидят уже новый текст. Нужно право messages.read.
+    def message_text_hook(self, message: dict) -> Optional[str]: return None
+
+    # события клиента (нужно право messages.read): message это dict
+    # {id, peer, peer_title, from, text, out, date, has_media, reply_to}
+    def on_new_message(self, message: dict) -> None: ...
+    def on_message_edited(self, message: dict) -> None: ...
+    def on_message_deleted(self, message: dict) -> None: ...
+
     # интерфейс
     def add_menu_item(self, item: MenuItem) -> None:
         # плагин мог не вызвать super().__init__()
         if not hasattr(self, "_menu_items"):
             self._menu_items = []
         self._menu_items.append(item)
+        if not getattr(item, 'item_id', None):
+            try:
+                item.item_id = 'item%d' % len(self._menu_items)
+            except Exception:
+                pass
+        return item.item_id
+
+    def remove_menu_item(self, item_id) -> None:
+        for item in getattr(self, "_menu_items", []):
+            if getattr(item, 'item_id', None) == item_id:
+                item._removed = True
 
 
 # ---- элементы настроек плагина (хост кладёт их в реестр настроек клиента, ключ plugin.<id>.<key>) ----
@@ -77,6 +104,17 @@ class Divider:
 @dataclass
 class Text:
     text: str = ""
+    subtext: Optional[str] = None
+    icon: Optional[str] = None
+    on_click: Optional[Callable[[Any], None]] = None   # с on_click строка становится кнопкой
+
+
+@dataclass
+class Button:
+    text: str = ""
+    subtext: Optional[str] = None
+    icon: Optional[str] = None
+    on_click: Optional[Callable[[Any], None]] = None
 
 
 @dataclass
@@ -119,6 +157,10 @@ class MenuItemType(str, Enum):
     DRAWER_MENU = "DRAWER_MENU"
     CHAT_ACTION_MENU = "CHAT_ACTION_MENU"
     PROFILE_ACTION_MENU = "PROFILE_ACTION_MENU"
+    ATTACH_MENU = "ATTACH_MENU"       # меню скрепки в композере
+    MAIN_MENU = "MAIN_MENU"
+    COMPOSER_BUTTON = "COMPOSER_BUTTON"   # кнопка с иконкой рядом с полем ввода
+    HEADER_BUTTON = "HEADER_BUTTON"   # кнопка с иконкой в шапке чата
 
 
 @dataclass

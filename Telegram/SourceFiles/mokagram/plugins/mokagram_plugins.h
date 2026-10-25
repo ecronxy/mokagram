@@ -61,6 +61,19 @@ bool MenuItemClick(
 	const std::string &ctxJson,
 	LogFn log);
 
+// Решение плагинов "скрыть сообщение": JSON сообщения -> true, если какой-то плагин скрывает.
+bool CallMessageFilter(const std::string &messageJson, LogFn log);
+
+// Замена текста плагинами: JSON сообщения -> пустая строка (без изменений) или "T"+новый текст.
+std::string CallTextHook(const std::string &messageJson, LogFn log);
+
+// Колбэк плагина по токену (диалог, тост с кнопкой, кнопка интерфейса). payloadJson уходит в колбэк как dict.
+bool Invoke(
+	const std::string &pid,
+	const std::string &token,
+	const std::string &payloadJson,
+	LogFn log);
+
 // Вызывает on_plugin_unload у всех плагинов.
 void Shutdown(LogFn log);
 
@@ -100,6 +113,9 @@ void QueueHook(
 	uint32_t constructorId,
 	const void *data,
 	size_t sizeBytes);
+
+// Событие клиента (new_message, ...) с JSON-данными: в очередь рабочего потока. Из любого потока.
+void QueueEvent(const std::string &name, const std::string &payloadJson);
 
 // Пока true, хуки запросов не вызываются: это запросы самого плагина (защита от петли).
 void MarkFromPlugin(bool on);

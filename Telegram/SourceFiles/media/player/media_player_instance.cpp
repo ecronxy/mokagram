@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/player/media_player_instance.h"
+#include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/music/mokagram_music_ui.h"
+#include "data/data_audio_msg_id.h"
 
 #include "data/data_document.h"
 #include "data/data_session.h"
@@ -806,6 +809,11 @@ bool Instance::previousAvailable(AudioMsgId::Type type) const {
 	const auto data = getData(type);
 	Assert(data != nullptr);
 
+	if (type == AudioMsgId::Type::Song
+		&& Mokagram::Music::OwnsTrack(data->current)) {
+		return Mokagram::Music::PreviousAvailable();
+	}
+
 	if (trackInItem(data, -1)) {
 		return true;
 	} else if (!data->playlistIndex || !data->playlistSlice) {
@@ -824,6 +832,11 @@ bool Instance::previousAvailable(AudioMsgId::Type type) const {
 bool Instance::nextAvailable(AudioMsgId::Type type) const {
 	const auto data = getData(type);
 	Assert(data != nullptr);
+
+	if (type == AudioMsgId::Type::Song
+		&& Mokagram::Music::OwnsTrack(data->current)) {
+		return Mokagram::Music::NextAvailable();
+	}
 
 	if (trackInItem(data, 1)) {
 		return true;
@@ -1247,6 +1260,11 @@ void Instance::resumeSongAfterVoice(bool force) {
 
 bool Instance::next(AudioMsgId::Type type) {
 	if (const auto data = getData(type)) {
+		if (type == AudioMsgId::Type::Song
+			&& Mokagram::Music::OwnsTrack(data->current)) {
+			Mokagram::Music::Step(1);
+			return true;
+		}
 		return moveInPlaylist(data, 1, false);
 	}
 	return false;
@@ -1254,6 +1272,11 @@ bool Instance::next(AudioMsgId::Type type) {
 
 bool Instance::previous(AudioMsgId::Type type) {
 	if (const auto data = getData(type)) {
+		if (type == AudioMsgId::Type::Song
+			&& Mokagram::Music::OwnsTrack(data->current)) {
+			Mokagram::Music::Step(-1);
+			return true;
+		}
 		return moveInPlaylist(data, -1, false);
 	}
 	return false;
@@ -1470,7 +1493,8 @@ void Instance::emitUpdate(AudioMsgId::Type type, CheckCallback check) {
 		if (data->isPlaying && state.state == State::StoppedAtEnd) {
 			if (repeat(data) == RepeatMode::One) {
 				play(data->current);
-			} else if (OptionDisableAutoplayNext.value()) {
+			} else if (OptionDisableAutoplayNext.value()
+				|| !Mokagram::Settings::Bool(u"player.autoplay_next"_q)) {
 				finished = true;
 			} else if (!moveInPlaylist(data, 1, true)) {
 				finished = true;

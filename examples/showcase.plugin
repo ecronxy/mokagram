@@ -1,0 +1,40 @@
+__id__ = "showcase"
+__name__ = "Showcase"
+__description__ = "Пример: кнопки, меню, окно с формой, команда, события, фильтр"
+__author__ = "mokagram"
+__version__ = "1.0"
+__permissions__ = ["messages.read"]
+
+from base_plugin import (BasePlugin, MenuItemData, MenuItemType, Header, Switch, Input)
+from mokagram_sdk import api
+
+
+class Showcase(BasePlugin):
+    def on_plugin_load(self):
+        # кнопка в шапке чата и в композере, пункты в меню чата, сообщения, профиля, скрепки и боковом меню
+        for place, icon in ((MenuItemType.HEADER_BUTTON, "info"), (MenuItemType.COMPOSER_BUTTON, "timer"),
+                            (MenuItemType.CHAT_ACTION_MENU, "info"), (MenuItemType.DRAWER_MENU, "settings")):
+            self.add_menu_item(MenuItemData(menu_type=place, text="Showcase: форма", icon=icon, on_click=self.open_form))
+        self.add_menu_item(MenuItemData(menu_type=MenuItemType.MESSAGE_CONTEXT_MENU, text="Скопировать выделенное",
+                                        icon="copy", on_click=lambda c: api.copy_text(c.get("selected") or c["text"])))
+        api.register_command("hello", lambda c: api.show_toast("Привет! Аргументы: " + c["args"]))
+
+    def open_form(self, ctx):
+        api.show_dialog(
+            "Showcase", "Окно из плагина",
+            fields=[Header("Параметры"), Input(key="name", text="Имя", default="moka"),
+                    Switch(key="loud", text="Громко", default=False)],
+            buttons=[{"id": "ok", "text": "Применить"}, {"id": "no", "text": "Отмена", "style": "cancel"}],
+            on_result=lambda b, v: api.show_bulletin("Готово: %s" % v.get("name"), button="Отменить",
+                                                     on_click=lambda: api.show_toast("Отменено")) if b == "ok" else None)
+
+    def on_new_message(self, m):
+        if not m["out"] and "moka" in m["text"].lower():
+            api.show_toast("Тебя упомянули в «%s»" % m["peer_title"])
+
+    def message_filter_hook(self, m):
+        return "реклама" in m["text"].lower()   # скрыть у себя
+
+    def message_text_hook(self, m):
+        # пример: убрать "Sent from my iPhone" в конце входящих
+        return m["text"].replace("\nSent from my iPhone", "") if "Sent from my iPhone" in m["text"] else None

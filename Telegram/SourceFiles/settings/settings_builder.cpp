@@ -32,8 +32,8 @@ namespace {
 
 // Mokagram: блок строк настроек как отдельная скруглённая карточка.
 constexpr auto kGroupRadius = 22;
-const auto kGroupMargins = style::margins(10, 7, 10, 7);
-constexpr auto kGroupInset = 6;
+const auto kGroupMargins = style::margins(10, 5, 10, 5);
+constexpr auto kGroupInset = 4;
 
 [[nodiscard]] Ui::VerticalLayout *GroupOuter(
 		not_null<Ui::VerticalLayout*> container) {
@@ -44,7 +44,8 @@ constexpr auto kGroupInset = 6;
 }
 
 [[nodiscard]] not_null<Ui::VerticalLayout*> BeginGroup(
-		not_null<Ui::VerticalLayout*> outer) {
+		not_null<Ui::VerticalLayout*> outer,
+		style::color outerBg = st::dialogsBg) {
 	const auto pad = outer->add(
 		object_ptr<Ui::PaddingWrap<Ui::VerticalLayout>>(
 			outer,
@@ -59,130 +60,108 @@ constexpr auto kGroupInset = 6;
 		"moka-group-outer",
 		QVariant::fromValue<quintptr>(reinterpret_cast<quintptr>(outer.get())));
 
+	struct Segment {
+		int top = 0;
+		int bottom = 0;
+	};
+	// Карточка режется на куски заголовками и разделителями: между кусками
+	// виден фон страницы, как между карточками в «Кастомизации».
+	const auto segments = [=] {
+		auto cuts = std::vector<std::pair<int, int>>();
+		for (const auto child : pad->findChildren<QWidget*>()) {
+			const auto title = child->property("moka-title").toBool();
+			if (!title && !child->property("moka-break").toBool()) {
+				continue;
+			}
+			if (!child->isVisibleTo(pad) || !child->height()) {
+				continue;
+			}
+			const auto top = child->mapTo(pad, QPoint()).y();
+			cuts.emplace_back(
+				top - (title ? 14 : 0),
+				top + child->height() + (title ? 6 : 0));
+		}
+		std::sort(cuts.begin(), cuts.end());
+		const auto card = pad->rect() - kGroupMargins;
+		auto result = std::vector<Segment>();
+		auto from = card.y();
+		const auto flush = [&](int to) {
+			if (to - from >= 30) {
+				result.push_back({ from, to });
+			}
+		};
+		for (const auto &cut : cuts) {
+			if (cut.first > from) {
+				flush(std::min(cut.first, card.y() + card.height()));
+			}
+			from = std::max(from, cut.second);
+		}
+		flush(card.y() + card.height());
+		return result;
+	};
+
 	pad->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(pad);
-		p.fillRect(clip, st::dialogsBg);
+		p.fillRect(clip, outerBg);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
 		const auto card = pad->rect() - kGroupMargins;
-		const auto r = std::min(kGroupRadius, card.height() / 2);
-		p.drawRoundedRect(card, r, r);
+		for (const auto &seg : segments()) {
+			const auto height = seg.bottom - seg.top;
+			const auto r = std::min(kGroupRadius, height / 2);
+			p.drawRoundedRect(
+				QRect(card.x(), seg.top, card.width(), height),
+				r,
+				r);
+		}
 	}, pad->lifetime());
 
-	struct Corner {
-		not_null<Ui::RpWidget*> widget;
-		bool right;
-		bool bottom;
-	};
-	struct State {
-		std::vector<Corner> corners;
-		int radius = kGroupRadius;
-	};
-	const auto state = pad->lifetime().make_state<State>();
-	for (const auto right : { false, true }) {
-		for (const auto bottom : { false, true }) {
-			const auto corner = Ui::CreateChild<Ui::RpWidget>(pad);
-			corner->setAttribute(Qt::WA_TransparentForMouseEvents);
-			corner->paintRequest(
-			) | rpl::on_next([=] {
-				auto p = QPainter(corner);
-				auto hq = PainterHighQualityEnabler(p);
-				const auto r = state->radius;
-				auto path = QPainterPath();
-				path.addRect(corner->rect());
-				auto circle = QPainterPath();
-				circle.addEllipse(QRectF(
-					right ? -r : 0,
-					bottom ? -r : 0,
-					2 * r,
-					2 * r));
-				p.fillPath(path.subtracted(circle), st::dialogsBg);
-			}, corner->lifetime());
-			state->corners.push_back({ corner, right, bottom });
-		}
-	}
-
-	// Тонкие линии между строками, от начала текста до края.
-	const auto lines = Ui::CreateChild<Ui::RpWidget>(pad);
-	lines->setAttribute(Qt::WA_TransparentForMouseEvents);
-	struct HoverWatcher final : QObject {
-		explicit HoverWatcher(QWidget *target) : QObject(target), target(target) {
-		}
-		bool eventFilter(QObject *, QEvent *e) override {
-			if (e->type() == QEvent::Enter || e->type() == QEvent::Leave) {
-				target->update();
-			}
-			return false;
-		}
-		QWidget *target;
-	};
-	const auto watcher = new HoverWatcher(lines);
-	lines->paintRequest(
+	// Поверх строк: срезаем квадратные углы подсветки у каждого куска.
+	const auto shape = Ui::CreateChild<Ui::RpWidget>(pad);
+	shape->setAttribute(Qt::WA_TransparentForMouseEvents);
+	shape->paintRequest(
 	) | rpl::on_next([=] {
-		auto rows = std::vector<QWidget*>();
-		for (const auto child : inner->children()) {
-			if (const auto w = qobject_cast<QWidget*>(child)) {
-				if (!w->isHidden() && w->height() >= 30) {
-					rows.push_back(w);
+		auto p = QPainter(shape);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto card = pad->rect() - kGroupMargins;
+		for (const auto &seg : segments()) {
+			const auto height = seg.bottom - seg.top;
+			const auto r = std::min(kGroupRadius, height / 2);
+			if (r < 1) {
+				continue;
+			}
+			for (const auto right : { false, true }) {
+				for (const auto bottom : { false, true }) {
+					const auto x = right ? (card.x() + card.width() - r) : card.x();
+					const auto y = bottom ? (seg.bottom - r) : seg.top;
+					auto path = QPainterPath();
+					path.addRect(QRectF(x, y, r, r));
+					auto circle = QPainterPath();
+					circle.addEllipse(QRectF(
+						right ? (x - r) : x,
+						bottom ? (y - r) : y,
+						2 * r,
+						2 * r));
+					p.fillPath(path.subtracted(circle), outerBg);
 				}
 			}
 		}
-		std::sort(rows.begin(), rows.end(), [](QWidget *a, QWidget *b) {
-			return a->y() < b->y();
-		});
-		auto p = QPainter(lines);
-		p.setPen(QColor(255, 255, 255, 34));
-		const auto left = kGroupInset + st::settingsButton.padding.left();
-		const auto hovered = [&](QWidget *row) {
-			return row->rect().contains(row->mapFromGlobal(QCursor::pos()))
-				&& row->isVisible()
-				&& row->underMouse();
-		};
-		for (const auto row : rows) {
-			// Строка под курсором подсвечена пилюлей: линии рядом прячем.
-			if (!row->property("moka-watched").toBool()) {
-				row->setProperty("moka-watched", true);
-				row->installEventFilter(watcher);
-			}
-		}
-		for (auto i = 0; i + 1 < int(rows.size()); ++i) {
-			if (hovered(rows[i]) || hovered(rows[i + 1])) {
-				continue;
-			}
-			const auto a = rows[i];
-			const auto y = kGroupInset + a->y() + a->height() - 1;
-			p.drawLine(
-				a->x() + left,
-				y,
-				kGroupInset + a->x() + a->width() - 12,
-				y);
-		}
-	}, lines->lifetime());
+	}, shape->lifetime());
 
 	pad->sizeValue(
 	) | rpl::on_next([=](QSize size) {
-		const auto card = QRect(QPoint(), size) - kGroupMargins;
-		const auto r = std::max(1, std::min(
-			kGroupRadius,
-			std::min(card.width(), card.height()) / 2));
-		state->radius = r;
-		for (const auto &corner : state->corners) {
-			corner.widget->resize(r, r);
-			corner.widget->move(
-				card.x() + (corner.right ? card.width() - r : 0),
-				card.y() + (corner.bottom ? card.height() - r : 0));
-			corner.widget->raise();
-		}
-		lines->setGeometry(card);
-		lines->raise();
-		lines->update();
+		shape->setGeometry(QRect(QPoint(), size));
+		shape->raise();
+		shape->update();
+		pad->update();
 	}, pad->lifetime());
 	inner->heightValue(
 	) | rpl::on_next([=](int) {
-		lines->update();
-	}, lines->lifetime());
+		shape->update();
+		pad->update();
+	}, pad->lifetime());
 	return inner;
 }
 
@@ -348,7 +327,7 @@ not_null<Ui::FlatLabel*> MakeOuterTitle(
 				return value.toUpper();
 			}),
 			st),
-		style::margins(26, 16, 26, 6));
+		style::margins(26, 4, 26, 4));
 }
 
 // Mokagram: любая строка вне карточки (после текста-пояснения или в начале
@@ -561,14 +540,18 @@ void SectionBuilder::addDivider() {
 
 void SectionBuilder::addSkip() {
 	v::match(_context, [&](const WidgetContext &ctx) {
-		Ui::AddSkip(ctx.container);
+		if (InsideGroup(ctx.container)) {
+			Ui::AddSkip(ctx.container);
+		}
 	}, [](const SearchContext &) {
 	});
 }
 
 void SectionBuilder::addSkip(int height) {
 	v::match(_context, [&](const WidgetContext &ctx) {
-		Ui::AddSkip(ctx.container, height);
+		if (InsideGroup(ctx.container)) {
+			Ui::AddSkip(ctx.container, height);
+		}
 	}, [](const SearchContext &) {
 	});
 }
@@ -758,6 +741,19 @@ void SectionBuilder::registerHighlight(
 		}
 	}, [](const SearchContext &) {
 	});
+}
+
+
+not_null<Ui::VerticalLayout*> MokaCard(
+		not_null<Ui::VerticalLayout*> outer,
+		style::color outerBg) {
+	return BeginGroup(outer, outerBg);
+}
+
+not_null<Ui::FlatLabel*> MokaCardTitle(
+		not_null<Ui::VerticalLayout*> outer,
+		rpl::producer<QString> text) {
+	return MakeOuterTitle(outer, std::move(text));
 }
 
 } // namespace Settings::Builder

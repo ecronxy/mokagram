@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "inline_bots/bot_attach_web_view.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 
 #include "api/api_blocked_peers.h"
 #include "api/api_common.h"
@@ -748,7 +749,7 @@ void BotAction::paint(Painter &p) {
 	if (selected && _st.itemBgOver->c.alpha() < 255) {
 		p.fillRect(0, 0, width(), _height, _st.itemBg);
 	}
-	p.fillRect(0, 0, width(), _height, selected ? _st.itemBgOver : _st.itemBg);
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
 	if (isEnabled()) {
 		paintRipple(p, 0, 0);
 	}
@@ -3134,6 +3135,12 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 		}, action->lifetime());
 		raw->addAction(std::move(action));
 	}
+	Mokagram::Plugins::AddPeerMenuItems(
+		u"attach"_q,
+		peer,
+		[&](const QString &text, Fn<void()> handler, const style::icon *icon) {
+			raw->addAction(text, std::move(handler), icon);
+		});
 	const auto actions = raw->actions().size();
 	const auto onclick = ChatHelpers::ShowPanelOnClick();
 	if (!actions) {

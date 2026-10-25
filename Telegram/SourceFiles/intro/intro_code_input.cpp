@@ -126,7 +126,7 @@ void CodeDigit::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 
 	auto clipPath = QPainterPath();
-	clipPath.addRoundedRect(rect(), st::boxRadius, st::boxRadius);
+	clipPath.addRoundedRect(rect(), 16, 16);
 	p.setClipPath(clipPath);
 
 	p.fillRect(rect(), st::windowBgOver);

@@ -24,6 +24,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_prepare.h"
 #include "window/window_controller.h"
 
+#include <array>
+
 namespace Editor {
 namespace {
 
@@ -149,6 +151,20 @@ void PrepareProfileMediaFromFile(
 			? QString()
 			: result.paths.front();
 
+		// Mokagram: анимированные форматы (gif, webm и т.д.) идут как видео,
+		// а не превращаются в статичную первую картинку.
+		const auto animated = !path.isEmpty() && ranges::any_of(
+			std::array{ u".gif"_q, u".webm"_q, u".mkv"_q, u".avi"_q },
+			[&](const QString &extension) {
+				return path.endsWith(extension, Qt::CaseInsensitive);
+			});
+		if (animated) {
+			const auto info = Media::Video::ReadFileInfo(path);
+			if (info.valid() && AcceptableDimensions(info.dimensions)) {
+				PrepareProfileVideo(parent, controller, data, path, std::move(done));
+				return;
+			}
+		}
 		auto image = Images::Read({
 			.path = path,
 			.content = result.remoteContent,
@@ -185,7 +201,10 @@ void PrepareProfileMediaFromFile(
 	FileDialog::GetOpenPath(
 		parent.get(),
 		tr::lng_choose_image(tr::now),
-		FileDialog::PhotoVideoFilesFilter(),
+		u"Image and Video Files (*"_q
+			+ Ui::ImageExtensions().join(u" *"_q)
+			+ u" *.mp4 *.mov *.m4v *.webm *.mkv *.avi);;"_q
+			+ FileDialog::AllFilesFilter(),
 		crl::guard(parent, callback));
 }
 

@@ -2,20 +2,40 @@
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/msginfo/mokagram_message_info.h"
+#include "mokagram/stars/mokagram_stars_stats.h"
+#include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/quote/mokagram_quote.h"
+#include "history/history_inner_widget.h"
+#include "history/history_widget.h"
 
 #include <QtWidgets/QApplication>
 
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/misc/mokagram_misc.h"
+#include "ui/boxes/choose_date_time.h"
+#include "ui/layers/generic_box.h"
+#include "base/unixtime.h"
+#include "wallet/wallet_content.h"
+#include "boxes/add_contact_box.h"
+#include "boxes/peers/edit_peer_info_box.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "history/history.h"
 #include "boxes/choose_filter_box.h"
 #include "data/data_chat_filters.h"
 #include "data/data_session.h"
 #include "history/history_item.h"
+#include "data/data_histories.h"
+#include "data/data_session.h"
 
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_music_ui.h"
+#include "data/data_user.h"
+#include "dialogs/dialogs_row.h"
+#include "dialogs/dialogs_main_list.h"
+#include "dialogs/dialogs_indexed_list.h"
 #include "mtproto/sender.h"
 #include "base/flat_map.h"
 #include "ui/text/text_custom_emoji.h"
@@ -34,6 +54,7 @@
 #include "core/file_utilities.h"
 #include "settings.h"
 #include "ui/abstract_button.h"
+#include "mokagram/commands/mokagram_commands.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/effects/animations.h"
 #include "ui/effects/ripple_animation.h"
@@ -55,6 +76,7 @@
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
+#include "mokagram/misc/mokagram_ping.h"
 #include "styles/style_widgets.h"
 
 #include <rpl/event_stream.h>
@@ -166,6 +188,79 @@ struct Category {
 	if (name == u"bot"_q) return st::menuIconBot;
 	if (name == u"update"_q) return st::menuIconDownload;
 	return st::menuIconSettings;
+}
+
+// Значок настройки из набора iOSTelegram: эмодзи-ключ по ключу настройки.
+[[nodiscard]] QString AutoAlt(const QString &key) {
+	struct Item {
+		const char *part;
+		const char *alt;
+	};
+	static const auto items = std::vector<Item>{
+		{ "only_strangers", "👤" },
+		{ "sticker_count", "#️⃣" },
+		{ "sticker_seconds", "⏳" },
+		{ "guard.stickers", "😜" },
+		{ "threat_words", "📄" },
+		{ "threat_exempt", "✋" },
+		{ "guard.threats", "⚠️" },
+		{ "mass_count", "#️⃣" },
+		{ "mass_minutes", "🕓" },
+		{ "mass_leave", "⬅️" },
+		{ "mass_add", "➕" },
+		{ "ghost.read", "✅" },
+		{ "ghost.online", "👁" },
+		{ "ghost.typing", "💬" },
+		{ "ghost.stories", "🎞" },
+		{ "ghost.exceptions", "📌" },
+		{ "ghost.schedule_label", "✏️" },
+		{ "ghost.schedule_from", "🕓" },
+		{ "ghost.schedule_to", "🕓" },
+		{ "ghost.sched_", "🗓" },
+		{ "ghost.schedule", "🗓" },
+		{ "ghost.offline_on_enable", "💤" },
+		{ "history.save_deleted", "🗑" },
+		{ "history.save_edited", "✏️" },
+		{ "history.save_for_bots", "🤖" },
+		{ "history.show_ghosts", "🫣" },
+		{ "history.dim_deleted", "🔘" },
+		{ "history.mark", "📍" },
+		{ "history.keep_days", "🗓" },
+		{ "history.keep_mb", "📁" },
+		{ "history.keep_per_chat", "💬" },
+		{ "history.keep_ttl", "⏳" },
+		{ "history.sqlite", "📊" },
+		{ "history.filters_enabled", "📑" },
+		{ "hide_blocked", "🚫" },
+		{ "lag.enabled", "📈" },
+		{ "lag.level", "📊" },
+		{ "lag.sensitivity", "📐" },
+		{ "lag.cache_mb", "🔽" },
+		{ "lag.cache", "📁" },
+		{ "lag.calm", "🔕" },
+		{ "lag.notify", "🔔" },
+		{ "look.sticker_size", "😜" },
+		{ "look.gif_size", "🎞" },
+		{ "look.round_size", "📹" },
+		{ "bubbles.enabled", "🎈" },
+		{ "bubbles.out_color", "🖼" },
+		{ "bubbles.in_color", "🔵" },
+		{ "bubbles.out_text", "📄" },
+		{ "bubbles.in_text", "📋" },
+		{ "player.cover_colors", "🖼" },
+		{ "lyrics.plasma", "💎" },
+		{ "player.autoplay_next", "▶️" },
+		{ "chats.edited_pencil", "✏️" },
+		{ "chats.select_3000", "☑️" },
+		{ "misc.ping_dc", "📈" },
+		{ "lyrics.enabled", "🎵" },
+	};
+	for (const auto &item : items) {
+		if (key.contains(QLatin1String(item.part))) {
+			return QString::fromUtf8(item.alt);
+		}
+	}
+	return QString();
 }
 
 // Прозрачный фон окна и скруглённая подложка, как в окне «Плагины».
@@ -538,7 +633,8 @@ public:
 		return _session->data().customEmojiManager().create(
 			i->second,
 			std::move(repaint),
-			Data::CustomEmojiSizeTag::Normal,
+			// Isolated грузит кадры крупнее: значок остаётся чётким после обрезки.
+			Data::CustomEmojiSizeTag::Isolated,
 			size);
 	}
 
@@ -591,6 +687,9 @@ private:
 // Значок строки: эмодзи из набора, пока не загрузился, обычная плашка.
 struct PackIcon {
 	std::unique_ptr<Ui::Text::CustomEmoji> emoji;
+	// Готовая картинка: у эмодзи из пака разные поля вокруг фигуры, поэтому
+	// их обрезаем по видимой части и растягиваем до одного размера.
+	QImage normalized;
 	bool tried = false;
 };
 
@@ -602,16 +701,81 @@ void PaintPlate(
 		QColor color,
 		const style::icon &icon,
 		const QString &name,
+		const QString &alt,
 		PackIcon &pack,
 		not_null<Ui::RpWidget*> widget) {
 	if (!pack.emoji && !pack.tried) {
-		pack.emoji = PackIcons::Instance().make(
+		pack.emoji = !alt.isEmpty()
+			? PackIcons::Instance().makeAlt(
+				alt,
+				[=] { widget->update(); },
+				kPackEmojiSize)
+			: PackIcons::Instance().make(
 			name,
 			[=] { widget->update(); },
 			kPackEmojiSize);
 		pack.tried = (pack.emoji != nullptr);
 	}
 	auto hq = PainterHighQualityEnabler(p);
+	if (pack.emoji && pack.normalized.isNull() && pack.emoji->ready()) {
+		const auto ratio = style::DevicePixelRatio();
+		// Холст с запасом: у некоторых эмодзи фигура выходит за свою клетку.
+		constexpr auto kMargin = 8;
+		const auto canvas = kPackEmojiSize + 2 * kMargin;
+		// Рисуем вдвое плотнее экрана, чтобы обрезка и сжатие не мылили картинку.
+		const auto scale = ratio * 2;
+		auto image = QImage(
+			QSize(canvas, canvas) * scale,
+			QImage::Format_ARGB32_Premultiplied);
+		image.setDevicePixelRatio(scale);
+		image.fill(Qt::transparent);
+		{
+			auto q = QPainter(&image);
+			pack.emoji->paint(q, {
+				.textColor = QColor(Qt::white),
+				.now = crl::now(),
+				.position = QPoint(kMargin, kMargin),
+			});
+		}
+		auto bounds = QRect();
+		for (auto y = 0; y != image.height(); ++y) {
+			const auto line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+			for (auto x = 0; x != image.width(); ++x) {
+				if (qAlpha(line[x]) > 24) {
+					bounds = bounds.united(QRect(x, y, 1, 1));
+				}
+			}
+		}
+		if (bounds.width() > 4 && bounds.height() > 4) {
+			const auto side = std::max(bounds.width(), bounds.height());
+			const auto square = QRect(
+				bounds.center().x() - side / 2,
+				bounds.center().y() - side / 2,
+				side,
+				side);
+			auto fitted = QImage(
+				QSize(kPackEmojiSize, kPackEmojiSize) * ratio,
+				image.format());
+			fitted.setDevicePixelRatio(ratio);
+			fitted.fill(Qt::transparent);
+			auto q = QPainter(&fitted);
+			q.setRenderHint(QPainter::SmoothPixmapTransform);
+			q.drawImage(
+				QRect(1, 1, kPackEmojiSize - 2, kPackEmojiSize - 2),
+				image,
+				square);
+			q.end();
+			pack.normalized = std::move(fitted);
+		}
+	}
+	if (!pack.normalized.isNull()) {
+		p.drawImage(
+			QPoint(
+				rect.x() + (rect.width() - kPackEmojiSize) / 2,
+				rect.y() + (rect.height() - kPackEmojiSize) / 2),
+			pack.normalized);
+		return;
+	}
 	if (pack.emoji) {
 		pack.emoji->paint(p, {
 			.textColor = QColor(Qt::white),
@@ -686,6 +850,95 @@ struct Group {
 	return result;
 }
 
+// Выбор цвета: готовые цвета и ввод #RRGGBB. Пустое значение возвращает цвет темы.
+void ShowColorBox(const QString &title, const QString &key) {
+	const auto window = Core::App().activeWindow();
+	if (!window) {
+		return;
+	}
+	window->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(title));
+		box->setWidth(360);
+		const auto content = box->verticalLayout();
+		static const auto presets = std::vector<QColor>{
+			QColor(0x7A, 0x3D, 0xF0), QColor(0x0A, 0x84, 0xFF),
+			QColor(0x34, 0xC7, 0x59), QColor(0xFF, 0x9F, 0x0A),
+			QColor(0xFF, 0x45, 0x3A), QColor(0xFF, 0x37, 0x5F),
+			QColor(0xBF, 0x5A, 0xF2), QColor(0x64, 0xD2, 0xFF),
+			QColor(0x24, 0x3B, 0x2C), QColor(0x1C, 0x1C, 0x1E),
+			QColor(0x3A, 0x3A, 0x3C), QColor(0xFF, 0xFF, 0xFF),
+		};
+		static const auto fieldStyle = [] {
+			auto result = st::defaultInputField;
+			result.textMargins = style::margins(0, 7, 0, 7);
+			return result;
+		}();
+		const auto field = content->add(
+			object_ptr<Ui::InputField>(
+				content,
+				fieldStyle,
+				rpl::single(U("#RRGGBB")),
+				String(key)),
+			QMargins(22, 8, 22, 6));
+		const auto grid = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(22, 4, 22, 12));
+		constexpr auto kDot = 36;
+		constexpr auto kGap = 12;
+		grid->resize(grid->width(), 2 * kDot + kGap);
+		grid->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			const auto current = QColor(String(key));
+			const auto perRow = 6;
+			for (auto i = 0; i != int(presets.size()); ++i) {
+				const auto r = QRectF(
+					(i % perRow) * (kDot + kGap),
+					(i / perRow) * (kDot + kGap),
+					kDot,
+					kDot);
+				p.setPen(QPen(QColor(255, 255, 255, 40), 1.));
+				p.setBrush(presets[i]);
+				p.drawEllipse(r);
+				if (current.isValid() && current == presets[i]) {
+					p.setPen(QPen(Qt::white, 2.5));
+					p.setBrush(Qt::NoBrush);
+					p.drawEllipse(r.adjusted(-4, -4, 4, 4));
+				}
+			}
+		});
+		grid->setCursor(style::cur_pointer);
+		grid->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::MouseButtonRelease;
+		}) | rpl::on_next([=](not_null<QEvent*> e) {
+			const auto point = static_cast<QMouseEvent*>(e.get())->pos();
+			const auto perRow = 6;
+			const auto col = point.x() / (kDot + kGap);
+			const auto row = point.y() / (kDot + kGap);
+			const auto index = row * perRow + col;
+			if (col < perRow && index >= 0 && index < int(presets.size())) {
+				SetString(key, presets[index].name());
+				field->setText(presets[index].name());
+				grid->update();
+			}
+		}, grid->lifetime());
+		field->changes() | rpl::on_next([=] {
+			const auto text = field->getLastText().trimmed();
+			const auto color = QColor(text.startsWith('#') ? text : (u"#"_q + text));
+			if (text.isEmpty() || color.isValid()) {
+				SetString(key, text.isEmpty() ? QString() : color.name());
+				grid->update();
+			}
+		}, field->lifetime());
+		box->addButton(rpl::single(U("Готово")), [=] { box->closeBox(); });
+		box->addLeftButton(rpl::single(U("По теме")), [=] {
+			SetString(key, QString());
+			field->setText(QString());
+			grid->update();
+		});
+	}));
+}
+
 // Строка одной настройки. Раскладка зависит от вида значения.
 [[nodiscard]] RowInfo AddRow(
 		not_null<Ui::VerticalLayout*> card,
@@ -710,6 +963,7 @@ struct Group {
 	const auto iconName = entry.icon.isEmpty()
 		? entry.sectionIcon
 		: entry.icon;
+	const auto autoAlt = entry.icon.isEmpty() ? AutoAlt(entry.key) : QString();
 	const auto &icon = IconByName(iconName);
 	auto description = entry.description;
 	if (const auto dot = description.indexOf(QStringLiteral(". ")); dot > 0) {
@@ -745,6 +999,7 @@ struct Group {
 	Ui::FlatLabel *valueLabel = nullptr;
 	Ui::MediaSlider *slider = nullptr;
 	Ui::InputField *field = nullptr;
+	Ui::RpWidget *swatch = nullptr;
 	const auto choiceText = [=](int index) {
 		return (index >= 0 && index < int(entry.choices.size()))
 			? entry.choices[index]
@@ -818,8 +1073,41 @@ struct Group {
 			row->resize(row->width(), row->height());
 		}, row->lifetime());
 	} break;
-	case Kind::String:
 	case Kind::Color: {
+		const auto shown = [=](const QString &value) {
+			return value.isEmpty() ? U("По теме") : value.toUpper();
+		};
+		valueLabel = Ui::CreateChild<Ui::FlatLabel>(
+			row,
+			shown(String(key)),
+			TextLabelStyle());
+		MakeTransparent(valueLabel);
+		swatch = Ui::CreateChild<Ui::RpWidget>(row);
+		swatch->resize(22, 22);
+		swatch->setAttribute(Qt::WA_TransparentForMouseEvents);
+		swatch->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			const auto color = QColor(String(key));
+			const auto r = QRectF(1, 1, 20, 20);
+			if (color.isValid()) {
+				p.setPen(QPen(QColor(255, 255, 255, 60), 1.));
+				p.setBrush(color);
+			} else {
+				auto pen = QPen(QColor(255, 255, 255, 90), 1.5, Qt::DashLine);
+				p.setPen(pen);
+				p.setBrush(Qt::NoBrush);
+			}
+			p.drawEllipse(r);
+		});
+		row->setPointerCursor(true);
+		row->setClickedCallback([=] { ShowColorBox(titleText, key); });
+		StringValue(key) | rpl::on_next([=](const QString &value) {
+			valueLabel->setText(shown(value));
+			swatch->update();
+			row->resize(row->width(), row->height());
+		}, row->lifetime());
+	} break;
+	case Kind::String: {
 		if (entry.action) {
 			valueLabel = Ui::CreateChild<Ui::FlatLabel>(
 				row,
@@ -873,7 +1161,7 @@ struct Group {
 			controlW = toggle->width();
 		} else if (valueLabel) {
 			valueLabel->resizeToNaturalWidth(full / 2);
-			controlW = valueLabel->width() + chevron;
+			controlW = valueLabel->width() + chevron + (swatch ? 30 : 0);
 		}
 		const auto textW = full
 			- controlW
@@ -922,6 +1210,11 @@ struct Group {
 			valueLabel->move(
 				right - chevron - valueLabel->width(),
 				center - valueLabel->height() / 2);
+			if (swatch) {
+				swatch->move(
+					valueLabel->x() - 30,
+					center - swatch->height() / 2);
+			}
 			view->chevronTop = center;
 		}
 		right -= controlW + (controlW ? 8 : 0);
@@ -975,6 +1268,7 @@ struct Group {
 			color,
 			icon,
 			iconName,
+			autoAlt,
 			view->pack,
 			row);
 		if (!view->first) {
@@ -1031,7 +1325,8 @@ void AddActionRow(
 		const style::icon &icon,
 		QColor color,
 		bool first,
-		Fn<void()> callback) {
+		Fn<void()> callback,
+		const QString &alt = QString()) {
 	const auto row = card->add(object_ptr<Ui::RippleButton>(
 		card,
 		st::defaultRippleAnimation));
@@ -1091,6 +1386,7 @@ void AddActionRow(
 			color,
 			icon,
 			iconName,
+			alt,
 			*pack,
 			row);
 	}, row->lifetime());
@@ -1107,9 +1403,89 @@ void PaintGroupBg(not_null<Ui::RpWidget*> card) {
 
 } // namespace
 
+// После изменения, которое работает только с новым запуском: окно с
+// кнопками «Отмена» и «Перезагрузить». Ползунок шлёт много изменений
+// подряд, поэтому спрашиваем один раз, когда человек остановился.
+void AskForRestart() {
+	static auto generation = 0;
+	static auto shown = false;
+	const auto mine = ++generation;
+	QTimer::singleShot(900, [=] {
+		if (mine != generation || shown) {
+			return;
+		}
+		const auto window = Core::App().activeWindow();
+		if (!window) {
+			return;
+		}
+		shown = true;
+		window->show(Ui::MakeConfirmBox({
+			.text = TextWithEntities{ U("Для применения этого изменения "
+				"нужно перезагрузить клиент.") },
+			.confirmed = [](Fn<void()> close) {
+				shown = false;
+				close();
+				Core::Restart();
+			},
+			.cancelled = [](Fn<void()> close) {
+				shown = false;
+				close();
+			},
+			.confirmText = U("Перезагрузить"),
+			.cancelText = U("Отмена"),
+			.title = rpl::single(U("Нужна перезагрузка")),
+		}));
+	});
+}
+
+// К какой странице настроек mokaGram относится раздел.
+[[nodiscard]] QString PageOfGroup(const Group &group) {
+	if (group.entries.empty()) {
+		return u"look"_q;
+	}
+	const auto key = group.entries.front().key;
+	const auto starts = [&](std::initializer_list<const char*> prefixes) {
+		for (const auto prefix : prefixes) {
+			if (key.startsWith(QLatin1String(prefix))) {
+				return true;
+			}
+		}
+		return false;
+	};
+	if (starts({ "streamer.", "ghost.", "filters." })) {
+		return u"privacy"_q;
+	} else if (starts({ "scam.", "guard." })) {
+		return u"security"_q;
+	} else if (starts({ "history." })) {
+		return u"history"_q;
+	} else if (starts({ "player.", "lyrics." })) {
+		return u"music"_q;
+	} else if (starts({ "lag.", "misc.ping" })
+		|| group.name == U("Аккаунты")) {
+		return u"system"_q;
+	} else if (starts({ "chats.", "fx." })) {
+		return u"chats"_q;
+	} else if (starts({ "misc.stars", "quote." })) {
+		return u"tools"_q;
+	}
+	return u"look"_q;
+}
+
+[[nodiscard]] QString PageTitle(const QString &page) {
+	if (page == u"privacy"_q) return U("Приватность");
+	if (page == u"security"_q) return U("Безопасность");
+	if (page == u"history"_q) return U("Удалёнки");
+	if (page == u"music"_q) return U("Музыка");
+	if (page == u"system"_q) return U("Система");
+	if (page == u"chats"_q) return U("Чаты");
+	if (page == u"tools"_q) return U("Инструменты");
+	return U("Кастомизация");
+}
+
 void CustomizeBox(
 		not_null<Ui::GenericBox*> box,
-		Window::SessionController *controller) {
+		Window::SessionController *controller,
+		QString page) {
 	RoundedNoButtons(box);
 	if (controller) {
 		PackIcons::Instance().ensure(&controller->session());
@@ -1136,7 +1512,7 @@ void CustomizeBox(
 	const auto searchButton = MakeRoundButton(header, false, nullptr);
 	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
 		header,
-		U("Кастомизация"),
+		PageTitle(page),
 		st::boxTitle);
 	static const auto searchClear = style::owned_color(QColor(0, 0, 0, 0));
 	static const auto fieldStyle = [] {
@@ -1190,7 +1566,8 @@ void CustomizeBox(
 			QMargins(10, 8, 10, 8)));
 	const auto chips = chipsWrap->entity();
 	chips->resize(chips->width(), kChipHeight);
-	chipsWrap->toggle(true, anim::type::instant);
+	const auto showChips = (page == u"look"_q);
+	chipsWrap->toggle(showChips, anim::type::instant);
 
 	struct ChipState {
 		Ui::Animations::Simple animation;
@@ -1222,6 +1599,11 @@ void CustomizeBox(
 	const auto state = box->lifetime().make_state<State>();
 
 	auto groups = BuildGroups();
+	groups.erase(
+		std::remove_if(groups.begin(), groups.end(), [&](const Group &group) {
+			return PageOfGroup(group) != page;
+		}),
+		groups.end());
 	if (groups.empty()) {
 		Ui::AddSkip(content, 14);
 		content->add(
@@ -1293,8 +1675,7 @@ void CustomizeBox(
 				name,
 				[=] {
 					if (restart) {
-						toast(U("Изменение вступит в силу "
-							"после перезапуска клиента"));
+						AskForRestart();
 					}
 				}));
 			state->sections[s].items.push_back(int(state->rows.size()) - 1);
@@ -1325,7 +1706,8 @@ void CustomizeBox(
 			content,
 			object_ptr<Ui::VerticalLayout>(content),
 			QMargins(kOuterSide, 0, kOuterSide, 0)));
-	actionsWrap->toggle(true, anim::type::instant);
+	// Экспорт, импорт и сброс живут на странице «Система».
+	actionsWrap->toggle(page == u"system"_q, anim::type::instant);
 	{
 		const auto inner = actionsWrap->entity();
 		const auto head = inner->add(
@@ -1363,7 +1745,8 @@ void CustomizeBox(
 							toast(U("Не удалось записать файл"));
 						}
 					});
-			});
+			},
+			QString::fromUtf8("📤"));
 		AddActionRow(
 			actions,
 			U("Загрузить настройки из файла"),
@@ -1427,7 +1810,8 @@ void CustomizeBox(
 							});
 						}));
 					});
-			});
+			},
+			QString::fromUtf8("🔽"));
 		AddActionRow(
 			actions,
 			U("Вернуть всё как было"),
@@ -1452,7 +1836,8 @@ void CustomizeBox(
 						.confirmText = U("Сбросить"),
 					});
 				}));
-			});
+			},
+			QString::fromUtf8("↩️"));
 	}
 	Ui::AddSkip(content, 22);
 
@@ -1640,7 +2025,7 @@ void CustomizeBox(
 		pill->setVisible(*searching);
 		field->setVisible(*searching);
 		field->raise();
-		chipsWrap->toggle(!*searching, anim::type::normal);
+		chipsWrap->toggle(showChips && !*searching, anim::type::normal);
 		if (*searching) {
 			field->setFocusFast();
 		} else {
@@ -1676,8 +2061,258 @@ void CustomizeBox(
 }
 
 void ShowCustomizeBox(Window::SessionController *controller) {
+	ShowSettingsPage(controller, u"look"_q);
+}
+
+void ShowSettingsPage(
+		Window::SessionController *controller,
+		const QString &page) {
 	if (controller) {
-		controller->show(Box(CustomizeBox, controller));
+		controller->show(Box(CustomizeBox, controller, page));
+	}
+}
+
+namespace {
+
+struct CommandInfo {
+	const char *name;
+	const char *note;
+	const style::icon *icon;
+	QColor color;
+	const char *alt;
+};
+
+void CommandsPage(
+		not_null<Ui::GenericBox*> box,
+		Window::SessionController *controller) {
+	RoundedNoButtons(box);
+	const auto content = box->verticalLayout();
+	const auto toast = [weak = base::make_weak(controller)](const QString &text) {
+		if (const auto strong = weak.get()) {
+			strong->showToast(text);
+		}
+	};
+
+	const auto pinned = box->setPinnedToTopContent(
+		object_ptr<Ui::VerticalLayout>(box));
+	const auto header = pinned->add(
+		object_ptr<Ui::RpWidget>(pinned),
+		QMargins(10, 10, 10, 8));
+	header->resize(header->width(), 40);
+	const auto close = MakeRoundButton(
+		header,
+		true,
+		[=] { box->closeBox(); });
+	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
+		header,
+		U("Быстрые команды"),
+		st::boxTitle);
+	header->widthValue() | rpl::on_next([=](int width) {
+		close->move(0, (header->height() - close->height()) / 2);
+		headerTitle->move(
+			(width - headerTitle->width()) / 2,
+			(header->height() - headerTitle->height()) / 2);
+	}, header->lifetime());
+
+	const auto body = content->add(object_ptr<Ui::VerticalLayout>(content));
+	const auto build = std::make_shared<Fn<void()>>();
+	const auto addHead = [=](const QString &text) {
+		const auto head = body->add(
+			object_ptr<Ui::RpWidget>(body),
+			QMargins(kOuterSide, 16, kOuterSide, 0));
+		head->resize(head->width(), 28);
+		const auto label = Ui::CreateChild<Ui::FlatLabel>(
+			head,
+			text.toUpper(),
+			HeadLabelStyle());
+		MakeTransparent(label);
+		label->move(kPad, 6);
+	};
+	const auto addCard = [=] {
+		const auto wrap = body->add(
+			object_ptr<Ui::VerticalLayout>(body),
+			QMargins(kOuterSide, 0, kOuterSide, 0));
+		PaintGroupBg(wrap);
+		return wrap;
+	};
+	const auto note = [=](const QString &text) {
+		const auto label = body->add(
+			object_ptr<Ui::FlatLabel>(
+				body,
+				text,
+				TextLabelStyle()),
+			QMargins(kOuterSide + kPad, 6, kOuterSide + kPad, 0));
+		Q_UNUSED(label);
+	};
+
+	*build = [=] {
+		body->clear();
+		const auto green = QColor(0x34, 0xC7, 0x59);
+		const auto blue = QColor(0x0A, 0x84, 0xFF);
+		const auto red = QColor(0xFF, 0x45, 0x3A);
+		const auto orange = QColor(0xFF, 0x9F, 0x0A);
+		const auto purple = QColor(0xAF, 0x52, 0xDE);
+		const auto gray = QColor(0x8E, 0x8E, 0x93);
+
+		// Включение.
+		const auto enabled = Settings::Bool(u"commands.enabled"_q);
+		{
+			const auto card = addCard();
+			AddActionRow(
+				card,
+				enabled ? U("Команды включены") : U("Команды выключены"),
+				U("Нажми, чтобы переключить. Команда срабатывает, только если в поле ввода больше ничего нет."),
+				st::menuIconChats,
+				enabled ? green : gray,
+				true,
+				[=] {
+					Settings::SetBool(u"commands.enabled"_q, !enabled);
+					(*build)();
+				},
+				enabled ? QString::fromUtf8("✅") : QString::fromUtf8("🚫"));
+		}
+
+		addHead(U("Команды"));
+		const auto commands = std::vector<CommandInfo>{
+			{ ".mute [30m|2h|1d]", "Заглушить чат. Ответом в группе: запретить человеку писать", &st::menuIconMute, orange, "🔕" },
+			{ ".unmute", "Включить звук чата или снять запрет писать", &st::menuIconUnmute, orange, "🔔" },
+			{ ".ban", "Исключить человека (ответом в группе) или заблокировать в личке", &st::menuIconBlock, red, "🚫" },
+			{ ".unban", "Снять бан или разблокировать человека", &st::menuIconBlock, green, "✅" },
+			{ ".kick", "Исключить без вечного бана, можно вернуться (ответом)", &st::menuIconRemove, red, "⬅️" },
+			{ ".del", "Удалить сообщение, на которое ответил", &st::menuIconDelete, red, "🗑" },
+			{ ".del N", "Удалить свои последние N сообщений (ответом: N сообщений человека)", &st::menuIconDelete, red, "🗑" },
+			{ ".del all", "Ответом: удалить все сообщения человека. Без ответа: все твои загруженные", &st::menuIconDelete, red, "🗑" },
+			{ ".pin", "Закрепить сообщение (ответом)", &st::menuIconPin, blue, "📌" },
+			{ ".unpin", "Открепить сообщение (ответом)", &st::menuIconUnpin, blue, "📍" },
+			{ ".id", "Скопировать ID автора, чата и сообщения и ссылку на сообщение", &st::menuIconInfo, purple, "ℹ️" },
+			{ ".tr en", "Перевести и сразу отправить. Ответом на сообщение или .tr en текст", &st::menuIconTranslate, blue, "🗣" },
+			{ ".calc 2+2*3", "Посчитать: в поле останется «2+2*3 = 8»", &st::menuIconEdit, orange, "#️⃣" },
+			{ ".archive", "Отправить чат в архив (.unarchive вернёт)", &st::menuIconShowInFolder, gray, "📁" },
+			{ ".dl", "Скачать файл или фото из сообщения (ответом) в загрузки", &st::menuIconDownload, green, "🔽" },
+			{ ".tag", "Тег у собеседника: виден в списке чатов и под именем (.tag клиент, пусто = убрать)", &st::menuIconTagFilter, blue, "📑" },
+			{ ".snip", "Свои сниппеты: .snip привет Здравствуйте!, дальше пишешь ;привет, и при отправке подставится текст (.snip list, .snip del имя)", &st::menuIconEdit, blue, "📋" },
+			{ ".note", "Личная заметка о человеке: видна только тебе в его профиле", &st::menuIconEdit, blue, "✏️" },
+			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple, "📁" },
+		};
+		{
+			const auto card = addCard();
+			for (auto i = 0; i != int(commands.size()); ++i) {
+				const auto &c = commands[i];
+				const auto name = QString::fromUtf8(c.name);
+				AddActionRow(
+					card,
+					name,
+					U(c.note),
+					*c.icon,
+					c.color,
+					(i == 0),
+					[=] {
+						QGuiApplication::clipboard()->setText(
+							name.section(' ', 0, 0));
+						toast(U("Скопировано: ") + name.section(' ', 0, 0));
+					},
+					QString::fromUtf8(c.alt));
+			}
+		}
+		note(U("Нажми на команду, чтобы скопировать её."));
+
+		addHead(U("Алиасы"));
+		{
+			const auto card = addCard();
+			const auto aliases = Mokagram::Commands::Aliases();
+			auto first = true;
+			for (const auto &[alias, command] : aliases) {
+				AddActionRow(
+					card,
+					U(".") + alias,
+					U("то же, что .") + command + U(". Нажми, чтобы удалить."),
+					st::menuIconRemove,
+					gray,
+					first,
+					[=] {
+						auto list = Mokagram::Commands::Aliases();
+						list.erase(
+							std::remove_if(
+								list.begin(),
+								list.end(),
+								[&](const auto &pair) {
+									return pair.first == alias;
+								}),
+							list.end());
+						Mokagram::Commands::SetAliases(list);
+						(*build)();
+					},
+					QString::fromUtf8("🗑"));
+				first = false;
+			}
+			AddActionRow(
+				card,
+				U("Добавить алиас"),
+				U("Своё короткое имя для команды, например rm для .del"),
+				st::menuIconAdd,
+				blue,
+				first,
+				[=] {
+					controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
+						inner->setTitle(rpl::single(U("Новый алиас")));
+						inner->setWidth(360);
+						const auto layout = inner->verticalLayout();
+						const auto nameField = layout->add(
+							object_ptr<Ui::InputField>(
+								layout,
+								st::defaultInputField,
+								rpl::single(U("Имя, например rm")),
+								QString()),
+							QMargins(22, 10, 22, 4));
+						const auto commandField = layout->add(
+							object_ptr<Ui::InputField>(
+								layout,
+								st::defaultInputField,
+								rpl::single(U("Команда: ")
+									+ Mokagram::Commands::CommandNames().join(u", "_q)),
+								QString()),
+							QMargins(22, 4, 22, 10));
+						inner->setFocusCallback([=] {
+							nameField->setFocusFast();
+						});
+						inner->addButton(rpl::single(U("Добавить")), [=] {
+							auto alias = nameField->getLastText().trimmed().toLower();
+							auto command = commandField->getLastText().trimmed().toLower();
+							while (alias.startsWith('.')) {
+								alias = alias.mid(1);
+							}
+							while (command.startsWith('.')) {
+								command = command.mid(1);
+							}
+							if (alias.isEmpty()
+								|| alias.contains(QRegularExpression(u"[^\\p{L}\\d_]"_q))
+								|| !Mokagram::Commands::CommandNames().contains(command)) {
+								toast(U("Нужны имя из букв и цифр и существующая команда"));
+								return;
+							}
+							auto list = Mokagram::Commands::Aliases();
+							list.emplace_back(alias, command);
+							Mokagram::Commands::SetAliases(list);
+							inner->closeBox();
+							(*build)();
+						});
+						inner->addButton(rpl::single(U("Отмена")), [=] {
+							inner->closeBox();
+						});
+					}));
+				},
+				QString::fromUtf8("➕"));
+		}
+		Ui::AddSkip(body, 16);
+	};
+	(*build)();
+}
+
+} // namespace
+
+void ShowCommandsPage(Window::SessionController *controller) {
+	if (controller) {
+		controller->show(Box(CommandsPage, controller));
 	}
 }
 
@@ -1717,6 +2352,50 @@ void StartDebugCommands() {
 			History::ShowFiltersBox(controller);
 		} else if (cmd == u"settings"_q) {
 			controller->showSettings();
+		} else if (cmd == u"editpeer"_q) {
+			if (const auto peer = controller->activeChatCurrent().peer()) {
+				controller->show(Box<EditPeerInfoBox>(controller, peer));
+			}
+		} else if (cmd == u"sendmoney"_q) {
+			if (const auto peer = controller->activeChatCurrent().peer()) {
+				if (const auto user = peer->asUser()) {
+					Wallet::ShowSendToUser(controller->uiShow(), user);
+				}
+			}
+		} else if (cmd == u"colors"_q) {
+			const auto show = [](const char *name, const style::color &c) {
+				fprintf(stderr, "COLOR %s %d %d %d %d\n", name, c->c.red(), c->c.green(), c->c.blue(), c->c.alpha());
+			};
+			show("windowBg", st::windowBg);
+			show("dialogsBg", st::dialogsBg);
+			show("boxBg", st::boxBg);
+			show("dialogsBgOver", st::dialogsBgOver);
+			show("windowBgOver", st::windowBgOver);
+			show("searchedBarBg", st::searchedBarBg);
+			show("filterInputInactiveBg", st::filterInputInactiveBg);
+			show("layerBg", st::layerBg);
+		} else if (cmd == u"search"_q) {
+			controller->searchMessages(QString(), Dialogs::Key());
+		} else if (cmd == u"datetime"_q) {
+			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				Ui::ChooseDateTimeBox(box, {
+					.title = rpl::single(u"Выбрать время"_q),
+					.submit = rpl::single(u"Запланировать"_q),
+					.done = [](TimeId) {},
+					.min = [] { return base::unixtime::now(); },
+					.time = base::unixtime::now() + 3600,
+					.max = [] { return base::unixtime::now() + 86400 * 30; },
+					.description = rpl::single(u"Описание"_q),
+				});
+			}));
+		} else if (cmd == u"newgroup"_q) {
+			controller->show(Box<GroupInfoBox>(
+				controller,
+				GroupInfoBox::Type::Group));
+		} else if (cmd == u"newchannel"_q) {
+			controller->show(Box<GroupInfoBox>(
+				controller,
+				GroupInfoBox::Type::Channel));
 		} else if (cmd.startsWith(u"at:"_q)) {
 			const auto parts = cmd.mid(3).split(',');
 			auto w = (QWidget*)controller->widget();
@@ -1778,6 +2457,12 @@ void StartDebugCommands() {
 				pt = child->mapFrom(w, pt);
 				w = child;
 			}
+			{
+				auto enter = QEnterEvent(QPointF(pt), w->mapToGlobal(QPointF(pt)), w->mapToGlobal(QPointF(pt)));
+				QCoreApplication::sendEvent(w, &enter);
+				auto move = QMouseEvent(QEvent::MouseMove, QPointF(pt), w->mapToGlobal(QPointF(pt)), Qt::NoButton, Qt::NoButton, mods);
+				QCoreApplication::sendEvent(w, &move);
+			}
 			for (const auto type : { QEvent::MouseButtonPress, QEvent::MouseButtonRelease }) {
 				auto e = QMouseEvent(type, QPointF(pt), w->mapToGlobal(QPointF(pt)), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, mods);
 				QCoreApplication::sendEvent(w, &e);
@@ -1786,6 +2471,12 @@ void StartDebugCommands() {
 			Core::App().openLocalUrl(cmd.mid(4), {});
 		} else if (cmd == u"menu"_q) {
 			controller->widget()->showMainMenu();
+		} else if (cmd == u"msginfo"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto item = history->lastMessage()) {
+					Mokagram::MessageInfo::Show(controller, item);
+				}
+			}
 		} else if (cmd == u"copyauthor"_q) {
 			if (const auto history = controller->activeChatCurrent().history()) {
 				if (const auto item = history->lastMessage()) {
@@ -1803,6 +2494,112 @@ void StartDebugCommands() {
 					}
 				}
 			}
+		} else if (cmd == u"clearfield"_q) {
+			if (const auto w = QApplication::focusWidget()) {
+				if (const auto field = dynamic_cast<Ui::InputField*>(
+						w->parentWidget())) {
+					field->setText(QString());
+				}
+			}
+		} else if (cmd == u"enter"_q) {
+			if (const auto w = QApplication::focusWidget()) {
+				auto press = QKeyEvent(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QString(QChar('\r')));
+				QCoreApplication::sendEvent(w, &press);
+			}
+		} else if (cmd == u"dellast"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto item = history->lastMessage(); item && history->peer->isSelf() && item->out() && item->originalText().text.contains(u"test fx hello"_q)) {
+					history->session().data().histories().deleteMessages({ item->fullId() }, true);
+					history->session().data().histories().sendPendingReadInbox(history);
+				}
+			}
+		} else if (cmd.startsWith(u"fxtest"_q)) {
+			// Проигрывает эффект на нижних сообщениях, ничего не удаляя.
+			if (cmd.size() > 7) {
+				Settings::SetInt(u"fx.delete.style"_q, cmd.mid(7).toInt());
+			}
+			QWidget *inner = nullptr, *widget = nullptr;
+			for (const auto child : controller->widget()->findChildren<QWidget*>()) {
+				if (dynamic_cast<HistoryInner*>(child)) inner = child;
+				if (dynamic_cast<HistoryWidget*>(child)) widget = child;
+			}
+			if (inner && widget) {
+				const auto top = inner->height() - 110;
+				Effects::PlayDelete(widget, inner, QRect(0, top, inner->width(), 100), true);
+			}
+		} else if (cmd == u"quote"_q) {
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto last = history->lastMessage()) {
+					auto ids = std::vector<FullMsgId>();
+					for (auto i = 0; i != 3; ++i) {
+						ids.push_back(FullMsgId(history->peer->id, last->id - i));
+					}
+					Quote::ShowQuoteBox(controller, std::move(ids));
+				}
+			}
+		} else if (cmd.startsWith(u"mdrag:"_q)) {
+			const auto parts = cmd.mid(6).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt1 = QPoint(parts[0].toInt(), parts[1].toInt());
+			auto pt2 = QPoint(parts[2].toInt(), parts[3].toInt());
+			auto pos = pt1;
+			while (const auto child = w->childAt(pos)) {
+				pos = child->mapFrom(w, pos);
+				w = child;
+			}
+			const auto global1 = w->mapToGlobal(pos);
+			const auto delta = pt2 - pt1;
+			const auto send = [&](QEvent::Type type, QPoint p, Qt::MouseButton b, Qt::MouseButtons bs) {
+				auto e = QMouseEvent(type, QPointF(p), QPointF(w->mapToGlobal(p)), b, bs, Qt::NoModifier);
+				QCoreApplication::sendEvent(w, &e);
+			};
+			send(QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
+			send(QEvent::MouseMove, pos + delta / 2, Qt::NoButton, Qt::LeftButton);
+			send(QEvent::MouseMove, pos + delta, Qt::NoButton, Qt::LeftButton);
+			send(QEvent::MouseButtonRelease, pos + delta, Qt::LeftButton, Qt::NoButton);
+			Q_UNUSED(global1);
+		} else if (cmd == u"starsstats"_q) {
+			Stars::ShowSpendingStatsBox();
+		} else if (cmd == u"ping"_q) {
+			Mokagram::Misc::ShowPingBox();
+		} else if (cmd == u"player"_q) {
+			Mokagram::Music::ShowPlayerBox(controller);
+		} else if (cmd.startsWith(u"musictab:"_q)) {
+			Mokagram::Music::DebugTab(cmd.mid(9).toInt());
+		} else if (cmd.startsWith(u"musiclike:"_q)) {
+			Mokagram::Music::DebugLike(cmd.mid(10).toInt());
+		} else if (cmd.startsWith(u"musicplay:"_q)) {
+			Mokagram::Music::DebugPlay(cmd.mid(10).toInt());
+		} else if (cmd.startsWith(u"musicsave:"_q)) {
+			Mokagram::Music::DebugSaveTrack(cmd.mid(10).toInt());
+		} else if (cmd.startsWith(u"music"_q)) {
+			Mokagram::Music::ShowMusicBox(controller, cmd.mid(6));
+		} else if (cmd.startsWith(u"scsearch:"_q)) {
+			Mokagram::Music::Search(cmd.mid(9), 0, [](Mokagram::Music::SearchResult result) {
+				LOG(("[music] search: %1 tracks, error '%2', next %3").arg(result.tracks.size()).arg(result.error).arg(result.nextOffset));
+				if (result.tracks.empty()) {
+					return;
+				}
+				const auto track = result.tracks.front();
+				LOG(("[music] first: '%1' by '%2', %3 ms, %4 hls=%5").arg(track.title).arg(track.artist).arg(track.durationMs).arg(track.extension).arg(track.hls));
+				Mokagram::Music::Download(track, [](const QString &path, const QString &error) {
+					LOG(("[music] download: path '%1' error '%2'").arg(path).arg(error));
+				});
+			});
+		} else if (cmd.startsWith(u"deletemine"_q)) {
+			auto peer = (PeerData*)controller->session().user();
+			if (cmd.size() > 11) {
+				auto index = cmd.mid(11).toInt();
+				for (const auto &row : controller->session().data().chatsList()->indexed()->all()) {
+					if (const auto history = row->history()) {
+						if (!index--) {
+							peer = history->peer;
+							break;
+						}
+					}
+				}
+			}
+			Mokagram::History::ShowDeleteMyMessages(controller, peer);
 		} else if (cmd == u"readnow"_q) {
 			if (const auto history = controller->activeChatCurrent().history()) {
 				LOG(("MOKAREAD before unread=%1").arg(history->unreadCount()));
@@ -1879,6 +2676,9 @@ namespace {
 [[nodiscard]] const base::flat_map<const void*, QString> &RowIconMap() {
 	static const auto map = base::flat_map<const void*, QString>{
 		{ &st::menuIconProfile, QString::fromUtf8("👤") },
+		{ &st::menuIconPhone, QString::fromUtf8("📞") },
+		{ &st::menuIconUsername, QString::fromUtf8("🔗") },
+		{ &st::settingsIconChatAutomation, QString::fromUtf8("🤖") },
 		{ &st::menuIconNotifications, QString::fromUtf8("🔔") },
 		{ &st::menuIconLock, QString::fromUtf8("🔑") },
 		{ &st::menuIconChatBubble, QString::fromUtf8("💬") },
@@ -1964,6 +2764,144 @@ namespace {
 		{ &st::menuIconAddress, QString::fromUtf8("📍") },
 		{ &st::menuIconAddAccount, QString::fromUtf8("➕") },
 		{ &st::menuIcon2SV, QString::fromUtf8("🔑") },
+		{ &st::menuIconAbove, QString::fromUtf8("🔼") },
+		{ &st::menuIconAdd, QString::fromUtf8("➕") },
+		{ &st::menuIconAddToFolder, QString::fromUtf8("📁") },
+		{ &st::menuIconAdmin, QString::fromUtf8("👮") },
+		{ &st::menuIconAntispam, QString::fromUtf8("🛡") },
+		{ &st::menuIconArchiveOpen, QString::fromUtf8("📁") },
+		{ &st::menuIconArticle, QString::fromUtf8("📄") },
+		{ &st::menuIconAsMessages, QString::fromUtf8("💬") },
+		{ &st::menuIconAsTopics, QString::fromUtf8("📑") },
+		{ &st::menuIconAuctionDrop, QString::fromUtf8("📈") },
+		{ &st::menuIconBelow, QString::fromUtf8("🔽") },
+		{ &st::menuIconBlockAttention, QString::fromUtf8("🚫") },
+		{ &st::menuIconBoosts, QString::fromUtf8("💎") },
+		{ &st::menuIconBot, QString::fromUtf8("🤖") },
+		{ &st::menuIconCancelAttention, QString::fromUtf8("❌") },
+		{ &st::menuIconCancelFee, QString::fromUtf8("❌") },
+		{ &st::menuIconCaptionHide, QString::fromUtf8("🫣") },
+		{ &st::menuIconCaptionShow, QString::fromUtf8("👁") },
+		{ &st::menuIconChangeOrder, QString::fromUtf8("🔽") },
+		{ &st::menuIconChatDiscuss, QString::fromUtf8("💬") },
+		{ &st::menuIconChats, QString::fromUtf8("💬") },
+		{ &st::menuIconClear, QString::fromUtf8("🗑") },
+		{ &st::menuIconCollapse, QString::fromUtf8("🔼") },
+		{ &st::menuIconCommunity, QString::fromUtf8("👥") },
+		{ &st::menuIconCommunityRemoveAttention, QString::fromUtf8("⛔️") },
+		{ &st::menuIconCopyright, QString::fromUtf8("📄") },
+		{ &st::menuIconCraftChance, QString::fromUtf8("🎲") },
+		{ &st::menuIconCraftTraits, QString::fromUtf8("🔧") },
+		{ &st::menuIconCreateTodoList, QString::fromUtf8("☑️") },
+		{ &st::menuIconCustomize, QString::fromUtf8("🎈") },
+		{ &st::menuIconDisableAttention, QString::fromUtf8("⛔️") },
+		{ &st::menuIconDownloadOff, QString::fromUtf8("⛔️") },
+		{ &st::menuIconDraw, QString::fromUtf8("✏️") },
+		{ &st::menuIconDrugs, QString::fromUtf8("⚠️") },
+		{ &st::menuIconEnlarge, QString::fromUtf8("➕") },
+		{ &st::menuIconExpand, QString::fromUtf8("🔽") },
+		{ &st::menuIconExportTheme, QString::fromUtf8("📤") },
+		{ &st::menuIconFactcheck, QString::fromUtf8("✅") },
+		{ &st::menuIconFake, QString::fromUtf8("⚠️") },
+		{ &st::menuIconFave, QString::fromUtf8("⭐️") },
+		{ &st::menuIconFile, QString::fromUtf8("📄") },
+		{ &st::menuIconForward, QString::fromUtf8("➡️") },
+		{ &st::menuIconFromMainMenu, QString::fromUtf8("⬅️") },
+		{ &st::menuIconGif, QString::fromUtf8("🎞") },
+		{ &st::menuIconGroupLog, QString::fromUtf8("📋") },
+		{ &st::menuIconGroupsHide, QString::fromUtf8("🫣") },
+		{ &st::menuIconHourglass, QString::fromUtf8("⏳") },
+		{ &st::menuIconKeysLegend, QString::fromUtf8("🔑") },
+		{ &st::menuIconLeave, QString::fromUtf8("⛔️") },
+		{ &st::menuIconLike, QString::fromUtf8("💟") },
+		{ &st::menuIconLinks, QString::fromUtf8("🔗") },
+		{ &st::menuIconMarkRead, QString::fromUtf8("✅") },
+		{ &st::menuIconMute, QString::fromUtf8("🔕") },
+		{ &st::menuIconMuteFor, QString::fromUtf8("🔕") },
+		{ &st::menuIconMuteForAny, QString::fromUtf8("🔕") },
+		{ &st::menuIconOrderDate, QString::fromUtf8("🗓") },
+		{ &st::menuIconOrderNumber, QString::fromUtf8("#️⃣") },
+		{ &st::menuIconOrderPrice, QString::fromUtf8("💰") },
+		{ &st::menuIconPayment, QString::fromUtf8("💰") },
+		{ &st::menuIconPendingRequests, QString::fromUtf8("⏳") },
+		{ &st::menuIconPersonal, QString::fromUtf8("👤") },
+		{ &st::menuIconPhotoSet, QString::fromUtf8("🖼") },
+		{ &st::menuIconPhotoSuggest, QString::fromUtf8("🖼") },
+		{ &st::menuIconPorn, QString::fromUtf8("⚠️") },
+		{ &st::menuIconPromote, QString::fromUtf8("📈") },
+		{ &st::menuIconQualityHigh, QString::fromUtf8("📹") },
+		{ &st::menuIconRatingGifts, QString::fromUtf8("🎁") },
+		{ &st::menuIconRatingRefund, QString::fromUtf8("↩️") },
+		{ &st::menuIconRatingUsers, QString::fromUtf8("👥") },
+		{ &st::menuIconReactions, QString::fromUtf8("💟") },
+		{ &st::menuIconRemove, QString::fromUtf8("❌") },
+		{ &st::menuIconRemoveAttention, QString::fromUtf8("❌") },
+		{ &st::menuIconRemovedUsers, QString::fromUtf8("🚫") },
+		{ &st::menuIconReorder, QString::fromUtf8("🔽") },
+		{ &st::menuIconReply, QString::fromUtf8("↩️") },
+		{ &st::menuIconReport, QString::fromUtf8("⚠️") },
+		{ &st::menuIconReportAntiSpam, QString::fromUtf8("🛡") },
+		{ &st::menuIconReportAttention, QString::fromUtf8("⚠️") },
+		{ &st::menuIconReschedule, QString::fromUtf8("🗓") },
+		{ &st::menuIconRestartBot, QString::fromUtf8("🤖") },
+		{ &st::menuIconRestore, QString::fromUtf8("↩️") },
+		{ &st::menuIconRestoreAttention, QString::fromUtf8("↩️") },
+		{ &st::menuIconRetractVote, QString::fromUtf8("↩️") },
+		{ &st::menuIconSavedMessages, QString::fromUtf8("⭐️") },
+		{ &st::menuIconSaveImage, QString::fromUtf8("🔽") },
+		{ &st::menuIconSchedule, QString::fromUtf8("🗓") },
+		{ &st::menuIconSearch, QString::fromUtf8("👁") },
+		{ &st::menuIconSelect, QString::fromUtf8("✔️") },
+		{ &st::menuIconSend, QString::fromUtf8("➡️") },
+		{ &st::menuIconShareOff, QString::fromUtf8("🚫") },
+		{ &st::menuIconShareOn, QString::fromUtf8("📤") },
+		{ &st::menuIconSharing, QString::fromUtf8("📤") },
+		{ &st::menuIconShowAll, QString::fromUtf8("👁") },
+		{ &st::menuIconShrink, QString::fromUtf8("🔼") },
+		{ &st::menuIconSigned, QString::fromUtf8("✏️") },
+		{ &st::menuIconSilent, QString::fromUtf8("🔕") },
+		{ &st::menuIconSoundAdd, QString::fromUtf8("🎵") },
+		{ &st::menuIconSoundOff, QString::fromUtf8("🔕") },
+		{ &st::menuIconSoundSelect, QString::fromUtf8("🎵") },
+		{ &st::menuIconSpoiler, QString::fromUtf8("🫣") },
+		{ &st::menuIconStar, QString::fromUtf8("⭐️") },
+		{ &st::menuIconStarRefLink, QString::fromUtf8("🔗") },
+		{ &st::menuIconStarRefShare, QString::fromUtf8("📤") },
+		{ &st::menuIconStarsCarryover, QString::fromUtf8("⭐️") },
+		{ &st::menuIconStarsRefund, QString::fromUtf8("↩️") },
+		{ &st::menuIconStartStreamWith, QString::fromUtf8("🎙") },
+		{ &st::menuIconStealthLocked, QString::fromUtf8("🫣") },
+		{ &st::menuIconStickerAdd, QString::fromUtf8("🙂") },
+		{ &st::menuIconStickerCreate, QString::fromUtf8("🙂") },
+		{ &st::menuIconStoriesArchive, QString::fromUtf8("📁") },
+		{ &st::menuIconStoriesArchiveSection, QString::fromUtf8("📁") },
+		{ &st::menuIconStoriesSave, QString::fromUtf8("🔽") },
+		{ &st::menuIconStoriesSavedSection, QString::fromUtf8("⭐️") },
+		{ &st::menuIconTableSubmenuDelete, QString::fromUtf8("🗑") },
+		{ &st::menuIconTagAdd, QString::fromUtf8("➕") },
+		{ &st::menuIconTagEdit, QString::fromUtf8("✏️") },
+		{ &st::menuIconTagFilter, QString::fromUtf8("📑") },
+		{ &st::menuIconTagRemoveAttention, QString::fromUtf8("❌") },
+		{ &st::menuIconTagRename, QString::fromUtf8("✏️") },
+		{ &st::menuIconToMainMenu, QString::fromUtf8("➡️") },
+		{ &st::menuIconTradable, QString::fromUtf8("📈") },
+		{ &st::menuIconTransparent, QString::fromUtf8("🔘") },
+		{ &st::menuIconTTLAny, QString::fromUtf8("⏳") },
+		{ &st::menuIconUnarchive, QString::fromUtf8("📁") },
+		{ &st::menuIconUnblock, QString::fromUtf8("✅") },
+		{ &st::menuIconUnfave, QString::fromUtf8("❌") },
+		{ &st::menuIconUnique, QString::fromUtf8("💎") },
+		{ &st::menuIconUniqueProfile, QString::fromUtf8("💎") },
+		{ &st::menuIconUserHide, QString::fromUtf8("🫣") },
+		{ &st::menuIconUserHideDisabled, QString::fromUtf8("👁") },
+		{ &st::menuIconUserShow, QString::fromUtf8("👁") },
+		{ &st::menuIconVideoChat, QString::fromUtf8("📹") },
+		{ &st::menuIconViewReplies, QString::fromUtf8("💬") },
+		{ &st::menuIconViolence, QString::fromUtf8("⚠️") },
+		{ &st::menuIconWelcomeMessage, QString::fromUtf8("👋") },
+		{ &st::menuIconWhenOnline, QString::fromUtf8("🟢") },
+		{ &st::menuIconZoomIn, QString::fromUtf8("➕") },
+		{ &st::menuIconZoomOut, QString::fromUtf8("🔽") },
 	};
 	return map;
 }

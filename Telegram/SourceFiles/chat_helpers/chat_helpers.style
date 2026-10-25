@@ -520,7 +520,7 @@ emojiPanDuration: 200;
 emojiPanHover: windowBgOver;
 emojiPanSlideDuration: 200;
 emojiPanArea: size(34px, 32px);
-emojiPanRadius: 8px;
+emojiPanRadius: 20px;
 emojiPanReactionsPreviewPadding: margins(10px, 20px, 10px, 20px);
 emojiPanEmojiPreviewMinHeight: 160px;
 emojiPanEmojiPreviewRadius: 8px + 8px + 4px;
@@ -638,7 +638,7 @@ stickerPreviewMin: 0.1;
 stickerPanFirstAfterShortcutsSkip: 4px;
 stickersPhotoRowPadding: margins(0px, 12px, 0px, 12px);
 stickersPhotoButtonHeight: 36px;
-stickersPhotoButtonRadius: 8px;
+stickersPhotoButtonRadius: 16px;
 stickersPhotoButtonPadding: margins(6px, 0px, 12px, 0px);
 stickersPhotoButtonIconSkip: 4px;
 stickersPhotoButtonFont: font(14px bold);
@@ -876,7 +876,7 @@ inlineBotsScroll: ScrollArea(defaultSolidScroll) {
 	deltab: stickerPanPadding;
 }
 
-gifsPadding: margins(9px, 5px, 3px, 9px);
+gifsPadding: margins(10px, 5px, 0px, 9px);
 
 emojiSuggestionsDropdown: InnerDropdown(defaultInnerDropdown) {
 	scrollMargin: margins(10px, 10px, 10px, 10px);

@@ -452,7 +452,7 @@ not_null<Ui::RpWidget*> AddInnerToggle(
 		separator->paintRequest(
 		) | rpl::on_next([=, bg = st.textBgOver] {
 			auto p = QPainter(separator);
-			p.fillRect(separator->rect(), bg);
+			Q_UNUSED(bg); Q_UNUSED(p);
 		}, separator->lifetime());
 		const auto separatorHeight = 2 * st.toggle.border
 			+ st.toggle.diameter;

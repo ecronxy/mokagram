@@ -6,6 +6,11 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/player/media_player_widget.h"
+#include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_music_ui.h"
+#include "data/data_document.h"
+#include "ui/painter.h"
+#include "styles/style_menu_icons.h"
 
 #include "platform/platform_specific.h"
 #include "data/data_document.h"
@@ -89,6 +94,24 @@ Widget::Widget(
 	setAttribute(Qt::WA_OpaquePaintEvent);
 	setMouseTracking(true);
 	resize(width(), st::mediaPlayerHeight + st::lineWidth);
+	Mokagram::Music::CoversChanged(
+	) | rpl::on_next([=] {
+		update();
+	}, lifetime());
+	Mokagram::Music::QueueChanges(
+	) | rpl::on_next([=] {
+		handlePlaylistUpdate();
+	}, lifetime());
+	events(
+	) | rpl::filter([](not_null<QEvent*> e) {
+		return e->type() == QEvent::ContextMenu;
+	}) | rpl::on_next([=](not_null<QEvent*> e) {
+		if (Mokagram::Music::OwnsTrack(_lastSongId)) {
+			Mokagram::Music::ShowCurrentTrackMenu(
+				_controller,
+				static_cast<QContextMenuEvent*>(e.get())->globalPos());
+		}
+	}, lifetime());
 
 	setupRightControls();
 
@@ -352,10 +375,10 @@ void Widget::updateDropdownsGeometry() {
 		_volumeToggle->mapToGlobal(
 			QPoint(
 				(_volumeToggle->width() - dropdownWidth) / 2,
-				height())));
+				_volumeToggle->height())));
 	const auto playerMargins = _volume->getMargin();
 	const auto shift = QPoint(playerMargins.left(), playerMargins.top());
-	_volume->move(position - shift);
+	_volume->move(position - shift + QPoint(0, 4));
 
 	_orderController->updateDropdownGeometry();
 	_speedController->updateDropdownGeometry();
@@ -458,6 +481,63 @@ void Widget::paintEvent(QPaintEvent *e) {
 	if (!fill.isEmpty()) {
 		p.fillRect(fill, st::mediaPlayerBg);
 	}
+	// Mokagram: цвет обложки как мягкая подсветка панели.
+	if (_type == AudioMsgId::Type::Song) {
+		const auto accent = Mokagram::Music::CurrentCoverAccent();
+		if (accent.isValid()) {
+			auto from = accent;
+			from.setAlpha(70);
+			auto to = accent;
+			to.setAlpha(0);
+			auto gradient = QLinearGradient(0, 0, width() * 0.8, 0);
+			gradient.setColorAt(0., from);
+			gradient.setColorAt(1., to);
+			p.fillRect(
+				QRect(0, 0, width(), st::mediaPlayerHeight),
+				gradient);
+		}
+	}
+	// Mokagram: обложка слева.
+	if (_type == AudioMsgId::Type::Song) {
+		const auto size = 52;
+		const auto art = QRect(
+			14,
+			(st::mediaPlayerHeight - size) / 2,
+			size,
+			size);
+		auto hq = PainterHighQualityEnabler(p);
+		auto path = QPainterPath();
+		path.addRoundedRect(art, 12, 12);
+		const auto current = instance()->current(AudioMsgId::Type::Song);
+		const auto cover = current.audio()
+			? Mokagram::Music::CoverForDocument(current.audio()->id)
+			: QImage();
+		if (!cover.isNull()) {
+			p.save();
+			p.setClipPath(path);
+			p.drawImage(art, cover);
+			p.restore();
+		} else {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawPath(path);
+			st::menuIconSoundOn.paintInCenter(p, art);
+		}
+		auto title = QString();
+		auto artist = QString();
+		if (Mokagram::Music::OwnsTrack(current)
+			&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
+			// Вторая строка с исполнителем.
+			p.setFont(st::normalFont);
+			p.setPen(st::windowSubTextFg);
+			const auto left = getNameLeft();
+			const auto room = width() - left - getNameRight();
+			p.drawText(
+				QRect(left, st::mediaPlayerNameTop - 4, std::max(room, 40), 20),
+				Qt::AlignLeft | Qt::AlignVCenter,
+				st::normalFont->elided(artist, std::max(room, 40)));
+		}
+	}
 }
 
 void Widget::enterEventHook(QEnterEvent *e) {
@@ -520,6 +600,25 @@ void Widget::mousePressEvent(QMouseEvent *e) {
 }
 
 void Widget::mouseReleaseEvent(QMouseEvent *e) {
+	// Mokagram: клик по обложке открывает очередь и управление, по названию
+	// музыку с последним запросом.
+	if (_type == AudioMsgId::Type::Song) {
+		const auto cover = QRect(14, (st::mediaPlayerHeight - 52) / 2, 52, 52);
+		if (cover.contains(e->pos())) {
+			Mokagram::Music::ShowPlayerBox(_controller);
+			return;
+		}
+		const auto left = getNameLeft();
+		const auto labels = QRect(
+			left,
+			0,
+			width() - left - _rightControls->width() - _close->width(),
+			height() - st::mediaPlayerPlayback.fullWidth);
+		if (labels.contains(e->pos())) {
+			Mokagram::Music::ShowMusicBox(_controller);
+			return;
+		}
+	}
 	if (auto downLabels = base::take(_labelsDown)) {
 		if (_labelsOver != downLabels) {
 			return;
@@ -558,9 +657,62 @@ void Widget::updateOverLabelsState(bool over) {
 	_togglePlaylistRequests.fire(over && (_type == AudioMsgId::Type::Song));
 }
 
+int Widget::songTextWidth() const {
+	const auto fade = st::mediaPlayerControlsFade.width();
+	const auto controls = getTimeRight() + _timeLabel->width() + fade;
+	const auto available = width()
+		- getNameLeft()
+		- st::mediaPlayerCloseRight
+		- _close->width()
+		- controls
+		- buttonsBlockWidth()
+		- 12;
+	auto natural = _nameLabel->naturalWidth();
+	auto title = QString();
+	auto artist = QString();
+	if (Mokagram::Music::OwnsTrack(_lastSongId)
+		&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
+		natural = std::max(natural, st::normalFont->width(artist));
+	}
+	return std::clamp(natural, 40, std::max(available, 40));
+}
+
+int Widget::songButtonsLeft() const {
+	// По центру между названием и таймером.
+	const auto fade = st::mediaPlayerControlsFade.width();
+	const auto controls = getTimeRight() + _timeLabel->width() + fade;
+	const auto textEnd = getNameLeft() + songTextWidth();
+	const auto controlsLeft = _rightControls->x()
+		+ _timeLabel->x()
+		- 12;
+	const auto block = buttonsBlockWidth() - st::mediaPlayerPadding;
+	return textEnd + std::max(12, (controlsLeft - textEnd - block) / 2);
+}
+
+int Widget::buttonsBlockWidth() const {
+	if (_type != AudioMsgId::Type::Song) {
+		return 0;
+	}
+	auto result = _playPause->width();
+	if (_previousTrack) {
+		result += _previousTrack->width() + st::mediaPlayerPlaySkip
+			+ _nextTrack->width() + st::mediaPlayerPlaySkip;
+	}
+	return result + st::mediaPlayerPadding;
+}
+
 void Widget::updatePlayPrevNextPositions() {
-	auto left = st::mediaPlayerPlayLeft;
-	auto top = st::mediaPlayerPlayTop;
+	movePlayPrevNext();
+	updateLabelsGeometry();
+}
+
+void Widget::movePlayPrevNext() {
+	const auto song = (_type == AudioMsgId::Type::Song);
+	// Mokagram: у песен кнопки справа, название рядом с обложкой.
+	auto left = song
+		? songButtonsLeft()
+		: st::mediaPlayerPlayLeft;
+	auto top = (st::mediaPlayerHeight - _playPause->height()) / 2;
 	if (_previousTrack) {
 		_previousTrack->moveToLeft(left, top); left += _previousTrack->width() + st::mediaPlayerPlaySkip;
 		_playPause->moveToLeft(left, top); left += _playPause->width() + st::mediaPlayerPlaySkip;
@@ -568,10 +720,12 @@ void Widget::updatePlayPrevNextPositions() {
 	} else {
 		_playPause->moveToLeft(left, top);
 	}
-	updateLabelsGeometry();
 }
 
 int Widget::getNameLeft() const {
+	if (_type == AudioMsgId::Type::Song) {
+		return 14 + 52 + 14;
+	}
 	auto result = st::mediaPlayerPlayLeft + _playPause->width();
 	if (_previousTrack) {
 		result += _previousTrack->width() + st::mediaPlayerPlaySkip + _nextTrack->width() + st::mediaPlayerPlaySkip;
@@ -581,6 +735,9 @@ int Widget::getNameLeft() const {
 }
 
 int Widget::getNameRight() const {
+	if (_type == AudioMsgId::Type::Song) {
+		return width() - getNameLeft() - songTextWidth();
+	}
 	return st::mediaPlayerCloseRight
 		+ _close->width()
 		+ st::mediaPlayerPadding;
@@ -606,12 +763,16 @@ void Widget::updateLabelsGeometry() {
 		- left
 		- getNameRight();
 	_nameLabel->resizeToNaturalWidth(widthForName);
-	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - st::mediaPlayerName.style.font->ascent);
+	const auto owned = Mokagram::Music::OwnsTrack(_lastSongId);
+	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - (owned ? 6 : 0) - st::mediaPlayerName.style.font->ascent);
 
 	const auto right = getTimeRight();
-	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerTime.font->ascent);
+	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerPlayTop - st::mediaPlayerTime.font->ascent);
 
 	updateControlsWrapGeometry();
+	if (_type == AudioMsgId::Type::Song) {
+		movePlayPrevNext();
+	}
 }
 
 void Widget::updateRepeatToggleIcon() {
@@ -774,6 +935,12 @@ void Widget::handleSongChange() {
 	} else {
 		textWithEntities = Ui::Text::FormatSongNameFor(document)
 			.textWithEntities(true);
+		auto title = QString();
+		auto artist = QString();
+		if (Mokagram::Music::OwnsTrack(current)
+			&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
+			textWithEntities = TextWithEntities{ title };
+		}
 	}
 	_nameLabel->setMarkedText(textWithEntities);
 	handlePlaylistUpdate();

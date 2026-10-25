@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_inner_widget.h"
 
+#include "mokagram/history/mokagram_history.h"
+
 #include "dialogs/dialogs_three_state_icon.h"
 #include "dialogs/ui/chat_search_empty.h"
 #include "dialogs/ui/chat_search_in.h"
@@ -1248,6 +1250,41 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		if (context.quickActionContext) {
 			context.quickActionContext = nullptr;
 		}
+		if (_bulkMode) {
+			if (const auto history = row->history()) {
+				auto hq = PainterHighQualityEnabler(p);
+				// Отметка на углу аватарки, чтобы не лезть на время и счётчик.
+				const auto size = 20;
+				const auto rect = QRectF(
+					_st->padding.left() + _st->photoSize - size + 2,
+					_st->padding.top() + _st->photoSize - size + 2,
+					size,
+					size);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::dialogsBg);
+				p.drawEllipse(rect.adjusted(-2.5, -2.5, 2.5, 2.5));
+				if (_bulkSelected.contains(history)) {
+					p.setPen(Qt::NoPen);
+					p.setBrush(st::windowActiveTextFg);
+					p.drawEllipse(rect);
+					auto pen = QPen(QColor(255, 255, 255), 2.);
+					pen.setCapStyle(Qt::RoundCap);
+					pen.setJoinStyle(Qt::RoundJoin);
+					p.setPen(pen);
+					p.setBrush(Qt::NoBrush);
+					p.drawLine(
+						QPointF(rect.x() + 6, rect.y() + 11.5),
+						QPointF(rect.x() + 9.5, rect.y() + 15));
+					p.drawLine(
+						QPointF(rect.x() + 9.5, rect.y() + 15),
+						QPointF(rect.x() + 16, rect.y() + 7.5));
+				} else {
+					p.setPen(QPen(QColor(255, 255, 255, 110), 1.6));
+					p.setBrush(Qt::NoBrush);
+					p.drawEllipse(rect.adjusted(1, 1, -1, -1));
+				}
+			}
+		}
 	};
 	if (_state == WidgetState::Default) {
 		if (communityModeShown()) {
@@ -1516,7 +1553,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		}
 
 		if (!_peerSearchResults.empty()) {
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), tr::lng_search_global_results(tr::now));
@@ -1583,7 +1620,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		if (_previewResults.empty() && _searchResults.empty()) {
 			if (_loadingAnimation) {
 				const auto text = tr::lng_contacts_loading(tr::now);
-				p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+				p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 				p.setFont(st::searchedBarFont);
 				p.setPen(st::searchedBarFg);
 				p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -1593,7 +1630,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		}
 		if (!_previewResults.empty()) {
 			const auto text = tr::lng_search_tab_public_posts(tr::now);
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -1683,7 +1720,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 			const auto searchLowerText = (_searchHashOrCashtag == HashOrCashtag::None)
 				? _searchState.query.toLower()
 				: QString();
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::dialogsBg);
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -3068,6 +3105,17 @@ void InnerWidget::mousePressReleased(
 	const auto pressedRightButton = _pressedRightButton;
 	auto pressed = _pressed;
 	clearPressed();
+	if (_bulkMode
+		&& pressButton == Qt::LeftButton
+		&& pressed
+		&& pressed->history()) {
+		const auto history = pressed->history();
+		if (!_bulkSelected.remove(history)) {
+			_bulkSelected.emplace(history);
+		}
+		update();
+		return;
+	}
 	auto hashtagPressed = _hashtagPressed;
 	setHashtagPressed(-1);
 	auto hashtagDeletePressed = _hashtagDeletePressed;
@@ -4068,7 +4116,26 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 	_menu = base::make_unique_q<Ui::PopupMenu>(
 		this,
 		row.fullId ? st::defaultPopupMenu : st::popupMenuExpandedSeparator);
-	if (row.fullId) {
+	if (_bulkMode && !row.fullId) {
+		const auto controller = _controller;
+		_menu->addAction(
+			QString::fromUtf8("Удалить мои сообщения (%1)").arg(_bulkSelected.size()),
+			[=] {
+				auto peers = std::vector<PeerId>();
+				for (const auto history : _bulkSelected) {
+					peers.push_back(history->peer->id);
+				}
+				Mokagram::History::ShowDeleteMyMessagesForPeers(
+					controller,
+					peers);
+				clearBulkSelect();
+			},
+			&st::menuIconDelete);
+		_menu->addAction(
+			QString::fromUtf8("Снять выделение"),
+			[=] { clearBulkSelect(); },
+			&st::menuIconCancel);
+	} else if (row.fullId) {
 		if (session().supportMode()) {
 			fillSupportSearchMenu(_menu.get());
 		}
@@ -4089,6 +4156,12 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 			&st::menuIconSelect);
 	} else {
 		const auto addAction = Ui::Menu::CreateAddActionCallback(_menu);
+		if (const auto history = row.key.history()) {
+			addAction(
+				QString::fromUtf8("Выделить"),
+				[=] { startBulkSelect(history); },
+				&st::menuIconSelect);
+		}
 		Window::FillDialogsEntryMenu(
 			_controller,
 			Dialogs::EntryState{
@@ -4117,6 +4190,19 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 		_menu->popup(e->globalPos());
 		e->accept();
 	}
+}
+
+void InnerWidget::startBulkSelect(not_null<History*> first) {
+	_bulkMode = true;
+	_bulkSelected.clear();
+	_bulkSelected.emplace(first);
+	update();
+}
+
+void InnerWidget::clearBulkSelect() {
+	_bulkMode = false;
+	_bulkSelected.clear();
+	update();
 }
 
 void InnerWidget::showSponsoredMenu(int peerSearchIndex, QPoint globalPos) {

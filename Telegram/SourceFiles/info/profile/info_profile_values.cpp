@@ -40,6 +40,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "mokagram/streamer/mokagram_streamer.h"
 
+namespace Mokagram::Badges {
+[[nodiscard]] bool IsOwner(UserData *user);
+} // namespace Mokagram::Badges
+
 namespace Info {
 namespace Profile {
 namespace {
@@ -803,7 +807,8 @@ rpl::producer<BadgeType> BadgeValueFromFlags(Peer peer) {
 			? BadgeType::Fake
 			: peer->isMonoforum()
 			? BadgeType::Direct
-			: (value & Flag::Verified)
+			: ((value & Flag::Verified)
+				|| ::Mokagram::Badges::IsOwner(peer->asUser()))
 			? BadgeType::Verified
 			: premium
 			? BadgeType::Premium

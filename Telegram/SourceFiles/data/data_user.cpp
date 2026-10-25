@@ -629,8 +629,14 @@ void UserData::removeFlags(UserDataFlags which) {
 	setFlags(flags() & ~which);
 }
 
+namespace Mokagram::Badges {
+[[nodiscard]] bool IsOwner(UserData *user);
+} // namespace Mokagram::Badges
+
 bool UserData::isVerified() const {
-	return flags() & UserDataFlag::Verified;
+	// Mokagram: владелец клиента получает обычную галочку подтверждения.
+	return (flags() & UserDataFlag::Verified)
+		|| Mokagram::Badges::IsOwner(const_cast<UserData*>(this));
 }
 
 bool UserData::isScam() const {

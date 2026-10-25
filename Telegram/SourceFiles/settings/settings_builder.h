@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/object_ptr.h"
 #include "settings/settings_common.h"
 #include "settings/settings_type.h"
+#include "ui/style/style_core_color.h"
 
 #include <variant>
 #include <vector>
@@ -50,7 +51,19 @@ template <typename ...Tags>
 struct phrase;
 } // namespace tr
 
+namespace Ui {
+class FlatLabel;
+} // namespace Ui
+
 namespace Settings::Builder {
+
+// Mokagram: скруглённая карточка и серый заголовок над ней для окон вне настроек.
+[[nodiscard]] not_null<Ui::VerticalLayout*> MokaCard(
+	not_null<Ui::VerticalLayout*> outer,
+	style::color outerBg);
+not_null<Ui::FlatLabel*> MokaCardTitle(
+	not_null<Ui::VerticalLayout*> outer,
+	rpl::producer<QString> text);
 
 class SectionBuilder;
 

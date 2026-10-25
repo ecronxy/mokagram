@@ -16,7 +16,7 @@ contactPhoneSkip: 30px;
 newGroupAboutFg: windowSubTextFg;
 newGroupPadding: margins(4px, 6px, 4px, 3px);
 newGroupSkip: 27px;
-newGroupInfoPadding: margins(0px, -4px, 0px, 1px);
+newGroupInfoPadding: margins(0px, 20px, 0px, 1px);
 newGroupLinkPadding: margins(4px, 27px, 4px, 21px);
 newGroupLinkTop: 3px;
 newGroupLinkFont: font(16px);

@@ -876,7 +876,7 @@ groupCallShareBoxComment: InputField(groupCallField) {
 	heightMax: 72px;
 	placeholderMargins: margins(2px, 0px, 2px, 0px);
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
 }
 groupCallShareBoxList: PeerList(groupCallMembersList) {
 	item: PeerListItem(groupCallMembersListItem) {

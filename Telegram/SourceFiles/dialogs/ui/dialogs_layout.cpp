@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/ui/dialogs_layout.h"
+#include "mokagram/notes/mokagram_notes.h"
 
 #include "base/options.h"
 #include "base/unixtime.h"
@@ -484,7 +485,17 @@ void PaintRow(
 	if (swipeTranslation) {
 		p.translate(swipeMirrored ? swipeTranslation : -swipeTranslation, 0);
 	}
-	p.fillRect(geometry, bg);
+	// Mokagram: выбранная и активная строка списка — скруглённая пилюля.
+	if ((context.active || context.selected) && !swipeTranslation) {
+		p.fillRect(geometry, context.currentBg);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		const auto inner = geometry.marginsRemoved({ 2, 1, 2, 1 });
+		p.drawRoundedRect(inner, 18, 18);
+	} else {
+		p.fillRect(geometry, bg);
+	}
 	if (!(flags & Flag::TopicJumpRipple)) {
 		auto ripple = context.active
 			? st::dialogsRippleBgActive
@@ -977,6 +988,37 @@ void PaintRow(
 			const auto muteTop = rectForName.top()
 				+ (st::semiboldFont->height - muteIcon.height()) / 2;
 			muteIcon.paint(p, muteLeft, muteTop, context.width);
+		}
+		// Mokagram: личный тег стоит плашкой справа от имени.
+		if (const auto tag = Mokagram::Notes::Tag(from->id); !tag.isEmpty()) {
+			const auto nameW = std::min(
+				rowName.maxWidth(),
+				rectForName.width());
+			const auto muteExtra = drawMuteIcon
+				? ThreeStateIcon(
+					st::dialogsMuteIcon,
+					context.active,
+					context.selected).width() + st::dialogsMuteIconSkip
+				: 0;
+			const auto tagLeft = rectForName.left()
+				+ nameW
+				+ badgeWidth
+				+ muteExtra
+				+ 6;
+			// Правая граница: до даты, которую уже вычли из rectForName.
+			const auto tagRight = rectForName.left()
+				+ rectForName.width()
+				+ badgeWidth
+				+ muteExtra;
+			Mokagram::Notes::PaintTag(
+				p,
+				tag,
+				tagLeft,
+				rectForName.top(),
+				tagRight,
+				(context.active
+					? st::dialogsNameFgActive
+					: st::windowActiveTextFg)->c);
 		}
 	} else if (hiddenSenderInfo) {
 		p.setPen(context.active

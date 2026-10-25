@@ -50,6 +50,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rect.h"
 #include "ui/power_saving.h"
 #include "ui/vertical_list.h"
+#include "settings/settings_builder.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/wrap/slide_wrap.h"
@@ -480,6 +481,20 @@ void CreateIconSelector(
 	return QString();
 }
 
+// Mokagram: пояснение под карточкой простым серым текстом, без полосы.
+void AddHint(
+		not_null<Ui::VerticalLayout*> container,
+		rpl::producer<QString> text) {
+	static const auto st = [] {
+		auto value = st::boxDividerLabel;
+		value.minWidth = 1;
+		return value;
+	}();
+	container->add(
+		object_ptr<Ui::FlatLabel>(container, std::move(text), st),
+		style::margins(26, 6, 26, 8));
+}
+
 not_null<Ui::SettingsButton*> AddToggledButton(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<bool> shown,
@@ -743,27 +758,25 @@ void EditFilterBox(
 		name->setFocusFast();
 	});
 
-	Ui::AddSkip(content);
-	Ui::AddDivider(content);
-	Ui::AddSkip(content);
-	Ui::AddSubsectionTitle(content, tr::lng_filters_include());
+	Settings::Builder::MokaCardTitle(content, tr::lng_filters_include());
+	const auto includeCard = Settings::Builder::MokaCard(
+		content,
+		st::boxBg);
 
 	const auto includeAdd = AddButtonWithIcon(
-		content,
+		includeCard,
 		tr::lng_filters_add_chats(),
 		st::settingsButtonActive,
 		{ &st::settingsIconAdd, IconType::Round, &st::windowBgActive });
 
 	const auto include = SetupChatsPreview(
-		content,
+		includeCard,
 		data,
 		updateDefaultTitle,
 		kTypes,
 		&Data::ChatFilter::always);
 
-	Ui::AddSkip(content);
-	Ui::AddDividerText(content, tr::lng_filters_include_about());
-	Ui::AddSkip(content);
+	AddHint(content, tr::lng_filters_include_about());
 
 	auto excludeWrap = content->add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
@@ -773,24 +786,25 @@ void EditFilterBox(
 	excludeWrap->toggleOn(state->chatlist.value() | rpl::map(!_1));
 	const auto excludeInner = excludeWrap->entity();
 
-	Ui::AddSubsectionTitle(excludeInner, tr::lng_filters_exclude());
+	Settings::Builder::MokaCardTitle(excludeInner, tr::lng_filters_exclude());
+	const auto excludeCard = Settings::Builder::MokaCard(
+		excludeInner,
+		st::boxBg);
 
 	const auto excludeAdd = AddButtonWithIcon(
-		excludeInner,
+		excludeCard,
 		tr::lng_filters_remove_chats(),
 		st::settingsButtonActive,
 		{ &st::settingsIconRemove, IconType::Round, &st::windowBgActive });
 
 	const auto exclude = SetupChatsPreview(
-		excludeInner,
+		excludeCard,
 		data,
 		updateDefaultTitle,
 		kExcludeTypes,
 		&Data::ChatFilter::never);
 
-	Ui::AddSkip(excludeInner);
-	Ui::AddDividerText(excludeInner, tr::lng_filters_exclude_about());
-	Ui::AddSkip(excludeInner);
+	AddHint(excludeInner, tr::lng_filters_exclude_about());
 
 	{
 		const auto wrap = content->add(
@@ -974,7 +988,7 @@ void EditFilterBox(
 
 		Ui::AddSkip(colors);
 		Ui::AddSkip(colors);
-		Ui::AddDividerText(colors, tr::lng_filters_tag_color_about());
+		AddHint(colors, tr::lng_filters_tag_color_about());
 		Ui::AddSkip(colors);
 	}
 
@@ -1006,12 +1020,13 @@ void EditFilterBox(
 		).withColorIndex(colorIndex);
 	};
 
-	Ui::AddSubsectionTitle(
+	Settings::Builder::MokaCardTitle(
 		content,
 		rpl::conditional(
 			state->hasLinks.value(),
 			tr::lng_filters_link_has(),
 			tr::lng_filters_link()));
+	const auto shareCard = Settings::Builder::MokaCard(content, st::boxBg);
 
 	state->hasLinks.changes() | rpl::on_next([=] {
 		content->resizeToWidth(content->widthNoMargins());
@@ -1023,13 +1038,13 @@ void EditFilterBox(
 	}
 
 	const auto createLink = AddToggledButton(
-		content,
+		shareCard,
 		state->hasLinks.value() | rpl::map(!rpl::mappers::_1),
 		tr::lng_filters_link_create(),
 		st::settingsButtonActive,
 		{ &st::settingsFolderShareIcon, IconType::Simple });
 	const auto addLink = AddToggledButton(
-		content,
+		shareCard,
 		state->hasLinks.value(),
 		tr::lng_group_invite_add(),
 		st::settingsButtonActive,
@@ -1086,8 +1101,7 @@ void EditFilterBox(
 			}));
 		}));
 	}, createLink->lifetime());
-	Ui::AddSkip(content);
-	Ui::AddDividerText(
+	AddHint(
 		content,
 		rpl::conditional(
 			state->hasLinks.value(),

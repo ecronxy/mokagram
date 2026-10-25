@@ -2157,6 +2157,15 @@ void PeerListContent::paintRowContent(
 			p.setBrush(bg);
 			p.drawRoundedRect(pill, radius, radius);
 		}
+	} else if (selected) {
+		p.fillRect(0, 0, outerWidth, _rowHeight, st.button.textBg);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(
+			QRect(6, 1, outerWidth - 12, _rowHeight - 2),
+			18,
+			18);
 	} else {
 		p.fillRect(0, 0, outerWidth, _rowHeight, bg);
 	}

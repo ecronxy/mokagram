@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/discrete_sliders.h"
 
 #include "ui/effects/ripple_animation.h"
+#include "ui/painter.h"
 #include "styles/style_widgets.h"
 
 namespace Ui {
@@ -409,6 +410,14 @@ QImage SettingsSlider::prepareRippleMask(
 		int sectionIndex,
 		const Section &section) {
 	const auto size = QSize(section.width, height() - _st.rippleBottomSkip);
+	// Mokagram: волна внутри пилюли, а не по прямоугольнику.
+	return RippleAnimation::MaskByDrawer(size, false, [&](QPainter &p) {
+		const auto h = std::max(height() - 12, 4);
+		p.drawRoundedRect(
+			QRectF(2, 8, size.width() - 4, h),
+			h / 2.,
+			h / 2.);
+	});
 	if (!_rippleTopRoundRadius
 		|| (sectionIndex > 0 && sectionIndex + 1 < getSectionsCount())) {
 		return RippleAnimation::RectMask(size);
@@ -441,14 +450,48 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 	const auto clip = e->rect();
 	const auto range = DiscreteSlider::getCurrentActiveRange();
 
+	// Mokagram: вкладки-пилюли, как в «Кастомизации», вместо полосы-подчёркивания.
 	const auto drawRect = [&](QRect rect, bool active = false) {
-		const auto &bar = active ? _barActive : _bar;
-		if (bar) {
-			bar->paint(p, rect);
-		} else {
-			p.fillRect(rect, active ? _st.barFgActive : _st.barFg);
-		}
+		Q_UNUSED(rect);
+		Q_UNUSED(active);
 	};
+	const auto pillTop = 8;
+	const auto pillHeight = std::max(height() - pillTop - 4, 4);
+	{
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBgOver);
+		enumerateSections([&](Section &section) {
+			p.drawRoundedRect(
+				QRectF(section.left + 2, pillTop, section.width - 4, pillHeight),
+				pillHeight / 2.,
+				pillHeight / 2.);
+			return true;
+		});
+		p.setBrush(st::windowBgActive);
+		// Отступ берём у ближайшей к активной области секции, а не у первой.
+		auto pad = 0;
+		auto bestDistance = std::numeric_limits<int>::max();
+		enumerateSections([&](Section &section) {
+			const auto contentLeft = section.left
+				+ (section.width - section.contentWidth) / 2;
+			const auto distance = std::abs(contentLeft - range.left);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				pad = std::max((section.width - section.contentWidth) / 2, 0);
+			}
+			return true;
+		});
+		const auto grow = _st.barSnapToLabel ? pad : 0;
+		p.drawRoundedRect(
+			QRectF(
+				range.left - grow + 2,
+				pillTop,
+				range.width + 2 * grow - 4,
+				pillHeight),
+			pillHeight / 2.,
+			pillHeight / 2.);
+	}
 	enumerateSections([&](Section &section) {
 		const auto activeWidth = _st.barSnapToLabel
 			? section.contentWidth
@@ -462,10 +505,8 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 				0.,
 				1.);
 		if (section.ripple) {
-			const auto color = anim::color(
-				_st.rippleBg,
-				_st.rippleBgActive,
-				active);
+			// Mokagram: волна лёгкая и прозрачная, чтобы не закрывать цвет пилюли.
+			const auto color = QColor(255, 255, 255, 30);
 			section.ripple->paint(p, section.left, 0, width(), &color);
 			if (section.ripple->empty()) {
 				section.ripple.reset();
@@ -504,7 +545,7 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 			section.contentWidth,
 			_st.labelStyle.font->height);
 		if (rect.intersects(clip)) {
-			p.setPen(anim::pen(_st.labelFg, _st.labelFgActive, active));
+			p.setPen(anim::pen(st::windowSubTextFg, st::windowFgActive, active));
 			section.label.draw(p, {
 				.position = QPoint(labelLeft, _st.labelTop),
 				.outerWidth = width(),

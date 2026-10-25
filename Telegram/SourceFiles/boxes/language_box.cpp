@@ -997,7 +997,12 @@ void Rows::paintEvent(QPaintEvent *e) {
 
 		const auto selected = (selectedIndex == i);
 		if (selected && !row.removed) {
-			p.fillRect(0, 0, width(), row.height, st::windowBgOver);
+			{
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(QRectF(0, 0, width(), row.height).marginsRemoved({ 6., 1., 6., 1. }), 16, 16);
+		}
 		}
 
 		if (row.ripple) {

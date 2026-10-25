@@ -1,5 +1,9 @@
 // Mokagram: мелочи (лимит аккаунтов, стикер из фото, владелец пака, название клиента).
 #include "mokagram/misc/mokagram_misc.h"
+#include "lang/lang_keys.h"
+#include "mokagram/misc/mokagram_datereg.h"
+#include "mokagram/misc/mokagram_ping.h"
+#include "mokagram/stars/mokagram_stars_stats.h"
 
 #include "api/api_stickers_creator.h"
 #include "base/unixtime.h"
@@ -108,6 +112,28 @@ void RegisterSettings() {
 	size("look.sticker_size", "Размер стикеров", 224, 80, 512);
 	size("look.gif_size", "Размер GIF", 320, 120, 640);
 	size("look.round_size", "Размер кружков", 240, 120, 480);
+	Settings::Register({
+		.key = u"misc.ping_dc"_q,
+		.section = QString::fromUtf8("Сеть"),
+		.title = QString::fromUtf8("Пинг дата-центров"),
+		.description = QString::fromUtf8("Показывает, за сколько отвечает каждый дата-центр Telegram."),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString::fromUtf8("Проверить"),
+		.category = u"other"_q,
+		.sectionIcon = u"storage"_q,
+		.action = [] { ShowPingBox(); },
+	});
+	Settings::Register({
+		.key = u"misc.stars_stats"_q,
+		.section = QString::fromUtf8("Профиль"),
+		.title = QString::fromUtf8("Траты звёзд"),
+		.description = QString::fromUtf8("Сколько звёзд потрачено: по месяцам, категориям и получателям."),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString::fromUtf8("Открыть"),
+		.category = u"other"_q,
+		.sectionIcon = u"person"_q,
+		.action = [] { Stars::ShowSpendingStatsBox(); },
+	});
 	Guard::RegisterSettings();
 }
 
@@ -271,16 +297,32 @@ void Load() {
 namespace {
 
 // Команда клиента по юзернейму (в нижнем регистре) и подпись под профилем.
-constexpr std::pair<const char*, const char*> kTeam[] = {
-	{ "litteraliy", "Maintainer mokaGram" },
+// Подпись на русском и на английском: язык берётся из языка интерфейса.
+struct TeamEntry {
+	const char *name;
+	const char *ru;
+	const char *en;
 };
+constexpr TeamEntry kTeam[] = {
+	{ "litteraliy", "Разработчик mokaGram", "Maintainer mokaGram" },
+};
+constexpr auto kOwnerId = 6612638154ULL;
+
+[[nodiscard]] bool Russian() {
+	return Lang::Id().startsWith(u"ru"_q);
+}
 
 [[nodiscard]] const char *TeamRole(not_null<UserData*> user) {
+	if (peerToUser(user->id).bare == kOwnerId) {
+		return Russian()
+			? "Разработчик и владелец mokaGram"
+			: "Developer and owner of mokaGram";
+	}
 	for (const auto &username : user->usernames()) {
 		const auto lower = username.toLower().toUtf8();
-		for (const auto &[name, role] : kTeam) {
-			if (lower == name) {
-				return role;
+		for (const auto &entry : kTeam) {
+			if (lower == entry.name) {
+				return Russian() ? entry.ru : entry.en;
 			}
 		}
 	}
@@ -288,6 +330,10 @@ constexpr std::pair<const char*, const char*> kTeam[] = {
 }
 
 } // namespace
+
+bool IsOwner(UserData *user) {
+	return user && (peerToUser(user->id).bare == kOwnerId);
+}
 
 Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	Load();

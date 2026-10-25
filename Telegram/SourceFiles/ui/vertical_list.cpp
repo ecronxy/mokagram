@@ -27,10 +27,11 @@ void AddSkip(not_null<Ui::VerticalLayout*> container, int skip) {
 void AddDivider(
 		not_null<Ui::VerticalLayout*> container,
 		const style::DividerBar &st) {
-	container->add(object_ptr<Ui::BoxContentDivider>(
+	const auto divider = container->add(object_ptr<Ui::BoxContentDivider>(
 		container,
 		st::boxDividerHeight,
 		st));
+	divider->setProperty("moka-break", true);
 }
 
 not_null<Ui::FlatLabel*> AddDividerText(
@@ -58,12 +59,13 @@ not_null<Ui::FlatLabel*> AddDividerText(
 		std::move(text),
 		st.label);
 	const auto result = label.data();
-	container->add(object_ptr<Ui::DividerLabel>(
+	const auto divider = container->add(object_ptr<Ui::DividerLabel>(
 		container,
 		std::move(label),
 		margins,
 		st.bar,
 		parts));
+	divider->setProperty("moka-break", true);
 	return result;
 }
 
@@ -72,12 +74,33 @@ not_null<Ui::FlatLabel*> AddSubsectionTitle(
 		rpl::producer<QString> text,
 		style::margins addPadding,
 		const style::FlatLabel *st) {
-	return container->add(
+	// Mokagram: внутри карточки настроек заголовок серый, заглавными,
+	// и стоит над карточкой (карточка режется по нему).
+	auto inCard = false;
+	for (QWidget *w = container; w; w = w->parentWidget()) {
+		if (w->property("moka-group-outer").isValid()) {
+			inCard = true;
+			break;
+		}
+	}
+	{
+		text = std::move(text) | rpl::map([](QString value) {
+			return value.toUpper();
+		});
+	}
+	const auto label = container->add(
 		object_ptr<Ui::FlatLabel>(
 			container,
 			std::move(text),
 			st ? *st : st::defaultSubsectionTitle),
-		st::defaultSubsectionTitlePadding + addPadding);
+		inCard
+			? style::margins(12, 14, 12, 6)
+			: (st::defaultSubsectionTitlePadding + addPadding));
+	label->setTextColorOverride(st::windowSubTextFg->c);
+	if (inCard) {
+		label->setProperty("moka-title", true);
+	}
+	return label;
 }
 
 } // namespace Ui

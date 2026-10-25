@@ -1,6 +1,11 @@
 name: Linux.
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Тег релиза на GitHub (пусто = только артефакт)'
+        required: false
   push:
     # Pushes to the canary branches run only canary.yml, see there.
     branches-ignore:
@@ -48,7 +53,7 @@ jobs:
 
   linux:
     name: Rocky Linux 8
-    runs-on: ${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/nightly') && 'depot-ubuntu-latest-16' || 'ubuntu-latest' }}
+    runs-on: depot-ubuntu-latest-16
 
     strategy:
       matrix:
@@ -59,6 +64,9 @@ jobs:
       UPLOAD_ARTIFACT: "true"
       ONLY_CACHE: "false"
       IMAGE_TAG: tdesktop:centos_env
+
+    permissions:
+      contents: write
 
     steps:
       - name: Clone.
@@ -213,3 +221,15 @@ jobs:
           name: ${{ env.ARTIFACT_NAME }}
           path: out/Debug/artifact/
           retention-days: 1
+
+      - name: Release.
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd out/Debug/artifact
+          tar -cJf mokagram-linux-x64.tar.xz Telegram Updater
+          gh release create "${{ inputs.release_tag }}" mokagram-linux-x64.tar.xz \
+            --repo "${{ github.repository }}" --prerelease \
+            --title "mokaGram ${{ inputs.release_tag }} (тестовая сборка)" \
+            --notes "Тестовая сборка для Linux x64. Debug-конфигурация, собрана на Depot."

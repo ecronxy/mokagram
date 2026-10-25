@@ -326,7 +326,7 @@ customBadgeField: InputField(defaultInputField) {
 	placeholderFont: normalFont;
 
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
 
 	heightMin: 32px;
 }

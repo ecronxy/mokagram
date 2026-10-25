@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "apiwrap.h"
+#include "mokagram/snippets/mokagram_snippets.h"
 
 #include "api/api_authorizations.h"
 #include "api/api_attached_stickers.h"
@@ -4771,6 +4772,7 @@ void ApiWrap::sendMessage(
 		std::optional<MsgId> localMessageId) {
 	const auto history = message.action.history;
 	const auto peer = history->peer;
+	Mokagram::Snippets::Expand(message.textWithTags);
 	if (!Mokagram::Plugins::RunSendMessageHook(
 			message.textWithTags,
 			peer->id.value)) {

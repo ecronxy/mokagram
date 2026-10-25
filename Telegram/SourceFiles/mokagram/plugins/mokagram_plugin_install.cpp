@@ -3,6 +3,7 @@
 #include "base/call_delayed.h"
 
 #include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/plugins/mokagram_plugin_store.h"
 
 #include "core/application.h"
 #include "data/data_document.h"
@@ -23,6 +24,7 @@
 #include "history/history.h"
 #include "history/history_item.h"
 #include "data/data_peer.h"
+#include "data/data_user.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
@@ -47,6 +49,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
+#include <map>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
@@ -103,7 +106,8 @@ struct Info {
 
 [[nodiscard]] QString PermissionTitle(const QString &key) {
 	if (key == "messages.send") return U("отправка сообщений");
-	if (key == "messages.read") return U("чтение сообщений");
+	if (key == "messages.read") return U("чтение сообщений и сведений о чатах");
+	if (key == "messages.edit") return U("правка ваших сообщений");
 	if (key == "network") return U("доступ в интернет");
 	if (key == "files") return U("доступ к файлам");
 	if (key == "native") return U("запуск программ и нативного кода");
@@ -488,6 +492,13 @@ void ShowInstallBox(
 
 } // namespace
 
+void InstallFromBytes(
+		Window::SessionController *controller,
+		const QByteArray &bytes,
+		Fn<void()> installed) {
+	ShowInstallBox(controller, bytes, std::move(installed));
+}
+
 bool IsPluginDocument(not_null<DocumentData*> document) {
 	return document->filename().endsWith(
 		QStringLiteral(".plugin"),
@@ -767,7 +778,7 @@ struct IconState {
 // Круглая кнопка шапки: стрелка назад или лупа, рисуются вручную.
 [[nodiscard]] not_null<Ui::AbstractButton*> MakeRoundButton(
 		not_null<QWidget*> parent,
-		bool back,
+		int kind,
 		Fn<void()> callback) {
 	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
 	button->resize(36, 36);
@@ -785,9 +796,14 @@ struct IconState {
 		pen.setJoinStyle(Qt::RoundJoin);
 		p.setPen(pen);
 		p.setBrush(Qt::NoBrush);
-		if (back) {
+		if (kind == 1) {
 			p.drawLine(QPointF(17, 17), QPointF(31, 31));
 			p.drawLine(QPointF(31, 17), QPointF(17, 31));
+		} else if (kind == 2) {
+			// Бургер: три полоски.
+			p.drawLine(QPointF(15, 17.5), QPointF(33, 17.5));
+			p.drawLine(QPointF(15, 24), QPointF(33, 24));
+			p.drawLine(QPointF(15, 30.5), QPointF(33, 30.5));
 		} else {
 			p.drawEllipse(QPointF(22.5, 22.5), 7.5, 7.5);
 			p.drawLine(QPointF(28, 28), QPointF(34, 34));
@@ -1025,7 +1041,8 @@ void PluginsBox(
 		header,
 		true,
 		[=] { box->closeBox(); });
-	const auto searchButton = MakeRoundButton(header, false, nullptr);
+	const auto searchButton = MakeRoundButton(header, 0, nullptr);
+	const auto menuButton = MakeRoundButton(header, 2, nullptr);
 	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
 		header,
 		U("Плагины"),
@@ -1063,6 +1080,9 @@ void PluginsBox(
 		searchButton->move(
 			width - searchButton->width(),
 			(header->height() - searchButton->height()) / 2);
+		menuButton->move(
+			searchButton->x() - 8 - menuButton->width(),
+			searchButton->y());
 		headerTitle->move(
 			(width - headerTitle->width()) / 2,
 			(header->height() - headerTitle->height()) / 2);
@@ -1135,29 +1155,8 @@ void PluginsBox(
 		}, reopen, log));
 	}
 
-	// Кнопка выбора файла .plugin с диска.
-	static const auto stAdd = [] {
-		auto result = st::defaultActiveButton;
-		result.height = 44;
-		result.textTop = 12;
-		result.radius = 22;
-		result.fullRadius = true;
-		return result;
-	}();
-	const auto addRow = content->add(
-		object_ptr<Ui::RpWidget>(content),
-		QMargins(14, 8, 14, 0));
-	addRow->resize(addRow->width(), stAdd.height);
-	const auto add = Ui::CreateChild<Ui::RoundButton>(
-		addRow,
-		rpl::single(U("Добавить плагин")),
-		stAdd);
-	addRow->widthValue() | rpl::on_next([=](int width) {
-		add->setFullWidth(width);
-		add->moveToLeft(0, 0);
-	}, addRow->lifetime());
 	const auto weakBox = base::make_weak(box);
-	add->setClickedCallback([=] {
+	const auto pickPlugin = [=] {
 		FileDialog::GetOpenPath(
 			box.get(),
 			U("Выберите плагин"),
@@ -1186,6 +1185,20 @@ void PluginsBox(
 					}
 				});
 			}));
+	};
+	const auto openStore = [=] {
+		if (const auto strong = weak.get()) {
+			strong->show(Box(StoreBox, strong, reopen));
+		}
+	};
+	const auto menu = std::make_shared<base::unique_qptr<Ui::PopupMenu>>();
+	menuButton->setClickedCallback([=] {
+		*menu = base::make_unique_q<Ui::PopupMenu>(
+			menuButton,
+			st::popupMenuWithIcons);
+		(*menu)->addAction(U("Добавить плагин"), pickPlugin, &st::menuIconAdd);
+		(*menu)->addAction(U("Магазин плагинов"), openStore, &st::menuIconShop);
+		(*menu)->popup(QCursor::pos());
 	});
 	Ui::AddSkip(content, 14);
 
@@ -1205,6 +1218,7 @@ void PluginsBox(
 	searchButton->setClickedCallback([=] {
 		*searching = !*searching;
 		headerTitle->setVisible(!*searching);
+		menuButton->setVisible(!*searching);
 		pill->setVisible(*searching);
 		field->setVisible(*searching);
 		field->raise();
@@ -1265,7 +1279,14 @@ void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg) {
 	}, widget->lifetime());
 }
 
-void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item) {
+namespace {
+[[nodiscard]] const style::icon *MenuIconByName(QString name);
+} // namespace
+
+void AddMessageMenuItems(
+		not_null<Ui::PopupMenu*> menu,
+		HistoryItem *item,
+		const QString &selected) {
 	if (!item) {
 		return;
 	}
@@ -1274,6 +1295,9 @@ void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item) {
 	ctx.insert("peer", QString::number(item->history()->peer->id.value));
 	ctx.insert("text", item->originalText().text);
 	ctx.insert("out", item->out());
+	ctx.insert("selected", selected);
+	ctx.insert("has_media", item->media() != nullptr);
+	ctx.insert("date", double(item->date()));
 	const auto ctxJson = QJsonDocument(ctx).toJson(
 		QJsonDocument::Compact).toStdString();
 	const auto list = QJsonDocument::fromJson(
@@ -1289,8 +1313,153 @@ void AddMessageMenuItems(not_null<Ui::PopupMenu*> menu, HistoryItem *item) {
 					LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
 				});
 			},
-			&st::menuIconBotCommands);
+			MenuIconByName(entry.value("icon").toString()));
 	}
+}
+
+namespace {
+
+void LogLine(const std::string &line) {
+	LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+}
+
+[[nodiscard]] const style::icon *MenuIconByName(QString name) {
+	static const auto table = std::map<QString, const style::icon*>{
+		{ u"reactions"_q, &st::menuIconReactions },
+		{ u"reply"_q, &st::menuIconReply },
+		{ u"edit"_q, &st::menuIconEdit },
+		{ u"draw"_q, &st::menuIconDraw },
+		{ u"pin"_q, &st::menuIconPin },
+		{ u"unpin"_q, &st::menuIconUnpin },
+		{ u"copy"_q, &st::menuIconCopy },
+		{ u"forward"_q, &st::menuIconForward },
+		{ u"delete"_q, &st::menuIconDelete },
+		{ u"select"_q, &st::menuIconSelect },
+		{ u"saveimage"_q, &st::menuIconSaveImage },
+		{ u"stickers"_q, &st::menuIconStickers },
+		{ u"emoji"_q, &st::menuIconEmoji },
+		{ u"cancel"_q, &st::menuIconCancel },
+		{ u"showinchat"_q, &st::menuIconShowInChat },
+		{ u"gif"_q, &st::menuIconGif },
+		{ u"download"_q, &st::menuIconDownload },
+		{ u"link"_q, &st::menuIconLink },
+		{ u"block"_q, &st::menuIconBlock },
+		{ u"report"_q, &st::menuIconReport },
+		{ u"fave"_q, &st::menuIconFave },
+		{ u"profile"_q, &st::menuIconProfile },
+		{ u"info"_q, &st::menuIconInfo },
+		{ u"invite"_q, &st::menuIconInvite },
+		{ u"share"_q, &st::menuIconShare },
+		{ u"archive"_q, &st::menuIconArchive },
+		{ u"markread"_q, &st::menuIconMarkRead },
+		{ u"markunread"_q, &st::menuIconMarkUnread },
+		{ u"clear"_q, &st::menuIconClear },
+		{ u"manage"_q, &st::menuIconManage },
+		{ u"stats"_q, &st::menuIconStats },
+		{ u"schedule"_q, &st::menuIconSchedule },
+		{ u"send"_q, &st::menuIconSend },
+		{ u"settings"_q, &st::menuIconSettings },
+		{ u"file"_q, &st::menuIconFile },
+		{ u"photo"_q, &st::menuIconPhoto },
+		{ u"search"_q, &st::menuIconSearch },
+		{ u"translate"_q, &st::menuIconTranslate },
+		{ u"channel"_q, &st::menuIconChannel },
+		{ u"groups"_q, &st::menuIconGroups },
+		{ u"savedmessages"_q, &st::menuIconSavedMessages },
+		{ u"nightmode"_q, &st::menuIconNightMode },
+		{ u"notifications"_q, &st::menuIconNotifications },
+		{ u"lock"_q, &st::menuIconLock },
+		{ u"bot"_q, &st::menuIconBot },
+		{ u"botcommands"_q, &st::menuIconBotCommands },
+		{ u"premium"_q, &st::menuIconPremium },
+		{ u"shop"_q, &st::menuIconShop },
+		{ u"add"_q, &st::menuIconAdd },
+		{ u"restore"_q, &st::menuIconRestore },
+		{ u"palette"_q, &st::menuIconPalette },
+		{ u"mute"_q, &st::menuIconMute },
+		{ u"unmute"_q, &st::menuIconUnmute },
+		{ u"timer"_q, &st::menuIconTimer },
+		{ u"topics"_q, &st::menuIconTopics },
+		{ u"links"_q, &st::menuIconLinks },
+		{ u"chats"_q, &st::menuIconChats },
+		{ u"phone"_q, &st::menuIconPhone },
+		{ u"chatbubble"_q, &st::menuIconChatBubble },
+		{ u"devices"_q, &st::menuIconDevices },
+		{ u"network"_q, &st::menuIconNetwork },
+		{ u"storage"_q, &st::menuIconStorage },
+		{ u"export"_q, &st::menuIconExport },
+		{ u"leave"_q, &st::menuIconLeave },
+		{ u"soundon"_q, &st::menuIconSoundOn },
+		{ u"soundoff"_q, &st::menuIconSoundOff },
+		{ u"expand"_q, &st::menuIconExpand },
+		{ u"collapse"_q, &st::menuIconCollapse },
+		{ u"replace"_q, &st::menuIconReplace },
+		{ u"remove"_q, &st::menuIconRemove },
+		{ u"like"_q, &st::menuIconLike },
+		{ u"hourglass"_q, &st::menuIconHourglass },
+		{ u"payment"_q, &st::menuIconPayment },
+		{ u"ton"_q, &st::menuIconTon },
+		{ u"reorder"_q, &st::menuIconReorder },
+		{ u"address"_q, &st::menuIconAddress },
+		{ u"faq"_q, &st::menuIconFaq },
+		{ u"username"_q, &st::menuIconUsername }
+	};
+	name = name.toLower();
+	if (name.startsWith(u"menuicon"_q)) {
+		name = name.mid(8);
+	}
+	const auto i = table.find(name);
+	return (i != end(table)) ? i->second : &st::menuIconBotCommands;
+}
+
+void FillMenuEntries(
+		const std::string &location,
+		const std::string &ctxJson,
+		const MenuAdd &add) {
+	const auto list = QJsonDocument::fromJson(QByteArray::fromStdString(
+		MenuItemsJson(location, ctxJson))).array();
+	for (const auto &value : list) {
+		const auto entry = value.toObject();
+		const auto pid = entry.value("pid").toString().toStdString();
+		const auto index = entry.value("index").toInt();
+		add(entry.value("text").toString(), [=] {
+			MenuItemClick(pid, index, ctxJson, LogLine);
+		}, MenuIconByName(entry.value("icon").toString()));
+	}
+}
+
+} // namespace
+
+void AddPeerMenuItems(
+		const QString &location,
+		PeerData *peer,
+		const MenuAdd &add) {
+	if (!peer) {
+		return;
+	}
+	auto ctx = QJsonObject();
+	ctx.insert("peer", QString::number(peer->id.value));
+	ctx.insert("title", peer->name());
+	const auto user = peer->asUser();
+	ctx.insert("kind", user
+		? (user->isBot() ? "bot" : "user")
+		: (peer->isChannel() && !peer->isMegagroup() ? "channel" : "group"));
+	ctx.insert("username", peer->username());
+	FillMenuEntries(
+		location.toStdString(),
+		QJsonDocument(ctx).toJson(QJsonDocument::Compact).toStdString(),
+		add);
+}
+
+std::vector<DrawerItem> DrawerMenuItems() {
+	auto result = std::vector<DrawerItem>();
+	FillMenuEntries("drawer", "{}", [&](
+			const QString &text,
+			Fn<void()> handler,
+			const style::icon *icon) {
+		result.push_back({ text, std::move(handler), icon });
+	});
+	return result;
 }
 
 } // namespace Mokagram::Plugins

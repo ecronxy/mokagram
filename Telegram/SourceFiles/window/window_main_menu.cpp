@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/history/mokagram_history.h"
+#include "mokagram/music/mokagram_music_ui.h"
 #include <QtGui/QBitmap>
 
 #include "apiwrap.h"
@@ -757,6 +759,18 @@ void MainMenu::setupMenu() {
 		)->setClickedCallback([=] {
 			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
 		});
+		addAction(
+			rpl::single(QString::fromUtf8("Музыка")),
+			{ &st::menuIconSoundOn }
+		)->setClickedCallback([=] {
+			Mokagram::Music::ShowMusicBox(controller);
+		});
+		for (auto &item : Mokagram::Plugins::DrawerMenuItems()) {
+			addAction(
+				rpl::single(item.text),
+				{ item.icon }
+			)->setClickedCallback(std::move(item.handler));
+		}
 		const auto session = &controller->session();
 		const auto wallet = _menu->add(
 			object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(

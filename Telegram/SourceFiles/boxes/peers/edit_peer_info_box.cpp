@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "settings/settings_builder.h"
 #include "boxes/peers/edit_peer_info_box.h"
 
 #include "apiwrap.h"
@@ -135,9 +136,9 @@ void AddSkip(
 		not_null<Ui::VerticalLayout*> container,
 		int top = st::editPeerTopButtonsLayoutSkip,
 		int bottom = st::editPeerTopButtonsLayoutSkipToBottom) {
-	Ui::AddSkip(container, top);
+	Q_UNUSED(top);
+	Q_UNUSED(bottom);
 	Ui::AddDivider(container);
-	Ui::AddSkip(container, bottom);
 }
 
 void AddButtonWithCount(
@@ -846,44 +847,46 @@ object_ptr<Ui::RpWidget> Controller::createDescriptionEdit() {
 		return nullptr;
 	}
 
-	auto result = object_ptr<Ui::PaddingWrap<Ui::InputField>>(
-		_wrap,
+	auto result = object_ptr<Ui::VerticalLayout>(_wrap);
+	Settings::Builder::MokaCardTitle(
+		result.data(),
+		tr::lng_create_group_description());
+	const auto field = result->add(
 		object_ptr<Ui::InputField>(
-			_wrap,
+			result.data(),
 			st::editPeerDescription,
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_create_group_description(),
 			_peer->about()),
 		st::editPeerDescriptionMargins);
-	result->entity()->setMaxLength(Ui::EditPeer::kMaxChannelDescription);
-	result->entity()->setInstantReplaces(Ui::InstantReplaces::Default());
-	result->entity()->setInstantReplacesEnabled(
+	field->setMaxLength(Ui::EditPeer::kMaxChannelDescription);
+	field->setInstantReplaces(Ui::InstantReplaces::Default());
+	field->setInstantReplacesEnabled(
 		Core::App().settings().replaceEmojiValue(),
 		Core::App().settings().systemTextReplaceValue());
-	result->entity()->setSubmitSettings(
+	field->setSubmitSettings(
 		Core::App().settings().sendSubmitWay());
 	Ui::Emoji::SuggestionsController::Init(
 		_wrap->window(),
-		result->entity(),
+		field,
 		&_peer->session());
 
-	result->entity()->submits(
+	field->submits(
 	) | rpl::on_next([=] {
 		submitDescription();
-	}, result->entity()->lifetime());
+	}, field->lifetime());
 
-	_controls.description = result->entity();
+	_controls.description = field;
 	return result;
 }
 
 object_ptr<Ui::RpWidget> Controller::createManageGroupButtons() {
 	Expects(_wrap != nullptr);
 
-	auto result = object_ptr<Ui::PaddingWrap<Ui::VerticalLayout>>(
-		_wrap,
-		object_ptr<Ui::VerticalLayout>(_wrap),
-		st::editPeerBottomButtonsLayoutMargins);
-	_controls.buttonsLayout = result->entity();
+	auto result = object_ptr<Ui::VerticalLayout>(_wrap);
+	_controls.buttonsLayout = Settings::Builder::MokaCard(
+		result.data(),
+		st::boxBg);
 
 	fillManageSection();
 

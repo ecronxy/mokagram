@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "ui/widgets/menu/menu_item_base.h"
 #include "core/bank_card_click_handler.h"
 
 #include "core/click_handler_types.h"
@@ -155,7 +156,7 @@ void ResolveBankCardAction::paintEvent(QPaintEvent *e) {
 	if (selected && _st.itemBgOver->c.alpha() < 255) {
 		p.fillRect(0, 0, width(), height, _st.itemBg);
 	}
-	p.fillRect(0, 0, width(), height, selected ? _st.itemBgOver : _st.itemBg);
+	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), height), _st, selected);
 
 	{
 		p.setPen(selected ? _st.itemFgShortcutOver : _st.itemFgShortcut);

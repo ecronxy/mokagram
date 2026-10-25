@@ -18,8 +18,13 @@
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 
+#include <QtCore/QDir>
+#include <QtCore/QProcessEnvironment>
+
 #include <lzma.h>
 #include <openssl/evp.h>
+
+#include <unistd.h>
 
 #include <cstdio>
 #include <limits>
@@ -41,13 +46,20 @@ constexpr auto kAutoKey = "update.auto";
 constexpr auto kCheckKey = "update.check";
 constexpr auto kSkippedKey = "update.skipped";
 
-// The private half is ~/.config/mokagram/update-key.pem of the publisher.
+// Public half of the mokaGram update key. The private half never leaves
+// the publisher machine: ~/.config/mokagram/update-key.pem (chmod 600).
 constexpr uchar kPublicKey[32] = {
-	0x02, 0xfd, 0xee, 0xb8, 0x11, 0x5f, 0x2c, 0x21,
-	0x0f, 0xd5, 0x70, 0xec, 0xb8, 0xd1, 0x1f, 0xfd,
-	0x47, 0x11, 0x3d, 0x0d, 0x6d, 0xdd, 0x50, 0xee,
-	0xb2, 0x23, 0x1d, 0x8e, 0x2c, 0x3d, 0xcf, 0x67,
+	0x60, 0x54, 0xcc, 0x0f, 0xbd, 0x46, 0xda, 0xbc,
+	0xbc, 0x0f, 0xf1, 0x7c, 0x30, 0xa9, 0x0b, 0xe6,
+	0xfe, 0x6f, 0xbf, 0x22, 0x8e, 0xe9, 0x55, 0x25,
+	0xde, 0x0d, 0xca, 0x1c, 0x3b, 0x2f, 0x3e, 0xeb,
 };
+
+// Limits: a lying server must not be able to fill memory or disk.
+constexpr auto kMaxManifestBytes = qint64(64 * 1024);
+constexpr auto kMaxPackedBytes = qint64(400) * 1024 * 1024;
+constexpr auto kMaxUnpackedBytes = qint64(1536) * 1024 * 1024;
+constexpr auto kDownloadTimeout = 60 * 1000;
 
 struct Manifest {
 	int version = 0;
@@ -94,6 +106,27 @@ void Toast(const QString &text) {
 	}
 }
 
+// Обновления ставятся только в установленный клиент. Рабочая сборка из
+// папки разработки не должна перезаписывать сама себя.
+[[nodiscard]] bool UpdatesAllowed() {
+	if (qEnvironmentVariableIsSet("MOKAGRAM_NO_UPDATE")
+		|| qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
+		return false;
+	}
+	const auto dir = QDir::cleanPath(cExeDir());
+	return !dir.contains(u"mokagram-build"_q)
+		&& !dir.contains(u"/dev/"_q)
+		&& QFileInfo(dir).isWritable();
+}
+
+void HardenRequest(QNetworkRequest &request, int timeout) {
+	request.setAttribute(
+		QNetworkRequest::RedirectPolicyAttribute,
+		QNetworkRequest::NoLessSafeRedirectPolicy);
+	request.setTransferTimeout(timeout);
+	request.setRawHeader("User-Agent", "mokaGram-updater");
+}
+
 [[nodiscard]] QString TargetPath() {
 	return cExeDir() + cExeName();
 }
@@ -110,7 +143,9 @@ void Toast(const QString &text) {
 		+ QByteArray::number(manifest.size) + '\n';
 }
 
-[[nodiscard]] bool SignatureValid(const Manifest &manifest) {
+[[nodiscard]] bool Verify(
+		const QByteArray &message,
+		const QByteArray &signature) {
 	const auto key = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>(
 		EVP_PKEY_new_raw_public_key(
 			EVP_PKEY_ED25519,
@@ -131,13 +166,16 @@ void Toast(const QString &text) {
 			key.get()) != 1) {
 		return false;
 	}
-	const auto message = SignedMessage(manifest);
 	return EVP_DigestVerify(
 		context.get(),
-		reinterpret_cast<const uchar*>(manifest.signature.constData()),
-		size_t(manifest.signature.size()),
+		reinterpret_cast<const uchar*>(signature.constData()),
+		size_t(signature.size()),
 		reinterpret_cast<const uchar*>(message.constData()),
 		size_t(message.size())) == 1;
+}
+
+[[nodiscard]] bool SignatureValid(const Manifest &manifest) {
+	return Verify(SignedMessage(manifest), manifest.signature);
 }
 
 [[nodiscard]] std::optional<Manifest> ParseManifest(const QByteArray &data) {
@@ -162,6 +200,7 @@ void Toast(const QString &text) {
 		u"^[A-Za-z0-9._-]+$"_q);
 	if (result.version <= 0
 		|| result.size <= 0
+		|| result.size > kMaxPackedBytes
 		|| result.sha256.size() != 32
 		|| !kFileName.match(result.file).hasMatch()
 		|| !SignatureValid(result)) {
@@ -189,18 +228,33 @@ void Toast(const QString &text) {
 	stream.next_in = reinterpret_cast<const uint8_t*>(packed.constData());
 	stream.avail_in = size_t(packed.size());
 	auto result = LZMA_OK;
+	auto total = qint64(0);
+	auto header = QByteArray();
 	while (result == LZMA_OK) {
 		stream.next_out = reinterpret_cast<uint8_t*>(buffer.data());
 		stream.avail_out = size_t(buffer.size());
 		result = lzma_code(&stream, LZMA_FINISH);
 		const auto written = buffer.size() - qint64(stream.avail_out);
+		if (header.size() < 4) {
+			header.append(buffer.constData(), std::min<qint64>(written, 4 - header.size()));
+		}
+		total += written;
 		if ((result != LZMA_OK && result != LZMA_STREAM_END)
+			|| total > kMaxUnpackedBytes
 			|| file.write(buffer.constData(), written) != written) {
 			result = LZMA_DATA_ERROR;
 		}
 	}
 	lzma_end(&stream);
-	return (result == LZMA_STREAM_END) && file.flush();
+	// Установленный файл должен быть исполняемым ELF.
+	const auto elf = (header.size() == 4)
+		&& (header[0] == 0x7f) && (header[1] == 'E')
+		&& (header[2] == 'L') && (header[3] == 'F');
+	const auto flushed = file.flush();
+	if (flushed) {
+		::fsync(file.handle());
+	}
+	return (result == LZMA_STREAM_END) && elf && flushed;
 }
 
 [[nodiscard]] QString Install(const QByteArray &packed) {
@@ -214,6 +268,16 @@ void Toast(const QString &text) {
 		| QFileDevice::ExeOwner
 		| QFileDevice::ReadOwner
 		| QFileDevice::WriteOwner);
+	// Прежнюю версию оставляем рядом: если новая не запустится, её можно
+	// вернуть, переименовав .prev обратно.
+	const auto previous = target + u".prev"_q;
+	QFile::remove(previous);
+	// Жёсткая ссылка: мгновенно и без копирования сотен мегабайт.
+	if (::link(
+			QFile::encodeName(target).constData(),
+			QFile::encodeName(previous).constData()) != 0) {
+		QFile::copy(target, previous);
+	}
 	if (std::rename(
 			QFile::encodeName(temporary).constData(),
 			QFile::encodeName(target).constData()) != 0) {
@@ -260,7 +324,16 @@ void Download(const Manifest &manifest) {
 	request.setAttribute(
 		QNetworkRequest::CacheLoadControlAttribute,
 		QNetworkRequest::AlwaysNetwork);
+	HardenRequest(request, kDownloadTimeout);
 	const auto reply = Manager()->get(request);
+	// Сервер не может прислать больше, чем обещано в подписанном манифесте.
+	QObject::connect(reply, &QNetworkReply::downloadProgress, [=](
+			qint64 received,
+			qint64) {
+		if (received > manifest.size) {
+			reply->abort();
+		}
+	});
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
 		const auto packed = (reply->error() == QNetworkReply::NoError)
@@ -324,6 +397,13 @@ void Offer(const Manifest &manifest, bool manual) {
 
 void Check(bool manual) {
 	auto &state = Data();
+	if (!UpdatesAllowed()) {
+		if (manual) {
+			Toast(QString::fromUtf8(
+				"В этой сборке обновления выключены."));
+		}
+		return;
+	}
 	if (state.stage != Stage::Idle) {
 		if (manual) {
 			Toast(QString::fromUtf8("Обновление уже скачивается."));
@@ -336,14 +416,17 @@ void Check(bool manual) {
 	request.setAttribute(
 		QNetworkRequest::CacheLoadControlAttribute,
 		QNetworkRequest::AlwaysNetwork);
-	request.setTransferTimeout(kManifestTimeout);
+	HardenRequest(request, kManifestTimeout);
 	const auto reply = Manager()->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
 		Data().stage = Stage::Idle;
-		const auto manifest = (reply->error() == QNetworkReply::NoError)
-			? ParseManifest(reply->readAll())
-			: std::nullopt;
+		const auto data = (reply->error() == QNetworkReply::NoError)
+			? reply->read(kMaxManifestBytes + 1)
+			: QByteArray();
+		const auto manifest = (data.isEmpty() || data.size() > kMaxManifestBytes)
+			? std::nullopt
+			: ParseManifest(data);
 		if (!manifest) {
 			if (manual) {
 				Toast(QString::fromUtf8("Не удалось проверить обновления."));
@@ -375,6 +458,12 @@ void AutoCheck() {
 }
 
 } // namespace
+
+bool VerifyDetached(
+		const QByteArray &message,
+		const QByteArray &signature) {
+	return Verify(message, signature);
+}
 
 void RegisterSettings() {
 	const auto section = QString::fromUtf8("Обновления");
@@ -418,6 +507,10 @@ void RegisterSettings() {
 
 void Start() {
 	QFile::remove(TemporaryPath());
+	if (!UpdatesAllowed()) {
+		// Рабочая сборка: ни проверок, ни запросов в сеть.
+		return;
+	}
 	QTimer::singleShot(kFirstCheckDelay, AutoCheck);
 	static const auto timer = new QTimer();
 	timer->setInterval(kCheckInterval);

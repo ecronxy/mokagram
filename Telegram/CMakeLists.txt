@@ -74,10 +74,44 @@ set_target_properties(Telegram PROPERTIES AUTOMOC ON)
 find_package(Python3 REQUIRED COMPONENTS Development.Embed)
 nice_target_sources(Telegram ${src_loc}
 PRIVATE
+    mokagram/misc/mokagram_datereg.cpp
+    mokagram/misc/mokagram_datereg.h
+    mokagram/misc/mokagram_ping.cpp
+    mokagram/misc/mokagram_ping.h
+    mokagram/stars/mokagram_stars_stats.cpp
+    mokagram/stars/mokagram_stars_stats.h
+    mokagram/effects/mokagram_effects.cpp
+    mokagram/effects/mokagram_effects.h
+    mokagram/quote/mokagram_quote.cpp
+    mokagram/avatar/mokagram_avatar_shape.cpp
+    mokagram/commands/mokagram_commands.cpp
+    mokagram/commands/mokagram_commands.h
+    mokagram/msginfo/mokagram_message_info.cpp
+    mokagram/msginfo/mokagram_message_info.h
+    mokagram/snippets/mokagram_snippets.cpp
+    mokagram/snippets/mokagram_snippets.h
+    mokagram/notes/mokagram_notes.cpp
+    mokagram/notes/mokagram_notes.h
+    mokagram/avatar/mokagram_avatar_shape.h
+    mokagram/scam/mokagram_scam.cpp
+    mokagram/scam/mokagram_scam.h
+    mokagram/quote/mokagram_quote.h
+    mokagram/appearance/mokagram_appearance.cpp
+    mokagram/appearance/mokagram_appearance.h
+    mokagram/music/mokagram_lyrics.cpp
+    mokagram/music/mokagram_lyrics.h
+    mokagram/music/mokagram_music_library.cpp
+    mokagram/music/mokagram_music_library.h
+    mokagram/music/mokagram_music_ui.cpp
+    mokagram/music/mokagram_music_ui.h
+    mokagram/music/mokagram_soundcloud.cpp
+    mokagram/music/mokagram_soundcloud.h
     mokagram/plugins/mokagram_plugin_api.cpp
     mokagram/plugins/mokagram_plugin_api.h
     mokagram/plugins/mokagram_plugin_install.cpp
     mokagram/plugins/mokagram_plugin_install.h
+    mokagram/plugins/mokagram_plugin_store.cpp
+    mokagram/plugins/mokagram_plugin_store.h
     mokagram/plugins/mokagram_plugins.cpp
     mokagram/plugins/mokagram_plugins.h
     mokagram/settings/mokagram_settings.cpp

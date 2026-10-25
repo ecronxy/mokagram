@@ -1425,7 +1425,10 @@ void AddMessageActions(
 	}
 	AddRescheduleAction(menu, request, list);
 	if (request.selectedItems.empty()) {
-		Mokagram::Plugins::AddMessageMenuItems(menu, request.item);
+		Mokagram::Plugins::AddMessageMenuItems(
+			menu,
+			request.item,
+			request.selectedText.rich.text);
 	}
 }
 

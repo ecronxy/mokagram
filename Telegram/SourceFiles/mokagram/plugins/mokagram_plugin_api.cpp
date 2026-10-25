@@ -5,12 +5,42 @@
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "api/api_common.h"
+#include "data/data_histories.h"
+#include "dialogs/dialogs_indexed_list.h"
+#include "dialogs/dialogs_main_list.h"
+#include "dialogs/dialogs_row.h"
+#include "history/view/history_view_element.h"
+#include "storage/storage_media_prepare.h"
+#include "ui/chat/attach/attach_prepare.h"
+#include "storage/localimageloader.h"
+#include "ui/layers/generic_box.h"
+#include "ui/painter.h"
+#include "ui/rp_widget.h"
+#include "ui/toast/toast.h"
+#include "ui/vertical_list.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/labels.h"
+#include "ui/wrap/vertical_layout.h"
+#include "styles/style_boxes.h"
+#include "styles/style_layers.h"
+#include "styles/style_widgets.h"
+#include "api/api_editing.h"
+#include "core/click_handler_types.h"
+#include "data/data_channel.h"
+#include "data/data_chat.h"
+#include "data/data_drafts.h"
+#include "data/data_user.h"
+#include "history/history_item.h"
+#include "ui/text/text_utilities.h"
 #include "apiwrap.h"
 #include "core/application.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "history/history.h"
 #include "main/main_account.h"
+#include "main/main_domain.h"
+#include "data/data_changes.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "window/window_controller.h"
@@ -20,9 +50,15 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QFileInfo>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
 
 #include <algorithm>
+#include <map>
+#include <set>
+#include <mutex>
+#include <atomic>
 #include <chrono>
 #include <future>
 
@@ -156,6 +192,8 @@ std::string SendMessage(const QJsonObject &args) {
 	}
 }
 
+void PluginLog(const std::string &line);
+
 std::string RegisterSettings(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		for (const auto &value : args.value("entries").toArray()) {
@@ -182,6 +220,14 @@ std::string RegisterSettings(const QJsonObject &args) {
 				entry.maxValue = std::max(int(entry.choices.size()) - 1, 0);
 			} else if (kind == "string") {
 				entry.kind = Settings::Kind::String;
+			} else if (kind == "button") {
+				entry.kind = Settings::Kind::String;
+				entry.icon = item.value("icon").toString();
+				const auto pid = item.value("pid").toString().toStdString();
+				const auto cb = item.value("cb").toString().toStdString();
+				entry.action = [=] {
+					Invoke(pid, cb, "{}", PluginLog);
+				};
 			} else {
 				continue;
 			}
@@ -231,6 +277,651 @@ std::string SetSetting(const QJsonObject &args) {
 	});
 }
 
+[[nodiscard]] HistoryItem *FindItem(const QJsonObject &args) {
+	const auto session = ActiveSession();
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto id = MsgId(args.value("id").toString().toLongLong());
+	if (!session || !peerId || !id) {
+		return nullptr;
+	}
+	return session->data().message(peerId, id);
+}
+
+std::string GetMessage(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto item = FindItem(args);
+		if (!item) {
+			return Reply(false, U("сообщение не загружено"));
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("text", item->originalText().text);
+		result.insert("out", item->out());
+		result.insert("date", double(item->date()));
+		result.insert("from", QString::number(item->from()->id.value));
+		result.insert("has_media", item->media() != nullptr);
+		result.insert("can_edit", item->canBeEdited());
+		return QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString();
+	});
+}
+
+std::string EditMessage(const QJsonObject &args) {
+	const auto text = args.value("text").toString();
+	if (text.isEmpty()) {
+		return Reply(false, U("пустой текст"));
+	}
+	return OnMain([=]() -> std::string {
+		const auto item = FindItem(args);
+		if (!item || !item->out() || !item->canBeEdited()) {
+			return Reply(false, U("это сообщение нельзя изменить"));
+		}
+		MarkFromPlugin(true);
+		Api::EditTextMessage(
+			item,
+			TextWithEntities{ text },
+			Data::WebPageDraft(),
+			Api::SendOptions(),
+			[](mtpRequestId) {},
+			[](const QString &error, mtpRequestId) {
+				LOG(("[mokagram] edit_message: %1").arg(error));
+			},
+			false);
+		MarkFromPlugin(false);
+		return Reply(true);
+	});
+}
+
+std::string ChatInfo(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto peer = (session && peerId)
+			? session->data().peerLoaded(peerId)
+			: nullptr;
+		if (!peer) {
+			return Reply(false, U("чата нет среди загруженных"));
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("title", peer->name());
+		result.insert("username", peer->username());
+		const auto user = peer->asUser();
+		result.insert("kind", user
+			? (user->isBot() ? "bot" : "user")
+			: (peer->isChannel() && !peer->isMegagroup() ? "channel" : "group"));
+		if (const auto channel = peer->asChannel()) {
+			result.insert("members", channel->membersCount());
+		} else if (const auto chat = peer->asChat()) {
+			result.insert("members", chat->count);
+		}
+		return QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString();
+	});
+}
+
+std::string OpenChat(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto peer = (session && peerId)
+			? session->data().peerLoaded(peerId)
+			: nullptr;
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!peer || !controller) {
+			return Reply(false, U("не удалось открыть чат"));
+		}
+		controller->showPeerHistory(peer);
+		return Reply(true);
+	});
+}
+
+std::string OpenUrl(const QJsonObject &args) {
+	const auto url = args.value("url").toString().left(2000);
+	if (!url.startsWith(U("https://")) && !url.startsWith(U("http://"))) {
+		return Reply(false, U("разрешены только http и https"));
+	}
+	return OnMain([=]() -> std::string {
+		UrlClickHandler::Open(url);
+		return Reply(true);
+	});
+}
+
+std::string CopyText(const QJsonObject &args) {
+	const auto text = args.value("text").toString().left(10000);
+	return OnMain([=]() -> std::string {
+		TextUtilities::SetClipboardText(TextForMimeData::Simple(text));
+		return Reply(true);
+	});
+}
+
+// ---- свои окна плагинов ----
+
+struct DialogState {
+	std::string pid;
+	QPointer<Ui::GenericBox> box;
+	QPointer<Ui::FlatLabel> message;
+	QPointer<Ui::RpWidget> bar;
+	std::shared_ptr<double> progress = std::make_shared<double>(0.);
+};
+
+std::map<int, std::shared_ptr<DialogState>> Dialogs;
+int DialogNext = 0;
+
+void PluginLog(const std::string &line) {
+	LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+}
+
+[[nodiscard]] std::string Json(const QJsonObject &object) {
+	return QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString();
+}
+
+std::string DialogShow(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!controller) {
+			return Reply(false, U("нет открытого окна"));
+		}
+		const auto id = ++DialogNext;
+		const auto state = std::make_shared<DialogState>();
+		state->pid = args.value("pid").toString().toStdString();
+		Dialogs[id] = state;
+		const auto closeCb = args.value("close_cb").toString().toStdString();
+		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			state->box = box;
+			box->setTitle(rpl::single(args.value("title").toString()));
+			const auto content = box->verticalLayout();
+			const auto message = args.value("message").toString();
+			Ui::AddSkip(content);
+			state->message = content->add(
+				object_ptr<Ui::FlatLabel>(content, message, st::boxLabel),
+				st::boxPadding);
+			if (message.isEmpty()) {
+				state->message->hide();
+			}
+			using Getter = std::pair<QString, Fn<QJsonValue()>>;
+			const auto getters = std::make_shared<std::vector<Getter>>();
+			for (const auto &value : args.value("fields").toArray()) {
+				const auto field = value.toObject();
+				const auto type = field.value("type").toString();
+				const auto key = field.value("key").toString();
+				const auto text = field.value("text").toString();
+				const auto def = field.value("default");
+				if (type == u"header"_q) {
+					Ui::AddSubsectionTitle(content, rpl::single(text));
+				} else if (type == u"text"_q) {
+					content->add(
+						object_ptr<Ui::FlatLabel>(content, text, st::boxLabel),
+						st::boxPadding);
+				} else if (type == u"input"_q) {
+					const auto multiline = field.value("multiline").toBool();
+					const auto input = content->add(
+						object_ptr<Ui::InputField>(
+							content,
+							st::defaultInputField,
+							multiline
+								? Ui::InputField::Mode::MultiLine
+								: Ui::InputField::Mode::SingleLine,
+							rpl::single(text),
+							TextWithTags{ def.toString() }),
+						st::boxPadding);
+					getters->push_back({ key, [=] {
+						return QJsonValue(input->getLastText());
+					} });
+				} else if (type == u"switch"_q) {
+					const auto check = content->add(
+						object_ptr<Ui::Checkbox>(content, text, def.toBool()),
+						st::boxPadding);
+					getters->push_back({ key, [=] {
+						return QJsonValue(check->checked());
+					} });
+				} else if (type == u"select"_q) {
+					const auto group = std::make_shared<Ui::RadiobuttonGroup>(
+						def.toInt());
+					if (!text.isEmpty()) {
+						content->add(
+							object_ptr<Ui::FlatLabel>(content, text, st::boxLabel),
+							st::boxPadding);
+					}
+					auto index = 0;
+					for (const auto &item : field.value("items").toArray()) {
+						content->add(
+							object_ptr<Ui::Radiobutton>(
+								content,
+								group,
+								index++,
+								item.toString()),
+							st::boxPadding);
+					}
+					getters->push_back({ key, [=] {
+						return QJsonValue(group->current());
+					} });
+				} else if (type == u"progress"_q) {
+					const auto bar = content->add(
+						object_ptr<Ui::RpWidget>(content),
+						st::boxPadding);
+					bar->resize(bar->width(), 8);
+					bar->setMinimumHeight(8);
+					bar->setMaximumHeight(8);
+					state->progress = std::make_shared<double>(def.toDouble());
+					const auto progress = state->progress;
+					bar->paintOn([=](QPainter &p) {
+						auto hq = PainterHighQualityEnabler(p);
+						p.setPen(Qt::NoPen);
+						p.setBrush(st::windowBgOver);
+						p.drawRoundedRect(bar->rect(), 4, 4);
+						p.setBrush(st::windowActiveTextFg);
+						p.drawRoundedRect(
+							QRectF(
+								0,
+								0,
+								bar->width() * std::clamp(*progress, 0., 100.) / 100.,
+								bar->height()),
+							4,
+							4);
+					});
+					state->bar = bar;
+				}
+			}
+			Ui::AddSkip(content);
+			const auto pid = state->pid;
+			const auto cb = args.value("cb").toString().toStdString();
+			for (const auto &value : args.value("buttons").toArray()) {
+				const auto button = value.toObject();
+				const auto buttonId = button.value("id").toString();
+				const auto keepOpen = button.value("keep_open").toBool();
+				const auto style = button.value("style").toString();
+				const auto click = [=] {
+					auto values = QJsonObject();
+					for (const auto &getter : *getters) {
+						values.insert(getter.first, getter.second());
+					}
+					auto payload = QJsonObject();
+					payload.insert("button", buttonId);
+					payload.insert("values", values);
+					const auto weak = state->box;
+					Invoke(pid, cb, Json(payload), PluginLog);
+					if (!keepOpen && weak) {
+						weak->closeBox();
+					}
+				};
+				const auto text = rpl::single(button.value("text").toString());
+				if (style == u"cancel"_q) {
+					box->addButton(text, click, st::defaultBoxButton);
+				} else if (style == u"red"_q) {
+					box->addButton(text, click, st::attentionBoxButton);
+				} else {
+					box->addButton(text, click);
+				}
+			}
+			box->boxClosing() | rpl::on_next([=] {
+				Dialogs.erase(id);
+				Invoke(state->pid, closeCb, "{}", PluginLog);
+			}, box->lifetime());
+		}));
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("id", id);
+		return Json(result);
+	});
+}
+
+std::string DialogUpdate(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto i = Dialogs.find(args.value("id").toInt());
+		if (i == end(Dialogs)) {
+			return Reply(false, U("окно закрыто"));
+		}
+		const auto &state = i->second;
+		if (args.contains("message") && state->message) {
+			const auto text = args.value("message").toString();
+			state->message->setText(text);
+			state->message->setVisible(!text.isEmpty());
+		}
+		if (args.contains("title") && state->box) {
+			state->box->setTitle(rpl::single(args.value("title").toString()));
+		}
+		if (args.contains("progress")) {
+			*state->progress = args.value("progress").toDouble();
+			if (state->bar) {
+				state->bar->update();
+			}
+		}
+		return Reply(true);
+	});
+}
+
+std::string DialogClose(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto i = Dialogs.find(args.value("id").toInt());
+		if (i != end(Dialogs) && i->second->box) {
+			i->second->box->closeBox();
+		}
+		return Reply(true);
+	});
+}
+
+std::string PluginUnloaded(const QJsonObject &args) {
+	const auto pid = args.value("pid").toString().toStdString();
+	return OnMain([=]() -> std::string {
+		auto boxes = std::vector<QPointer<Ui::GenericBox>>();
+		for (const auto &[id, state] : Dialogs) {
+			if (state->pid == pid) {
+				boxes.push_back(state->box);
+			}
+		}
+		for (const auto &box : boxes) {
+			if (box) {
+				box->closeBox();
+			}
+		}
+		return Reply(true);
+	});
+}
+
+std::string ShowBulletin(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!controller) {
+			return Reply(false, U("нет открытого окна"));
+		}
+		const auto kind = args.value("kind").toString();
+		const auto subtitle = args.value("subtitle").toString();
+		const auto button = args.value("button").toString();
+		const auto prefix = (kind == u"success"_q)
+			? U("\u2713 ")
+			: (kind == u"error"_q) ? U("\u26a0 ") : QString();
+		auto config = Ui::Toast::Config();
+		auto text = TextWithEntities{ args.value("text").toString() };
+		if (!subtitle.isEmpty()) {
+			config.title = prefix + text.text;
+			text = TextWithEntities{ subtitle };
+		} else {
+			text.text = prefix + text.text;
+		}
+		if (!button.isEmpty()) {
+			text.append(u"  "_q);
+			text.append(Ui::Text::Link(button, u"moka://bulletin"_q));
+			const auto pid = args.value("pid").toString().toStdString();
+			const auto cb = args.value("cb").toString().toStdString();
+			config.filter = [=](const ClickHandlerPtr &, Qt::MouseButton) {
+				Invoke(pid, cb, "{}", PluginLog);
+				return false;
+			};
+			config.acceptinput = true;
+		}
+		config.text = std::move(text);
+		config.duration = crl::time(args.value("duration").toDouble(3.) * 1000);
+		controller->showToast(std::move(config));
+		return Reply(true);
+	});
+}
+
+// ---- события клиента ----
+
+enum EventBit : uint32 {
+	kEventNewMessage = 1,
+	kEventEdited = 2,
+	kEventDeleted = 4,
+};
+
+std::mutex EventMutex;
+std::map<std::string, uint32> EventSubscribers;
+std::atomic<uint32> EventMask = 0;
+rpl::lifetime SessionLifetime;
+
+std::string EventsSubscribe(const QJsonObject &args) {
+	auto bits = uint32(0);
+	for (const auto &name : args.value("events").toArray()) {
+		const auto value = name.toString();
+		if (value == u"new_message"_q) {
+			bits |= kEventNewMessage;
+		} else if (value == u"message_edited"_q) {
+			bits |= kEventEdited;
+		} else if (value == u"message_deleted"_q) {
+			bits |= kEventDeleted;
+		}
+	}
+	const auto lock = std::lock_guard(EventMutex);
+	const auto pid = args.value("pid").toString().toStdString();
+	if (bits) {
+		EventSubscribers[pid] = bits;
+	} else {
+		EventSubscribers.erase(pid);
+	}
+	auto all = uint32(0);
+	for (const auto &[_, mask] : EventSubscribers) {
+		all |= mask;
+	}
+	EventMask = all;
+	return Reply(true);
+}
+
+void EmitMessageEvent(
+		uint32 bit,
+		const char *name,
+		not_null<const HistoryItem*> item) {
+	if (!(EventMask.load() & bit)) {
+		return;
+	}
+	auto payload = QJsonObject();
+	payload.insert("id", QString::number(item->id.bare));
+	const auto peer = item->history()->peer;
+	payload.insert("peer", QString::number(peer->id.value));
+	payload.insert("peer_title", peer->name());
+	payload.insert("from", QString::number(item->from()->id.value));
+	payload.insert("text", item->originalText().text);
+	payload.insert("out", item->out());
+	payload.insert("date", double(item->date()));
+	payload.insert("has_media", item->media() != nullptr);
+	payload.insert("reply_to", QString::number(item->replyToId().bare));
+	QueueEvent(name, Json(payload));
+}
+
+void SubscribeSession(Main::Session *session) {
+	SessionLifetime.destroy();
+	if (!session) {
+		return;
+	}
+	session->data().newItemAdded(
+	) | rpl::on_next([](not_null<HistoryItem*> item) {
+		EmitMessageEvent(kEventNewMessage, "new_message", item);
+	}, SessionLifetime);
+	session->data().itemRemoved(
+	) | rpl::on_next([](not_null<const HistoryItem*> item) {
+		EmitMessageEvent(kEventDeleted, "message_deleted", item);
+	}, SessionLifetime);
+	session->changes().messageUpdates(
+		Data::MessageUpdate::Flag::Edited
+	) | rpl::on_next([](const Data::MessageUpdate &update) {
+		EmitMessageEvent(kEventEdited, "message_edited", update.item);
+	}, SessionLifetime);
+}
+
+std::string SendFile(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto path = args.value("path").toString();
+	const auto caption = args.value("caption").toString();
+	const auto asPhoto = args.value("kind").toString() == u"photo"_q;
+	const auto silent = args.value("silent").toBool();
+	const auto info = QFileInfo(path);
+	if (!peerId || !info.isFile() || info.size() <= 0 || info.size() > (qint64(2000) << 20)) {
+		return Reply(false, U("файл не найден или слишком большой"));
+	}
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto history = session ? session->data().historyLoaded(peerId) : nullptr;
+		if (!history) {
+			return Reply(false, U("чата нет среди загруженных диалогов"));
+		}
+		auto list = Storage::PrepareMediaList(
+			QStringList{ path },
+			st::sendMediaPreviewSize,
+			session->user()->isPremium());
+		if (list.files.empty() && list.filesToProcess.empty()) {
+			return Reply(false, U("файл нельзя отправить"));
+		}
+		if (!list.files.empty()) {
+			list.files.front().caption = TextWithTags{ caption };
+		}
+		auto action = Api::SendAction(history);
+		action.options.silent = silent;
+		action.clearDraft = false;
+		const auto weak = base::make_weak(session);
+		crl::on_main([=, list = std::move(list)]() mutable {
+			if (const auto strong = weak.get()) {
+				MarkFromPlugin(true);
+				strong->api().sendFiles(
+					std::move(list),
+					asPhoto ? SendMediaType::Photo : SendMediaType::File,
+					nullptr,
+					action);
+				MarkFromPlugin(false);
+			}
+		});
+		return Reply(true);
+	});
+}
+
+[[nodiscard]] QJsonObject PeerBrief(not_null<PeerData*> peer) {
+	auto result = QJsonObject();
+	result.insert("peer", QString::number(peer->id.value));
+	result.insert("title", peer->name());
+	result.insert("username", peer->username());
+	const auto user = peer->asUser();
+	result.insert("kind", user
+		? (user->isBot() ? "bot" : "user")
+		: (peer->isChannel() && !peer->isMegagroup() ? "channel" : "group"));
+	return result;
+}
+
+[[nodiscard]] QJsonObject ItemBrief(not_null<const HistoryItem*> item) {
+	auto result = QJsonObject();
+	result.insert("id", QString::number(item->id.bare));
+	result.insert("peer", QString::number(item->history()->peer->id.value));
+	result.insert("from", QString::number(item->from()->id.value));
+	result.insert("text", item->originalText().text);
+	result.insert("out", item->out());
+	result.insert("date", double(item->date()));
+	result.insert("has_media", item->media() != nullptr);
+	return result;
+}
+
+std::string GetDialogs(const QJsonObject &args) {
+	const auto limit = std::clamp(args.value("limit").toInt(50), 1, 200);
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		if (!session) {
+			return Reply(false, U("нет открытой сессии"));
+		}
+		auto list = QJsonArray();
+		for (const auto &row : session->data().chatsList()->indexed()->all()) {
+			if (const auto history = row->history()) {
+				auto brief = PeerBrief(history->peer);
+				brief.insert("unread", history->unreadCount());
+				list.push_back(brief);
+				if (list.size() >= limit) {
+					break;
+				}
+			}
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("dialogs", list);
+		return Json(result);
+	});
+}
+
+std::string GetHistory(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto limit = std::clamp(args.value("limit").toInt(30), 1, 100);
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto history = (session && peerId)
+			? session->data().historyLoaded(peerId)
+			: nullptr;
+		if (!history) {
+			return Reply(false, U("чата нет среди загруженных"));
+		}
+		auto list = QJsonArray();
+		for (auto b = history->blocks.rbegin(); b != history->blocks.rend(); ++b) {
+			const auto &messages = (*b)->messages;
+			for (auto m = messages.rbegin(); m != messages.rend(); ++m) {
+				list.push_front(ItemBrief((*m)->data()));
+				if (list.size() >= limit) {
+					break;
+				}
+			}
+			if (list.size() >= limit) {
+				break;
+			}
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("messages", list);
+		return Json(result);
+	});
+}
+
+std::string CurrentChat(const QJsonObject &) {
+	return OnMain([]() -> std::string {
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		const auto history = controller
+			? controller->activeChatCurrent().history()
+			: nullptr;
+		if (!history) {
+			return Reply(false, U("чат не открыт"));
+		}
+		auto result = PeerBrief(history->peer);
+		result.insert("ok", true);
+		return Json(result);
+	});
+}
+
+std::string MarkRead(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto history = (session && peerId)
+			? session->data().historyLoaded(peerId)
+			: nullptr;
+		if (!history) {
+			return Reply(false, U("чата нет среди загруженных"));
+		}
+		session->data().histories().readInbox(history);
+		return Reply(true);
+	});
+}
+
+// ---- фильтр скрытия сообщений ----
+
+std::atomic<int> FilterCount = 0;
+std::set<std::string> FilterPlugins;
+std::map<FullMsgId, bool> FilterCache;
+
+std::atomic<int> TextHookCount = 0;
+std::set<std::string> TextHookPlugins;
+
+std::string FilterSubscribe(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto pid = args.value("pid").toString().toStdString();
+		const auto on = args.value("on").toBool();
+		const auto text = (args.value("kind").toString() == u"text"_q);
+		auto &set = text ? TextHookPlugins : FilterPlugins;
+		if (on) {
+			set.insert(pid);
+		} else {
+			set.erase(pid);
+		}
+		FilterCount = int(FilterPlugins.size());
+		TextHookCount = int(TextHookPlugins.size());
+		FilterCache.clear();
+		return Reply(true);
+	});
+}
+
 std::string Bridge(const std::string &op, const std::string &argsJson) {
 	const auto args = QJsonDocument::fromJson(
 		QByteArray::fromStdString(argsJson)).object();
@@ -238,6 +929,62 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return ShowToast(args);
 	} else if (op == "send_message") {
 		return SendMessage(args);
+	} else if (op == "dialog_show") {
+		return DialogShow(args);
+	} else if (op == "dialog_update") {
+		return DialogUpdate(args);
+	} else if (op == "dialog_close") {
+		return DialogClose(args);
+	} else if (op == "plugin_unloaded") {
+		EventsSubscribe(QJsonObject{
+			{ "pid", args.value("pid") },
+			{ "events", QJsonArray() } });
+		FilterSubscribe(QJsonObject{
+			{ "pid", args.value("pid") },
+			{ "on", false } });
+		FilterSubscribe(QJsonObject{
+			{ "pid", args.value("pid") },
+			{ "kind", "text" },
+			{ "on", false } });
+		return PluginUnloaded(args);
+	} else if (op == "filter_subscribe") {
+		return FilterSubscribe(args);
+	} else if (op == "get_dialogs") {
+		return GetDialogs(args);
+	} else if (op == "get_history") {
+		return GetHistory(args);
+	} else if (op == "current_chat") {
+		return CurrentChat(args);
+	} else if (op == "mark_read") {
+		return MarkRead(args);
+	} else if (op == "send_file") {
+		return SendFile(args);
+	} else if (op == "run_main") {
+		const auto pid = args.value("pid").toString().toStdString();
+		const auto cb = args.value("cb").toString().toStdString();
+		const auto delay = std::clamp(args.value("delay").toInt(), 0, 3600000);
+		crl::on_main([=] {
+			QTimer::singleShot(delay, [=] {
+				Invoke(pid, cb, "{}", PluginLog);
+			});
+		});
+		return Reply(true);
+	} else if (op == "events_subscribe") {
+		return EventsSubscribe(args);
+	} else if (op == "bulletin") {
+		return ShowBulletin(args);
+	} else if (op == "get_message") {
+		return GetMessage(args);
+	} else if (op == "edit_message") {
+		return EditMessage(args);
+	} else if (op == "chat_info") {
+		return ChatInfo(args);
+	} else if (op == "open_chat") {
+		return OpenChat(args);
+	} else if (op == "open_url") {
+		return OpenUrl(args);
+	} else if (op == "copy_text") {
+		return CopyText(args);
 	} else if (op == "settings_register") {
 		return RegisterSettings(args);
 	} else if (op == "setting_get") {
@@ -252,6 +999,8 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 
 void InstallBridge() {
 	SetBridge(Bridge);
+	Core::App().domain().activeSessionValue(
+	) | rpl::on_next(SubscribeSession, BridgeLifetime);
 	// Изменения настроек plugin.<id>.<key> доходят до плагина как on_settings_changed.
 	Settings::Changed() | rpl::on_next([](const QString &key) {
 		if (!key.startsWith(U("plugin."))) {
@@ -270,6 +1019,51 @@ void InstallBridge() {
 				LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
 			});
 	}, BridgeLifetime);
+}
+
+bool HasMessageFilter() {
+	return FilterCount.load(std::memory_order_relaxed) > 0;
+}
+
+void TransformMessageText(
+		not_null<const HistoryItem*> item,
+		TextWithEntities &text) {
+	if (TextHookCount.load(std::memory_order_relaxed) <= 0
+		|| !IsMainThread()
+		|| text.text.isEmpty()
+		|| item->out()) {
+		return;
+	}
+	auto message = QJsonObject();
+	message.insert("id", QString::number(item->id.bare));
+	message.insert("peer", QString::number(item->history()->peer->id.value));
+	message.insert("text", text.text);
+	message.insert("date", double(item->date()));
+	const auto answer = CallTextHook(Json(message), PluginLog);
+	if (answer.size() < 1 || answer[0] != 'T') {
+		return;
+	}
+	const auto changed = QString::fromStdString(answer.substr(1));
+	if (changed != text.text) {
+		text = TextWithEntities{ changed.left(8192) };
+	}
+}
+
+bool HiddenByPlugin(not_null<const HistoryItem*> item) {
+	if (FilterCount.load(std::memory_order_relaxed) <= 0 || !IsMainThread()) {
+		return false;
+	}
+	const auto id = item->fullId();
+	const auto i = FilterCache.find(id);
+	if (i != FilterCache.end()) {
+		return i->second;
+	}
+	if (FilterCache.size() > 5000) {
+		FilterCache.clear();
+	}
+	const auto result = CallMessageFilter(Json(ItemBrief(item)), PluginLog);
+	FilterCache[id] = result;
+	return result;
 }
 
 void RunUpdateHook(const MTPUpdate &update) {

@@ -386,7 +386,7 @@ object_ptr<Ui::RpWidget> CreatePeerListSectionSubtitle(
 	raw->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(raw);
-		p.fillRect(clip, st::searchedBarBg);
+		p.fillRect(clip, st::boxBg);
 	}, raw->lifetime());
 
 	const auto label = Ui::CreateChild<Ui::FlatLabel>(

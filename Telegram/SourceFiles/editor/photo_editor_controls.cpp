@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "ui/widgets/menu/menu_item_base.h"
 #include "editor/photo_editor_controls.h"
 
 #include "editor/audio_track_timeline.h"
@@ -113,7 +114,7 @@ int CheckAction::contentHeight() const {
 void CheckAction::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 	const auto selected = isSelected();
-	p.fillRect(rect(), selected ? _st.itemBgOver : _st.itemBg);
+	Ui::Menu::PaintItemBackground(p, rect(), _st, selected);
 	RippleButton::paintRipple(p, 0, 0);
 	const auto size = _check.getSize();
 	_check.paint(

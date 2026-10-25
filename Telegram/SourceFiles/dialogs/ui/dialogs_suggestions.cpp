@@ -748,7 +748,7 @@ void Suggestions::ObjectListController::setupPlainDivider(
 		label->moveToLeft(x, y, size.width());
 	}, raw->lifetime());
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, st::dialogsBg);
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));
@@ -815,7 +815,7 @@ void Suggestions::ObjectListController::setupExpandDivider(
 	}, raw->lifetime());
 
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, st::dialogsBg);
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));
@@ -936,7 +936,7 @@ void RecentsController::setupDivider() {
 		label->moveToLeft(x, y, size.width());
 	}, raw->lifetime());
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, st::dialogsBg);
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));
@@ -2325,7 +2325,7 @@ std::vector<Suggestions::Key> Suggestions::TabKeysFor(
 
 void Suggestions::paintEvent(QPaintEvent *e) {
 	const auto opacity = shownOpacity();
-	auto color = st::windowBg->c;
+	auto color = st::dialogsBg->c;
 	color.setAlphaF(color.alphaF() * opacity);
 
 	auto p = QPainter(this);

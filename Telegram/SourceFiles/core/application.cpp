@@ -7,6 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
 #include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/appearance/mokagram_appearance.h"
+#include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/quote/mokagram_quote.h"
+#include "mokagram/scam/mokagram_scam.h"
+#include "mokagram/avatar/mokagram_avatar_shape.h"
+#include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/streamer/mokagram_streamer.h"
@@ -339,6 +345,12 @@ void Application::run() {
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();
 	Mokagram::Misc::RegisterSettings();
+	Mokagram::Appearance::RegisterSettings();
+	Mokagram::Effects::RegisterSettings();
+	Mokagram::Quote::RegisterSettings();
+	Mokagram::Scam::RegisterSettings();
+	Mokagram::Avatar::RegisterSettings();
+	Mokagram::Commands::RegisterSettings();
 	Mokagram::Saveinator::RegisterSettings();
 	Mokagram::Saveinator::Start();
 	Mokagram::Update::RegisterSettings();
@@ -593,6 +605,7 @@ void Application::startDomain() {
 void Application::startSettingsAndBackground() {
 	Local::rewriteSettingsIfNeeded();
 	Window::Theme::Background()->start();
+	Mokagram::Appearance::Start();
 	// Mokagram: тёмная нейтральная тема по умолчанию (один раз, дальше выбор за пользователем).
 	{
 		const auto marker = cWorkingDir() + u"tdata/mokagram_night_default"_q;

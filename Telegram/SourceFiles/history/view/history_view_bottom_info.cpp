@@ -494,7 +494,9 @@ void BottomInfo::layoutDateText() {
 		: updated
 		? (tr::lng_ephemeral_updated(tr::now) + ' ')
 		: (_data.flags & Data::Flag::Edited)
-		? (tr::lng_edited(tr::now) + ' ')
+		? (Mokagram::Settings::Bool(u"chats.edited_pencil"_q)
+			? (QString::fromUtf8("изм.") + ' ')
+			: (tr::lng_edited(tr::now) + ' '))
 		: (_data.flags & Data::Flag::EstimateDate)
 		? (tr::lng_approximate(tr::now) + ' ')
 		: _data.scheduleRepeatPeriod

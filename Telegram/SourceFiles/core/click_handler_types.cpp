@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/click_handler_types.h"
 
+#include "mokagram/scam/mokagram_scam.h"
+
 #include "base/unixtime.h"
 #include "lang/lang_keys.h"
 #include "chat_helpers/bot_command.h"
@@ -465,6 +467,11 @@ QString HiddenUrlClickHandler::dragText() const {
 }
 
 void HiddenUrlClickHandler::Open(QString url, QVariant context) {
+	if (Mokagram::Scam::GuardLink(url, context, [=] {
+		HiddenUrlClickHandler::Open(url, context);
+	})) {
+		return;
+	}
 	if (const auto external = UrlClickHandler::ExternalUrlFromInternalUrl(url);
 			!external.isEmpty()) {
 		url = external;

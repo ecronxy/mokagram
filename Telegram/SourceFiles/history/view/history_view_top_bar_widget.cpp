@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_top_bar_widget.h"
+#include "mokagram/notes/mokagram_notes.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
+#include <deque>
 
 #include "history/history.h"
 #include "history/view/history_view_send_action.h"
@@ -204,6 +207,12 @@ TopBarWidget::TopBarWidget(
 			update();
 		}, lifetime());
 	}
+
+	Mokagram::Notes::Changed() | rpl::on_next([=](PeerId id) {
+		if (_activeChat.key.peer() && _activeChat.key.peer()->id == id) {
+			updateOnlineDisplay();
+		}
+	}, lifetime());
 
 	using UpdateFlag = Data::PeerUpdate::Flag;
 	session().changes().peerUpdates(
@@ -932,6 +941,7 @@ void TopBarWidget::setActiveChat(
 		_titleNameVersion = 0;
 		_emojiInteractionSeen = nullptr;
 		_activeChatLifetime.destroy();
+		refreshPluginButtons();
 		if (const auto peer = _activeChat.key.peer()) {
 			session().changes().peerFlagsValue(
 				peer,
@@ -1326,8 +1336,36 @@ void TopBarWidget::updateControlsGeometry() {
 	if (!_search->isHidden()) {
 		_rightTaken += _search->width() + st::topBarCallSkip;
 	}
+	for (const auto &button : _pluginButtons) {
+		button->setVisible(!hasSelected && !_searchMode);
+		button->moveToRight(_rightTaken, otherButtonsTop);
+		_rightTaken += button->width();
+	}
 
 	updateMembersShowArea();
+}
+
+void TopBarWidget::refreshPluginButtons() {
+	_pluginButtons.clear();
+	const auto peer = _activeChat.key.peer();
+	if (!peer || _activeChat.key.topic()) {
+		return;
+	}
+	static auto styles = std::deque<style::IconButton>();
+	Mokagram::Plugins::AddPeerMenuItems(
+		u"header"_q,
+		peer,
+		[&](const QString &text, Fn<void()> handler, const style::icon *icon) {
+			auto &st = styles.emplace_back(st::topBarSearch);
+			st.icon = *icon;
+			st.iconOver = *icon;
+			auto button = base::make_unique_q<Ui::IconButton>(this, st);
+			button->setClickedCallback(std::move(handler));
+			button->setAccessibleName(text);
+			button->setToolTip(text);
+			_pluginButtons.push_back(std::move(button));
+		});
+	updateControlsGeometry();
 }
 
 void TopBarWidget::finishAnimating() {
@@ -2025,6 +2063,10 @@ void TopBarWidget::updateOnlineDisplay() {
 		} else {
 			text = channel->isMegagroup() ? tr::lng_group_status(tr::now) : tr::lng_channel_status(tr::now);
 		}
+	}
+	// Mokagram: личный тег собеседника виден под именем.
+	if (const auto tag = Mokagram::Notes::Tag(peer->id); !tag.isEmpty()) {
+		text = tag + (text.isEmpty() ? QString() : u" \u00b7 "_q + text);
 	}
 	if (_titlePeerText.toString() != text) {
 		_titlePeerText.setText(st::dialogsTextStyle, text);

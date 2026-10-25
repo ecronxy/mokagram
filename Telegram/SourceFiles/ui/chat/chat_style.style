@@ -62,6 +62,10 @@ outSemiboldPalette: TextPalette(outTextPalette) {
 historyFileOutImage: icon {{ "history_file_image", historyFileOutIconFg }};
 historyFileOutImageSelected: icon {{ "history_file_image", historyFileOutIconFgSelected }};
 historyFileInImageSelected: icon {{ "history_file_image", historyFileInIconFgSelected }};
+historyFileOutPlugin: icon {{ "history_file_plugin", historyFileOutIconFg }};
+historyFileOutPluginSelected: icon {{ "history_file_plugin", historyFileOutIconFgSelected }};
+historyFileInPluginSelected: icon {{ "history_file_plugin", historyFileInIconFgSelected }};
+historyFileInPlugin: icon {{ "history_file_plugin", historyFileInIconFg }};
 historyFileOutDocument: icon {{ "history_file_document", historyFileOutIconFg }};
 historyFileOutDocumentSelected: icon {{ "history_file_document", historyFileOutIconFgSelected }};
 historyFileInDocumentSelected: icon {{ "history_file_document", historyFileInIconFgSelected }};

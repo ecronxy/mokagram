@@ -15,6 +15,9 @@
 #include "base/platform/base_platform_info.h"
 #include "data/data_thread.h"
 #include "data/data_peer.h"
+#include "data/data_channel.h"
+#include "data/data_user.h"
+#include "data/data_chat.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "ui/widgets/popup_menu.h"
@@ -895,6 +898,363 @@ void FillGhostMenu(
 			}
 		}
 	}, &st::menuIconDelete);
+}
+
+
+namespace {
+
+constexpr auto kDeletePage = 100;
+
+struct DeleteMineState {
+	base::weak_ptr<Main::Session> session;
+	PeerId peerId = 0;
+	std::vector<MTPint> ids;
+	int found = 0;
+	int deleted = 0;
+	bool cancelled = false;
+	bool deleting = false;
+	mtpRequestId request = 0;
+	QPointer<Ui::GenericBox> box;
+	QPointer<Ui::FlatLabel> label;
+	base::weak_ptr<Window::SessionController> controller;
+	// Для обхода нескольких чатов: вместо закрытия окна идём к следующему.
+	Fn<void()> onFinish;
+};
+
+void RunDeleteMine(std::shared_ptr<DeleteMineState> state) {
+	const auto session = state->session.get();
+	const auto peer = session ? session->data().peerLoaded(state->peerId) : nullptr;
+	if (!peer) {
+		return;
+	}
+	const auto setLabel = [=](const QString &text) {
+		if (state->label) {
+			state->label->setText(text);
+		}
+	};
+	const auto finish = [=] {
+		state->request = 0;
+		if (state->onFinish) {
+			const auto next = state->onFinish;
+			next();
+			return;
+		}
+		if (const auto box = state->box) {
+			box->closeBox();
+		}
+		if (const auto controller = state->controller.get()) {
+			controller->showToast(state->cancelled
+				? QString::fromUtf8("Остановлено. Удалено сообщений: %1").arg(state->deleted)
+				: QString::fromUtf8("Готово. Удалено сообщений: %1").arg(state->deleted));
+		}
+	};
+	// Фаза 2: удаляем найденные id пачками.
+	const auto deleteNext = std::make_shared<Fn<void()>>();
+	*deleteNext = [=] {
+		if (state->cancelled || state->ids.empty()) {
+			finish();
+			return;
+		}
+		const auto count = std::min<int>(state->ids.size(), kDeletePage);
+		auto batch = QVector<MTPint>();
+		for (auto i = 0; i != count; ++i) {
+			batch.push_back(state->ids[state->ids.size() - 1 - i]);
+		}
+		state->ids.resize(state->ids.size() - count);
+		const auto done = [=](const MTPmessages_AffectedMessages &result) {
+			session->api().applyAffectedMessages(peer, result);
+			state->deleted += count;
+			setLabel(QString::fromUtf8("Удалено %1 из %2").arg(state->deleted).arg(state->found));
+			(*deleteNext)();
+		};
+		const auto fail = [=](const MTP::Error &) {
+			finish();
+		};
+		if (const auto channel = peer->asChannel()) {
+			state->request = session->api().request(MTPchannels_DeleteMessages(
+				channel->inputChannel(),
+				MTP_vector<MTPint>(batch)
+			)).done(done).fail(fail).send();
+		} else {
+			state->request = session->api().request(MTPmessages_DeleteMessages(
+				MTP_flags(MTPmessages_DeleteMessages::Flag::f_revoke),
+				MTP_vector<MTPint>(batch)
+			)).done(done).fail(fail).send();
+		}
+	};
+	// Фаза 1: собираем id своих сообщений постранично.
+	const auto isUserChat = peer->isUser();
+	const auto searchNext = std::make_shared<Fn<void(int)>>();
+	*searchNext = [=](int offsetId) {
+		if (state->cancelled) {
+			finish();
+			return;
+		}
+		const auto received = [=](const MTPmessages_Messages &result) {
+			auto messages = QVector<MTPMessage>();
+			result.match([&](const MTPDmessages_messagesNotModified &) {
+			}, [&](const auto &data) {
+				messages = data.vmessages().v;
+			});
+			auto lowest = 0;
+			for (const auto &message : messages) {
+				message.match([&](const MTPDmessage &data) {
+					const auto id = data.vid().v;
+					lowest = lowest ? std::min(lowest, id) : id;
+					if (data.is_out() || !isUserChat) {
+						state->ids.push_back(MTP_int(id));
+						++state->found;
+					}
+				}, [&](const auto &) {
+				});
+			}
+			setLabel(QString::fromUtf8("Найдено своих сообщений: %1").arg(state->found));
+			if (messages.isEmpty() || !lowest) {
+				if (qEnvironmentVariableIsSet("MOKAGRAM_DELETE_DRYRUN")) {
+					state->ids.clear();
+					state->deleted = state->found;
+					state->cancelled = true;
+					finish();
+					return;
+				}
+				state->deleting = true;
+				setLabel(QString::fromUtf8("Найдено: %1. Удаляю…").arg(state->found));
+				(*deleteNext)();
+			} else {
+				(*searchNext)(lowest);
+			}
+		};
+		const auto fail = [=](const MTP::Error &) {
+			// Что нашли, то удаляем.
+			state->deleting = true;
+			(*deleteNext)();
+		};
+		if (isUserChat) {
+			state->request = session->api().request(MTPmessages_GetHistory(
+				peer->input(),
+				MTP_int(offsetId),
+				MTP_int(0),
+				MTP_int(0),
+				MTP_int(kDeletePage),
+				MTP_int(0),
+				MTP_int(0),
+				MTP_long(0)
+			)).done(received).fail(fail).send();
+		} else {
+			state->request = session->api().request(MTPmessages_Search(
+				MTP_flags(MTPmessages_Search::Flag::f_from_id),
+				peer->input(),
+				MTP_string(),
+				session->user()->input(),
+				MTP_inputPeerEmpty(),
+				MTP_vector<MTPReaction>(),
+				MTP_int(0),
+				MTP_inputMessagesFilterEmpty(),
+				MTP_int(0),
+				MTP_int(0),
+				MTP_int(offsetId),
+				MTP_int(0),
+				MTP_int(kDeletePage),
+				MTP_int(0),
+				MTP_int(0),
+				MTP_long(0)
+			)).done(received).fail(fail).send();
+		}
+	};
+	(*searchNext)(0);
+}
+
+} // namespace
+
+bool CanDeleteMyMessages(not_null<PeerData*> peer) {
+	if (const auto channel = peer->asChannel()) {
+		return channel->isMegagroup();
+	}
+	return peer->isUser() || peer->isChat();
+}
+
+void ShowDeleteMyMessages(
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> peer) {
+	const auto title = peer->isSelf()
+		? QString::fromUtf8("Избранное")
+		: peer->name();
+	const auto weak = base::make_weak(controller);
+	const auto session = base::make_weak(&peer->session());
+	const auto peerId = peer->id;
+	controller->show(Ui::MakeConfirmBox({
+		.text = rpl::single(QString::fromUtf8(
+			"Удалить все ваши сообщения в «%1»?\n\n"
+			"Они исчезнут у всех участников чата. Отменить это нельзя.").arg(title)),
+		.confirmed = [=](Fn<void()> &&close) {
+			close();
+			const auto strong = weak.get();
+			if (!strong) {
+				return;
+			}
+			const auto state = std::make_shared<DeleteMineState>();
+			state->session = session;
+			state->peerId = peerId;
+			state->controller = weak;
+			strong->show(Box([=](not_null<Ui::GenericBox*> box) {
+				state->box = box;
+				box->setTitle(rpl::single(QString::fromUtf8("Удаление моих сообщений")));
+				const auto content = box->verticalLayout();
+				Ui::AddSkip(content);
+				state->label = content->add(
+					object_ptr<Ui::FlatLabel>(
+						content,
+						QString::fromUtf8("Ищу ваши сообщения…"),
+						st::boxLabel),
+					st::boxPadding);
+				Ui::AddSkip(content);
+				box->addButton(
+					rpl::single(QString::fromUtf8("Остановить")),
+					[=] {
+						state->cancelled = true;
+						if (const auto strong = state->session.get()) {
+							if (state->request) {
+								strong->api().request(state->request).cancel();
+							}
+						}
+						box->closeBox();
+					},
+					st::attentionBoxButton);
+				box->boxClosing() | rpl::on_next([=] {
+					state->cancelled = true;
+				}, box->lifetime());
+			}));
+			RunDeleteMine(state);
+		},
+		.confirmText = rpl::single(QString::fromUtf8("Удалить")),
+		.confirmStyle = &st::attentionBoxButton,
+		.title = rpl::single(QString::fromUtf8("Удалить все мои сообщения")),
+	}));
+}
+
+namespace {
+
+struct DeleteMultiState {
+	base::weak_ptr<Main::Session> session;
+	base::weak_ptr<Window::SessionController> controller;
+	std::vector<PeerId> peers;
+	int index = 0;
+	int deleted = 0;
+	bool cancelled = false;
+	QPointer<Ui::GenericBox> box;
+	QPointer<Ui::FlatLabel> label;
+	std::shared_ptr<DeleteMineState> current;
+};
+
+void RunDeleteMulti(std::shared_ptr<DeleteMultiState> multi) {
+	const auto session = multi->session.get();
+	const auto finishAll = [=] {
+		if (const auto box = multi->box) {
+			box->closeBox();
+		}
+		if (const auto controller = multi->controller.get()) {
+			controller->showToast(multi->cancelled
+				? QString::fromUtf8("Остановлено. Удалено сообщений: %1").arg(multi->deleted)
+				: QString::fromUtf8("Готово. Удалено сообщений: %1").arg(multi->deleted));
+		}
+	};
+	if (!session || multi->cancelled || multi->index >= int(multi->peers.size())) {
+		finishAll();
+		return;
+	}
+	const auto peerId = multi->peers[multi->index];
+	const auto peer = session->data().peerLoaded(peerId);
+	const auto title = !peer
+		? QString()
+		: peer->isSelf()
+		? QString::fromUtf8("Избранное")
+		: peer->name();
+	if (multi->label) {
+		multi->label->setText(QString::fromUtf8("Чат %1 из %2: %3")
+			.arg(multi->index + 1)
+			.arg(multi->peers.size())
+			.arg(title));
+	}
+	const auto state = std::make_shared<DeleteMineState>();
+	multi->current = state;
+	state->session = multi->session;
+	state->peerId = peerId;
+	state->controller = multi->controller;
+	state->label = multi->label;
+	state->onFinish = [=] {
+		multi->deleted += state->deleted;
+		++multi->index;
+		RunDeleteMulti(multi);
+	};
+	RunDeleteMine(state);
+}
+
+} // namespace
+
+void ShowDeleteMyMessagesForPeers(
+		not_null<Window::SessionController*> controller,
+		const std::vector<PeerId> &peers) {
+	auto allowed = std::vector<PeerId>();
+	for (const auto id : peers) {
+		if (const auto peer = controller->session().data().peerLoaded(id)) {
+			if (CanDeleteMyMessages(peer)) {
+				allowed.push_back(id);
+			}
+		}
+	}
+	if (allowed.empty()) {
+		controller->showToast(U("В выбранных чатах нечего удалять."));
+		return;
+	}
+	const auto weak = base::make_weak(controller);
+	ConfirmAndRun(
+		controller,
+		U("Удалить все ваши сообщения в выбранных чатах (%1)?\n\n"
+			"Они исчезнут у всех участников. Отменить это нельзя.")
+			.arg(allowed.size()),
+		U("Удалить"),
+		[=] {
+			const auto strong = weak.get();
+			if (!strong) {
+				return;
+			}
+			const auto multi = std::make_shared<DeleteMultiState>();
+			multi->session = base::make_weak(&strong->session());
+			multi->controller = weak;
+			multi->peers = allowed;
+			strong->show(Box([=](not_null<Ui::GenericBox*> progress) {
+				multi->box = progress;
+				progress->setTitle(rpl::single(U("Удаление моих сообщений")));
+				const auto inner = progress->verticalLayout();
+				Ui::AddSkip(inner);
+				multi->label = inner->add(
+					object_ptr<Ui::FlatLabel>(
+						inner,
+						U("Ищу ваши сообщения…"),
+						st::boxLabel),
+					st::boxPadding);
+				Ui::AddSkip(inner);
+				progress->addButton(
+					rpl::single(U("Остановить")),
+					[=] {
+						multi->cancelled = true;
+						if (const auto current = multi->current) {
+							current->cancelled = true;
+							if (const auto s = current->session.get()) {
+								if (current->request) {
+									s->api().request(current->request).cancel();
+								}
+							}
+						}
+						progress->closeBox();
+					},
+					st::attentionBoxButton);
+				progress->boxClosing() | rpl::on_next([=] {
+					multi->cancelled = true;
+				}, progress->lifetime());
+			}));
+			RunDeleteMulti(multi);
+		});
 }
 
 } // namespace Mokagram::History

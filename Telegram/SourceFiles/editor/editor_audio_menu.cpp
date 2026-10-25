@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "ui/widgets/menu/menu_item_base.h"
 #include "editor/editor_audio_menu.h"
 
 #include "editor/photo_editor_common.h"
@@ -80,7 +81,7 @@ MenuVolumeItem::MenuVolumeItem(
 	) | rpl::on_next([=](const QRect &clip) {
 		auto p = QPainter(this);
 		const auto muteProgress = _crossLineAnimation.value(_muted ? 1. : 0.);
-		p.fillRect(clip, isSelected() ? _st.itemBgOver : _st.itemBg);
+		Ui::Menu::PaintItemBackground(p, rect(), _st, isSelected());
 		const auto mutePen = anim::color(
 			unmuteColor(),
 			muteColor(),

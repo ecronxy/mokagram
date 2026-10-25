@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item.h"
+
+#include "mokagram/scam/mokagram_scam.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 
@@ -1546,6 +1549,10 @@ HistoryMessageReplyMarkup *HistoryItem::inlineReplyMarkup() {
 
 ReplyKeyboard *HistoryItem::inlineReplyKeyboard() {
 	if (const auto markup = inlineReplyMarkup()) {
+		// Mokagram: у подозрительного оффера кнопки не показываем.
+		if (Mokagram::Scam::HasMark(_text.text)) {
+			return nullptr;
+		}
 		return markup->inlineKeyboard.get();
 	}
 	return nullptr;
@@ -4691,6 +4698,8 @@ void HistoryItem::detectTextLinks(
 }
 
 void HistoryItem::setText(TextWithEntities textWithEntities) {
+	Mokagram::Plugins::TransformMessageText(this, textWithEntities);
+	Mokagram::Scam::MarkText(this, textWithEntities);
 	detectTextLinks(textWithEntities);
 	setTextValue((_media && _media->consumeMessageText(textWithEntities))
 		? TextWithEntities()

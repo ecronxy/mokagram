@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/userpic_view.h"
 
+#include "mokagram/avatar/mokagram_avatar_shape.h"
 #include "ui/empty_userpic.h"
 #include "ui/painter.h"
 #include "ui/image/image_prepare.h"
@@ -140,13 +141,18 @@ void ValidateUserpicCache(
 	Expects(cloud != nullptr || empty != nullptr);
 
 	const auto full = QSize(size, size);
-	const auto version = style::PaletteVersion();
+	// Mokagram: выбранная форма аватарки входит в версию кеша.
+	const auto moka = (shape == PeerUserpicShape::Monoforum)
+		? 0
+		: Mokagram::Avatar::Current();
+	const auto version = uint32(
+		(style::PaletteVersion() & 0xFFFF) | (moka << 16));
 	const auto shapeValue = static_cast<uint32>(shape) & 3;
 	const auto regenerate = (view.cached.size() != QSize(size, size))
 		|| (view.shape != shapeValue)
+		|| (view.paletteVersion != version)
 		|| (cloud && !view.empty.null())
-		|| (empty && empty != view.empty.get())
-		|| (empty && view.paletteVersion != version);
+		|| (empty && empty != view.empty.get());
 	if (!regenerate) {
 		return;
 	}
@@ -161,6 +167,8 @@ void ValidateUserpicCache(
 			Qt::SmoothTransformation);
 		if (shape == PeerUserpicShape::Monoforum) {
 			view.cached = Ui::ApplyMonoforumShape(std::move(view.cached));
+		} else if (moka) {
+			view.cached = Mokagram::Avatar::ApplyShape(view.cached, moka);
 		} else if (shape == PeerUserpicShape::Forum) {
 			view.cached = Images::Round(
 				std::move(view.cached),
@@ -179,6 +187,10 @@ void ValidateUserpicCache(
 		auto p = QPainter(&view.cached);
 		if (shape == PeerUserpicShape::Monoforum) {
 			empty->paintMonoforum(p, 0, 0, size, size);
+		} else if (moka) {
+			empty->paintSquare(p, 0, 0, size, size);
+			p.end();
+			view.cached = Mokagram::Avatar::ApplyShape(view.cached, moka);
 		} else if (shape == PeerUserpicShape::Forum) {
 			empty->paintRounded(
 				p,

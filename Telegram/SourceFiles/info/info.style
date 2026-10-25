@@ -887,8 +887,7 @@ editPeerTitleField: InputField(defaultInputField) {
 	textMargins: margins(0px, 28px, 30px, 4px);
 }
 editPeerDescription: InputField(defaultInputField) {
-	textBg: transparent;
-	textMargins: margins(0px, 7px, 0px, 7px);
+	textMargins: margins(16px, 11px, 16px, 11px);
 
 	placeholderFg: placeholderFg;
 	placeholderFgActive: placeholderFgActive;
@@ -898,9 +897,9 @@ editPeerDescription: InputField(defaultInputField) {
 	placeholderFont: normalFont;
 
 	border: 0px;
-	borderActive: 0px;
+	borderActive: 2px;
 
-	heightMin: 32px;
+	heightMin: 44px;
 }
 editPeerDescriptionMargins: margins(22px, 3px, 22px, 2px);
 editPeerPrivaciesMargins: margins(15px, 7px, 22px, 0px);
@@ -974,7 +973,7 @@ topBarInfo: IconButton(topBarSearch) {
 }
 topBarInfoActive: icon {{ "top_bar_profile", windowActiveTextFg }};
 topBarActionSkip: 10px;
-topBarActionButtonLargeRadius: 8px;
+topBarActionButtonLargeRadius: 16px;
 
 topBarInfoButtonSize: size(52px, topBarHeight);
 topBarInfoButtonInnerSize: 42px;
@@ -1000,7 +999,7 @@ inviteLinkTitleRight: FlatLabel(defaultSubsectionTitle) {
 	minWidth: 0px;
 }
 
-inviteLinkFieldRadius: 5px;
+inviteLinkFieldRadius: 14px;
 inviteLinkFieldHeight: 42px;
 inviteLinkFieldMargin: margins(14px, 12px, 36px, 9px);
 inviteLinkThreeDotsIcon: icon {{ "info/edit/dotsmini", dialogsMenuIconFg }};

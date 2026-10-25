@@ -2064,6 +2064,13 @@ void TopBar::updateTitlePosition(float64 progressCurrent) {
 			badgeLeft + (badgeWidget ? badgeWidget->width() : 0),
 			badgeTop,
 			badgeBottom);
+		// Mokagram: галочка по центру значка статуса, а не выше него.
+		if (verifiedWidget && badgeWidget && !badgeWidget->isHidden()) {
+			verifiedWidget->move(
+				verifiedWidget->x(),
+				badgeWidget->y()
+					+ (badgeWidget->height() - verifiedWidget->height()) / 2);
+		}
 	}
 }
 

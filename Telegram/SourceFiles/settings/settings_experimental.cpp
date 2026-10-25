@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_experimental.h"
+#include "settings/settings_builder.h"
 
 #include "settings/settings_common.h"
 #include "data/components/passkeys.h"
@@ -357,20 +358,16 @@ void SetupExperimental(
 				header,
 				object_ptr<Ui::VerticalLayout>(header)));
 		const auto inner = wrap->entity();
-		Ui::AddDivider(inner);
-		Ui::AddSkip(inner, st::settingsCheckboxesSkip);
-		reset = inner->add(object_ptr<Button>(
-			inner,
+		const auto card = Settings::Builder::MokaCard(inner, st::dialogsBg);
+		reset = card->add(object_ptr<Button>(
+			card,
 			tr::lng_settings_experimental_restore(),
 			st::settingsButtonNoIcon));
 		reset->addClickHandler([=] {
 			base::options::reset();
 			wrap->hide(anim::type::normal);
 		});
-		Ui::AddSkip(inner, st::settingsCheckboxesSkip);
 	}
-
-	Ui::AddDivider(header);
 
 	rpl::duplicate(
 		query
@@ -489,12 +486,10 @@ void SetupExperimental(
 				container,
 				object_ptr<Ui::VerticalLayout>(container)));
 		const auto inner = wrap->entity();
-		Ui::AddSkip(inner);
-		Ui::AddSubsectionTitle(inner, rpl::single(title));
+		Settings::Builder::MokaCardTitle(inner, rpl::single(title));
+		const auto card = Settings::Builder::MokaCard(inner, st::dialogsBg);
 		auto searchable = std::vector<QString>();
-		fill(inner, searchable);
-		Ui::AddSkip(inner);
-		Ui::AddDivider(inner);
+		fill(card, searchable);
 
 		auto terms = std::vector<QStringList>();
 		for (const auto &entry : searchable) {

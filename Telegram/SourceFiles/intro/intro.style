@@ -97,6 +97,8 @@ introStepFieldTop: 96px;
 introPhoneTop: 6px;
 introLinkTop: 24px;
 introCountry: InputField(defaultInputField) {
+	textBg: dialogsBg;
+	textBgActive: dialogsBg;
 	textMargins: margins(3px, 27px, 3px, 6px);
 	style: TextStyle(defaultTextStyle) {
 		font: font(16px);
@@ -105,11 +107,12 @@ introCountry: InputField(defaultInputField) {
 	heightMin: 61px;
 }
 introCountryCode: InputField(introCountry) {
-	width: 64px;
+	textMargins: margins(8px, 27px, 8px, 6px);
+	width: 66px;
 	textAlign: align(top);
 }
 introPhone: InputField(introCountry) {
-	textMargins: margins(12px, 27px, 12px, 6px);
+	textMargins: margins(16px, 27px, 12px, 6px);
 	width: 225px;
 }
 introQrLoginLinkTop: 368px;
@@ -171,7 +174,7 @@ introQrTop: -18px;
 introQrPixel: 50px; // large enough
 introQrMaxSize: 180px;
 introQrBackgroundSkip: 12px;
-introQrBackgroundRadius: 8px;
+introQrBackgroundRadius: 20px;
 introQrLabelsWidth: 292px;
 introQrTitleWidth: 320px;
 introQrTitle: FlatLabel(defaultFlatLabel) {

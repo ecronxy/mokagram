@@ -88,6 +88,7 @@ class HistoryInner;
 class HistoryMainElementDelegate;
 class HistoryMainElementDelegateMixin {
 public:
+
 	void setCurrent(HistoryInner *widget) {
 		_widget = widget;
 	}

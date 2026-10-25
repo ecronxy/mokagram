@@ -156,6 +156,7 @@ private:
 	[[nodiscard]] bool searchJumpToDateFits() const;
 	void updateChooseFromUserGeometry();
 	void updateControlsGeometry();
+	void refreshPluginButtons();
 	void slideAnimationCallback();
 	void updateInfoToggleActive();
 	void setupDragOnBackButton();
@@ -257,6 +258,7 @@ private:
 	object_ptr<Ui::IconButton> _search;
 	object_ptr<Ui::IconButton> _infoToggle;
 	object_ptr<Ui::IconButton> _menuToggle;
+	std::vector<base::unique_qptr<Ui::IconButton>> _pluginButtons;
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	base::weak_qptr<Ui::IconButton> _menuButton;
 
