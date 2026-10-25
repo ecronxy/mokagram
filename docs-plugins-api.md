@@ -60,6 +60,32 @@ m: id, peer, peer_title, peer_kind (user|bot|group|channel), from, text, entitie
 Вид: `{'type': 'bold|italic|underline|strike|code|pre|spoiler|quote|link|custom_emoji', 'offset': 0, 'length': 3, 'url': ..., 'language': ..., 'document_id': ...}`,
 смещения в UTF-16 как в Telegram. `custom_emoji` это премиум-эмодзи по `document_id`.
 
+## Встроенные команды
+Ответ видите только вы (окно, в чат ничего не уходит): `.help`, `.plugins`, `.config [плагин [ключ значение]]`, `.logs [N]`,
+`.loadmod` (ответом на файл `.plugin` или со ссылкой; откроется окно установки с правами), `.unloadmod id`.
+
+## Расписание
+`api.cron('0 9 * * *', fn, name=None)`: 5 полей, `*`, списки, диапазоны, шаги. `api.set_interval(fn, sec, persist='имя')` помнит запуски на диске.
+Запуск, пропущенный при выключенном клиенте (до двух недель), выполняется один раз при старте. Шаг проверки 15 секунд.
+
+## Платформа
+`api.db.get/set/delete/keys(prefix)` и `api.db.on_change(prefix, fn(key, value, old, plugin_id))`: общая база плагинов (JSON, до 4 МБ, право `storage`).
+`api.secrets.get/set/delete(name)`: секреты плагина в хранилище ОС (`secret-tool`), без него в зашифрованном файле.
+`api.get_plugin(id)` и `__dependencies__ = ['id']`: зависимые плагины грузятся позже тех, от кого зависят; без них плагин не запустится.
+`api.http.get/post/request/download(url, ...)` (право `network`): только http и https, внутренние адреса закрыты, ответ до 20 МБ, 30 запросов в минуту.
+С `callback(response, error)` или `await api.http.get(url)` в async-команде. `response`: `status`, `headers`, `content`, `text`, `json()`.
+Язык: `strings = {'ru': {...}, 'en': {...}}` в классе и `self.s('ключ', *args)`. Журнал: `self.logger.info/warning/error/exception(...)`, смотреть `.logs`.
+
+## Методы поверх API (ответ в `callback(result, error)`)
+`get_entity('@имя', cb)` и `get_reply_message(peer, id)` (tl.read и messages.read), `schedule_message(peer, text, when, cb)`, `save_draft`, `get_drafts(cb)`.
+Право `chats.manage`: `join(target)`, `leave`, `invite(peer, ids)`, `ban`, `unban`, `kick`, `restrict(peer, user, {'send_messages': True})`, `edit_admin(peer, user, {'delete_messages': True})`.
+Право `chats.settings`: `mute(peer, seconds|True|False)`, `archive(peer, flag)`, `get_folders(cb)`, `folder_add(id, peer)`, `set_typing(peer, 'typing')`.
+Право `profile.write`: `set_profile(first_name, last_name, about)`, `set_emoji_status(document_id)`. Право `privacy.write`: `get_privacy(key, cb)`, `set_privacy(key, 'everyone'|'contacts'|'nobody')`.
+
+## События чатов
+`on_chat_action(info)`: peer, action (join, leave, add, remove, pin, title, photo, create), from, user_ids, message_id. `on_read(info)`: peer, max_id, direction.
+`on_story(info)`: peer, id, caption, media. `on_album(info)`: peer, grouped_id, messages, text, out (приходит после последнего сообщения альбома).
+
 ## Универсальный вызов Telegram API
 `api.invoke_tl('messages.getHistory', {...}, callback)` вызывает любой метод схемы. Объекты это dict с ключом `'_'` (имя конструктора), флаги считаются сами.
 `api.input_peer(peer)` даёт InputPeer для своих запросов. Права: `tl.read` для методов get/search/resolve/check, `tl.write` для остальных.

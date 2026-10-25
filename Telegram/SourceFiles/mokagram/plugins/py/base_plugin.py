@@ -34,6 +34,31 @@ class MenuItem:
     item_id: Optional[str] = None
 
 
+class _Logger:
+    """self.logger.info(...) и т. д.: строки попадают в журнал плагинов (команда .logs)."""
+
+    def __init__(self, pid):
+        self._pid = pid
+
+    def _put(self, level, msg, args):
+        import sys
+        try:
+            text = msg % args if args else str(msg)
+        except Exception:
+            text = str(msg)
+        sys.modules['mokagram_sdk.api']._h['say']('[%s] %s: %s' % (self._pid, level, text))
+
+    def debug(self, msg, *args): self._put('DEBUG', msg, args)
+    def info(self, msg, *args): self._put('INFO', msg, args)
+    def warning(self, msg, *args): self._put('WARN', msg, args)
+    def error(self, msg, *args): self._put('ERROR', msg, args)
+
+    def exception(self, msg, *args):
+        import traceback
+        self._put('ERROR', msg, args)
+        self._put('ERROR', traceback.format_exc().rstrip(), ())
+
+
 def command(name=None, description='', aliases=()):
     """Метод плагина становится командой: @command('hello', 'приветствие'). Вызывается handler(ctx)."""
     def deco(fn):
@@ -57,8 +82,28 @@ class BasePlugin:
     __id__, __name__, __description__, __author__, __version__, __icon__, __min_version__, __permissions__.
     """
 
+    strings: dict = {}   # {'ru': {'hello': 'Привет'}, 'en': {...}}, берётся язык клиента
+
     def __init__(self) -> None:
         self._menu_items: list[MenuItem] = []
+
+    def s(self, key: str, *args, **kwargs) -> str:
+        """Строка из self.strings на языке клиента (ru или en), иначе английская, русская, иначе сам ключ."""
+        import sys
+        lang = sys.modules['mokagram_sdk.api']._h['fw']['lang']()
+        table = getattr(self, 'strings', None) or {}
+        for code in (lang, 'en', 'ru'):
+            text = (table.get(code) or {}).get(key)
+            if text is not None:
+                try:
+                    return text.format(*args, **kwargs)
+                except Exception:
+                    return text
+        return key
+
+    @property
+    def logger(self):
+        return _Logger(getattr(self, '_moka_id', 'plugin'))
 
     # жизненный цикл
     def on_plugin_load(self) -> None: ...
@@ -94,7 +139,11 @@ class BasePlugin:
     def on_message_edited(self, message: dict) -> None: ...
     def on_message_deleted(self, message: dict) -> None: ...
     def on_new_reaction(self, message: dict) -> None: ...
-    def on_message_sent(self, info: dict) -> None: ...      # {id, old_id, peer, text}: ваше сообщение ушло, id настоящий   # на ваше сообщение поставили реакцию (поля как у on_new_message)
+    def on_message_sent(self, info: dict) -> None: ...
+    def on_chat_action(self, info: dict) -> None: ...        # {peer, action: join|leave|add|remove|pin|title|photo|create|other, from, user_ids, message_id}
+    def on_read(self, info: dict) -> None: ...               # {peer, max_id, direction: inbox|outbox}
+    def on_story(self, info: dict) -> None: ...              # {peer, id, date, caption, media}
+    def on_album(self, info: dict) -> None: ...              # {peer, grouped_id, messages: [...], text, out}      # {id, old_id, peer, text}: ваше сообщение ушло, id настоящий   # на ваше сообщение поставили реакцию (поля как у on_new_message)
 
     # люди и чаты (нужно право messages.read)
     def on_chat_opened(self, peer: dict) -> None: ...        # {peer, title, username, kind}

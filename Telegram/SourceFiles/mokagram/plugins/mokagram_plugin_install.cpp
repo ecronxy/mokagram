@@ -125,6 +125,10 @@ struct Info {
 	if (key == "storage") return U(Mokagram::Lang::Tr("своё хранилище"));
 	if (key == "tl.read") return U(Mokagram::Lang::Tr("чтение данных через API Telegram"));
 	if (key == "tl.write") return U(Mokagram::Lang::Tr("действия через API Telegram"));
+	if (key == "chats.manage") return U(Mokagram::Lang::Tr("управление чатами: вступление, приглашения, баны, админы"));
+	if (key == "chats.settings") return U(Mokagram::Lang::Tr("настройки чатов: звук, архив, папки, статус набора"));
+	if (key == "profile.write") return U(Mokagram::Lang::Tr("изменение вашего профиля"));
+	if (key == "privacy.write") return U(Mokagram::Lang::Tr("настройки приватности"));
 	if (key == "clipboard") return U(Mokagram::Lang::Tr("чтение буфера обмена"));
 	if (key == "background") return U(Mokagram::Lang::Tr("фоновые задачи"));
 	return key;

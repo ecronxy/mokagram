@@ -57,9 +57,19 @@ def _moka_parse(source):
                     detected.add('messages.read')
                 if f.attr in ('edit_message', 'pin_message'):
                     detected.add('messages.edit')
+                if f.attr in ('join', 'leave', 'invite', 'ban', 'unban', 'kick', 'restrict', 'edit_admin'):
+                    detected.add('chats.manage')
+                if f.attr in ('mute', 'archive', 'get_folders', 'folder_add', 'set_typing'):
+                    detected.add('chats.settings')
+                if f.attr in ('set_profile', 'set_emoji_status'):
+                    detected.add('profile.write')
+                if f.attr in ('get_privacy', 'set_privacy'):
+                    detected.add('privacy.write')
+                if f.attr in ('get_entity',):
+                    detected.add('tl.read')
                 if f.attr in ('invoke_tl', 'press_button'):
                     detected.add('tl.write')
-                if f.attr in ('forward_messages', 'react', 'send_album'):
+                if f.attr in ('forward_messages', 'react', 'send_album', 'schedule_message', 'save_draft'):
                     detected.add('messages.send')
                 if f.attr in ('get_participants', 'search_messages', 'get_history_remote', 'input_peer', 'get_user', 'download_media'):
                     detected.add('messages.read')
@@ -107,8 +117,12 @@ def _moka_drain():
     return '\n'.join(out)
 
 
+_fw_ring = collections.deque(maxlen=500)
+
+
 def _say(text):
     _log.append(text)
+    _fw_ring.append(text)
 
 
 # ---- SDK ----
@@ -130,6 +144,7 @@ def _moka_install_api(source):
     mod._h.update({
         'caller': _caller, 'granted': _granted, 'audit': _audit, 'say': _say,
         'native': _moka_native, 'data_dir': _data_dir, 'register_cb': _register_cb, 'hook_error': _hook_error,
+        'fw': _FW_EXPORT,
     })
     sys.modules['mokagram_sdk.api'] = mod
     sys.modules['moka'] = mod
@@ -337,6 +352,7 @@ def _activate(entry, source):
         if cls is None:
             raise RuntimeError('в файле нет класса, наследующего BasePlugin')
         inst = cls()
+        inst._moka_id = entry['id']
         inst.on_plugin_load()
         entry['plugin'] = inst
         entry['module'] = mod
@@ -350,6 +366,7 @@ def _activate(entry, source):
         _register_filters(entry)
         _register_events(entry)
         _fw_collect(entry, inst)
+        _fw_sync_updates()
     except BaseException as e:   # включая SystemExit: плагин не должен ронять клиент
         _fail(entry, e)
 
@@ -566,6 +583,16 @@ def _register_cb(entry, fn, once=False):
 
 
 def _moka_invoke(pid, token, payload_json):
+    if pid == '_fw':
+        fn = _fw_cbs.pop(token, None)
+        if fn is None:
+            return 'false'
+        try:
+            fn(json.loads(payload_json) if payload_json else {})
+        except BaseException as e:
+            _say('каркас: колбэк: %s' % e)
+            return 'false'
+        return 'true'
     entry = _plugins.get(pid)
     if entry is None or entry.get('plugin') is None:
         return 'false'
@@ -592,6 +619,9 @@ def _deactivate(entry):
     entry['cbs'] = {}
     entry['commands'] = {}
     entry['watchers'] = []
+    entry['jobs'] = []
+    for sub in [s for s in _fw_db_subs if s[0] == entry['id']]:
+        _fw_db_subs.remove(sub)
     for t in list(entry.get('timers', {}).values()):
         t.cancel()
     entry['timers'] = {}
@@ -633,6 +663,8 @@ def _moka_load_file(name):
     elif not _engine:
         entry['state'] = 'paused'
         entry['error'] = None
+    elif _fw_missing_deps(meta):
+        entry['error'] = 'нужны плагины: ' + ', '.join(_fw_missing_deps(meta))
     else:
         digest = _sha256(raw)
         rec = _grants.get(pid)
@@ -670,10 +702,7 @@ def _moka_init(folder, sdk_source, api_source, tl_source='', tl_schema=''):
         sys.modules['mokagram_sdk.api']._h['tl'] = _moka_install_tl(tl_source, tl_schema)
     _load_state()
     _load_grants()
-    if os.path.isdir(folder):
-        for name in sorted(os.listdir(folder)):
-            if name.endswith('.plugin'):
-                _moka_load_file(name)
+    _fw_load_all(folder)
     if '_fw_start' in globals():
         try:
             _fw_start()
@@ -752,6 +781,10 @@ def _moka_remove(pid):
     if entry is None:
         return 'false'
     _deactivate(entry)
+    try:
+        _fw_sync_updates()
+    except BaseException:
+        pass
     _disabled.discard(pid)
     _save_state()
     if _grants.pop(pid, None) is not None:
@@ -1013,6 +1046,10 @@ def _moka_hook_observe(kind, ctor, hexdata):
     except Exception as e:
         _say('хук: неверные данные: %s' % e)
         return ''
+    try:
+        _fw_observe(kind, ctor, raw)
+    except BaseException:
+        pass
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')
         ids = entry.get('filters', {}).get(kind)

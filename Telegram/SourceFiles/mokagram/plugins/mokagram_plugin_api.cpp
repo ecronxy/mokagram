@@ -1,7 +1,9 @@
 // Mokagram: SDK плагинов на стороне клиента (мост к Qt) и входы хуков обновлений.
 #include "mokagram/plugins/mokagram_plugin_api.h"
 
+#include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "api/api_common.h"
@@ -63,6 +65,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
+#include <QtCore/QFile>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -458,19 +461,16 @@ std::string SetSetting(const QJsonObject &args) {
 	return session->data().message(peerId, id);
 }
 
+[[nodiscard]] QJsonObject ItemBrief(not_null<const HistoryItem*> item);
+
 std::string GetMessage(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto item = FindItem(args);
 		if (!item) {
 			return Reply(false, U("сообщение не загружено"));
 		}
-		auto result = QJsonObject();
+		auto result = ItemBrief(item);
 		result.insert("ok", true);
-		result.insert("text", item->originalText().text);
-		result.insert("out", item->out());
-		result.insert("date", double(item->date()));
-		result.insert("from", QString::number(item->from()->id.value));
-		result.insert("has_media", item->media() != nullptr);
 		result.insert("can_edit", item->canBeEdited());
 		return QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString();
 	});
@@ -915,6 +915,9 @@ void EmitMessageEvent(
 	payload.insert("peer_title", peer->name());
 	payload.insert("peer_kind", PeerBrief(peer).value("kind"));
 	payload.insert("media", MediaKind(item));
+	if (const auto group = item->groupId().raw()) {
+		payload.insert("grouped_id", QString::number(group));
+	}
 	payload.insert("from", QString::number(item->from()->id.value));
 	payload.insert("text", item->originalText().text);
 	payload.insert("out", item->out());
@@ -1083,6 +1086,15 @@ std::string SendFile(const QJsonObject &args) {
 	result.insert("date", double(item->date()));
 	result.insert("has_media", item->media() != nullptr);
 	result.insert("entities", EntitiesToJson(item->originalText().entities));
+	result.insert("reply_to", QString::number(item->replyToId().bare));
+	if (const auto media = item->media()) {
+		result.insert("media", MediaKind(item));
+		if (const auto document = media->document()) {
+			result.insert("file_name", document->filename());
+			result.insert("mime", document->mimeString());
+			result.insert("size", double(document->size));
+		}
+	}
 	if (const auto buttons = ButtonsJson(item); !buttons.isEmpty()) {
 		result.insert("buttons", buttons);
 	}
@@ -1389,6 +1401,34 @@ std::string DownloadMedia(const QJsonObject &args) {
 	});
 }
 
+std::string ClientLang(const QJsonObject &) {
+	// Tr() возвращает русский текст как есть только в русском, украинском и белорусском интерфейсе.
+	const auto russian = (std::string(Mokagram::Lang::Tr("Да")) == "Да");
+	auto result = QJsonObject();
+	result.insert("ok", true);
+	result.insert("lang", russian ? "ru" : "en");
+	return Json(result);
+}
+
+// Окно установки плагина из файла (права, версия): пользователь подтверждает сам.
+std::string InstallPluginFile(const QJsonObject &args) {
+	const auto path = args.value("path").toString();
+	auto file = QFile(path);
+	if (!file.open(QIODevice::ReadOnly) || file.size() > (1 << 20)) {
+		return Reply(false, U("файл плагина не прочитан"));
+	}
+	const auto bytes = file.readAll();
+	return OnMain([=]() -> std::string {
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!controller) {
+			return Reply(false, U("нет открытого окна"));
+		}
+		InstallFromBytes(controller, bytes, [] {});
+		return Reply(true);
+	});
+}
+
 // ---- универсальный вызов TL ----
 
 [[nodiscard]] std::string HexOfPrimes(const mtpPrime *data, size_t ints) {
@@ -1603,6 +1643,10 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return SendAlbum(args);
 	} else if (op == "download_media") {
 		return DownloadMedia(args);
+	} else if (op == "client_lang") {
+		return ClientLang(args);
+	} else if (op == "install_plugin_file") {
+		return InstallPluginFile(args);
 	} else if (op == "tl_input") {
 		return TlInput(args);
 	} else if (op == "invoke_raw") {

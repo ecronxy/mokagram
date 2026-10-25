@@ -226,11 +226,20 @@ def set_timeout(fn, seconds):
     return _start_timer(entry, fn, max(0.05, float(seconds)), False)
 
 
-def set_interval(fn, seconds):
-    """Повторять каждые seconds секунд (минимум 0.5), пока плагин не выгружен или не отменён."""
+def set_interval(fn, seconds, persist=None):
+    """Повторять каждые seconds секунд (минимум 0.5), пока плагин не выгружен или не отменён.
+    persist='имя': расписание помнится на диске, пропущенный при выключенном клиенте запуск выполняется при старте
+    (минимум 5 секунд, шаг проверки 15 секунд)."""
     entry = _gate('set_interval', 'background')
     if entry is None or not callable(fn):
         return None
+    if persist:
+        try:
+            _h['fw']['job'](entry, 'interval', max(5, int(seconds)), fn, persist)
+        except Exception as e:
+            _h['say']('[%s] set_interval: %s' % (entry['id'], e))
+            return None
+        return True
     return _start_timer(entry, fn, max(0.5, float(seconds)), True)
 
 
@@ -842,6 +851,667 @@ def get_user(user_id):
 def delete_message(peer, msg_id, revoke=False):
     """Одно сообщение (см. delete_messages)."""
     return delete_messages(peer, [msg_id], revoke)
+
+
+# =====================================================================================
+# Платформа: cron, общая база, секреты, http, зависимости
+# =====================================================================================
+
+def cron(expr, fn, name=None):
+    """Запуск по расписанию cron из 5 полей: api.cron('0 9 * * *', fn). Запуски, пропущенные при выключенном клиенте
+    (до двух недель), выполняются один раз при старте. Права не нужны."""
+    entry = _gate('cron', 'background')
+    if entry is None or not callable(fn):
+        return None
+    try:
+        _h['fw']['job'](entry, 'cron', expr, fn, name)
+    except Exception as e:
+        _h['say']('[%s] cron: %s' % (entry['id'], e))
+        return None
+    return True
+
+
+class _Db:
+    """Общая база всех плагинов (ключи вида 'тема.имя', значения JSON, всего до 4 МБ). Право storage."""
+
+    def _entry(self, op):
+        return _gate('db.' + op, 'storage')
+
+    def get(self, key, default=None):
+        if self._entry('get') is None:
+            return default
+        return _h['fw']['db_load']().get(str(key), default)
+
+    def set(self, key, value):
+        entry = self._entry('set')
+        key = str(key)
+        if entry is None or not key or len(key) > 128:
+            return False
+        try:
+            json.dumps(value)
+        except TypeError:
+            return False
+        return _h['fw']['db_set'](entry['id'], key, value)
+
+    def delete(self, key):
+        entry = self._entry('delete')
+        if entry is None:
+            return False
+        return _h['fw']['db_set'](entry['id'], str(key), None, True)
+
+    def keys(self, prefix=''):
+        if self._entry('keys') is None:
+            return []
+        return [k for k in _h['fw']['db_load']() if k.startswith(prefix)]
+
+    def on_change(self, prefix, fn):
+        """fn(key, value, old, plugin_id) при изменении любого ключа с этим началом (value None при удалении)."""
+        entry = self._entry('on_change')
+        if entry is None or not callable(fn):
+            return False
+        _h['fw']['db_subs'].append((entry['id'], str(prefix), fn))
+        return True
+
+
+db = _Db()
+
+
+class _Secrets:
+    """Секреты плагина: хранилище ОС (secret-tool), иначе зашифрованный файл. Право storage."""
+
+    def get(self, name):
+        entry = _gate('secrets.get', 'storage')
+        return _h['fw']['secret_get'](entry['id'], str(name)) if entry is not None else None
+
+    def set(self, name, value):
+        entry = _gate('secrets.set', 'storage')
+        return bool(entry is not None and _h['fw']['secret_set'](entry['id'], str(name), None if value is None else str(value)))
+
+    def delete(self, name):
+        return self.set(name, None)
+
+
+secrets = _Secrets()
+
+
+def get_plugin(plugin_id):
+    """Экземпляр другого загруженного плагина (для __dependencies__) или None."""
+    entry = _h['caller']()
+    if entry is None:
+        return None
+    other = _h['fw']['plugins'].get(str(plugin_id))
+    return other.get('plugin') if other and other.get('state') == 'loaded' else None
+
+
+class HttpResponse:
+    def __init__(self, status, headers, content):
+        self.status = status
+        self.headers = headers
+        self.content = content
+
+    @property
+    def ok(self):
+        return 200 <= self.status < 300
+
+    @property
+    def text(self):
+        return self.content.decode('utf8', 'replace')
+
+    def json(self):
+        return json.loads(self.content.decode('utf8'))
+
+
+class _HttpFuture:
+    def __init__(self, fut):
+        self._fut = fut
+
+    def result(self, timeout=None):
+        return self._fut.result(timeout)
+
+    def __await__(self):
+        import asyncio
+        return asyncio.wrap_future(self._fut).__await__()
+
+
+class _Http:
+    """api.http.get/post/request/download. Право network. Только http(s), внутренние адреса закрыты,
+    ответ до 20 МБ, до 30 запросов в минуту. С callback(response, error) ответ придёт в колбэк,
+    без него вернётся объект, который можно await в async-команде или взять .result()."""
+
+    def request(self, method, url, headers=None, params=None, data=None, json_body=None, files=None, timeout=15, callback=None):
+        entry = _gate('http', 'network', str(url)[:120])
+        if entry is None or not _limit(entry, 'http', 30, 60):
+            return None
+        url = str(url)
+        if params:
+            import urllib.parse
+            url += ('&' if '?' in url else '?') + urllib.parse.urlencode(params)
+        hdrs = dict(headers or {})
+        body = None
+        if json_body is not None:
+            body = json.dumps(json_body).encode('utf8')
+            hdrs.setdefault('Content-Type', 'application/json')
+        elif files:
+            import uuid
+            boundary = uuid.uuid4().hex
+            parts = []
+            for k, v in (data or {}).items():
+                parts.append(('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' % (boundary, k, v)).encode('utf8'))
+            for k, v in files.items():
+                if isinstance(v, str):
+                    path = os.path.abspath(v)
+                    if not os.path.isfile(path) or not _path_ok(entry, path):
+                        _h['say']('[%s] http: файл вне папки плагина (нужно право files)' % entry['id'])
+                        return None
+                    fname, content = os.path.basename(path), open(path, 'rb').read()
+                else:
+                    fname, content = k, bytes(v)
+                parts.append(('--%s\r\nContent-Disposition: form-data; name="%s"; filename="%s"\r\n\r\n' % (boundary, k, fname)).encode('utf8') + content + b'\r\n')
+            parts.append(('--%s--\r\n' % boundary).encode('utf8'))
+            body = b''.join(parts)
+            hdrs['Content-Type'] = 'multipart/form-data; boundary=' + boundary
+        elif data is not None:
+            import urllib.parse
+            body = data if isinstance(data, bytes) else urllib.parse.urlencode(data).encode('utf8')
+            hdrs.setdefault('Content-Type', 'application/x-www-form-urlencoded')
+        if body is not None and len(body) > (20 << 20):
+            return None
+
+        def work():
+            r = _h['fw']['http'](method, url, hdrs, body, timeout, 20 << 20)
+            return HttpResponse(r['status'], r['headers'], r['content'])
+        _h['audit'](entry, 'http', '%s %s' % (method, url[:150]), 'allowed', len(body or b''))
+        fut = _h['fw']['pool'].submit(work)
+        if callback is None:
+            return _HttpFuture(fut)
+
+        def finish(f):
+            try:
+                resp, err = f.result(), None
+            except BaseException as e:
+                resp, err = None, str(e)
+            try:
+                callback(resp, err)
+            except BaseException as e:
+                _h['hook_error'](entry, 'http.callback', e)
+        fut.add_done_callback(finish)
+        return True
+
+    def get(self, url, **kw):
+        return self.request('GET', url, **kw)
+
+    def post(self, url, **kw):
+        return self.request('POST', url, **kw)
+
+    def download(self, url, path, callback=None, timeout=60):
+        """Скачать в файл (до 100 МБ). Путь в папке плагина или во временной, иначе нужно право files."""
+        entry = _gate('http', 'network', str(url)[:120])
+        path = os.path.abspath(str(path))
+        if entry is None or not _limit(entry, 'http', 30, 60) or not _path_ok(entry, path):
+            return None
+
+        def work():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            r = _h['fw']['http']('GET', str(url), None, None, timeout, 100 << 20, path)
+            return HttpResponse(r['status'], r['headers'], b'')
+        _h['audit'](entry, 'http.download', str(url)[:150], 'allowed')
+        fut = _h['fw']['pool'].submit(work)
+        if callback is None:
+            return _HttpFuture(fut)
+        fut.add_done_callback(lambda f: callback(None if f.exception() else f.result(), str(f.exception()) if f.exception() else None))
+        return True
+
+
+http = _Http()
+
+
+# =====================================================================================
+# Обёртки над invoke_tl: короткие имена. Каждое действие под своим правом и в журнале.
+# chats.manage: join/leave/invite/kick/ban/restrict/edit_admin; chats.settings: mute/archive/folders/set_typing;
+# profile.write: профиль и emoji-статус; privacy.write: приватность. Ответ приходит в callback(result, error).
+# =====================================================================================
+
+def peer_id_for(kind, bare_id):
+    """Строковый id чата в клиенте из вида ('user'|'chat'|'channel') и id из TL."""
+    bare_id = int(bare_id)
+    return str(bare_id + (1 << 48 if kind == 'chat' else 1 << 49 if kind == 'channel' else 0))
+
+
+def _entities_to_tl(entities):
+    out = []
+    names = {'bold': 'messageEntityBold', 'italic': 'messageEntityItalic', 'underline': 'messageEntityUnderline',
+             'strike': 'messageEntityStrike', 'code': 'messageEntityCode', 'spoiler': 'messageEntitySpoiler',
+             'quote': 'messageEntityBlockquote'}
+    for e in (entities or [])[:200]:
+        try:
+            t, o, l = e['type'], int(e['offset']), int(e['length'])
+        except Exception:
+            continue
+        if t in names:
+            out.append({'_': names[t], 'offset': o, 'length': l})
+        elif t == 'pre':
+            out.append({'_': 'messageEntityPre', 'offset': o, 'length': l, 'language': str(e.get('language', ''))})
+        elif t == 'link' and e.get('url'):
+            out.append({'_': 'messageEntityTextUrl', 'offset': o, 'length': l, 'url': str(e['url'])})
+        elif t == 'custom_emoji' and e.get('document_id'):
+            out.append({'_': 'messageEntityCustomEmoji', 'offset': o, 'length': l, 'document_id': int(e['document_id'])})
+    return out
+
+
+def _wrap(perm, op, peer=None, limit=(30, 60)):
+    """Общая проверка обёртки: возвращает (entry, peer_str) или (None, None)."""
+    entry = _gate(op, perm, str(peer) if peer is not None else '')
+    if entry is None or not _limit(entry, op, limit[0], limit[1]):
+        return None
+    return entry
+
+
+def get_reply_message(peer, msg_id):
+    """Сообщение, на которое ответили (из загруженных) или None."""
+    m = get_message(peer, msg_id)
+    if not m or not m.get('reply_to') or m['reply_to'] == '0':
+        return None
+    return get_message(peer, m['reply_to'])
+
+
+
+def get_entity(query, callback):
+    """Найти человека, канал или группу по @username или ссылке t.me/...: callback({id, peer, kind, title, username}, error).
+    Право tl.read."""
+    entry = _wrap('tl.read', 'get_entity', query)
+    if entry is None or not callable(callback):
+        return None
+    q = str(query).strip()
+    for pre in ('https://t.me/', 'http://t.me/', 't.me/', '@'):
+        if q.startswith(pre):
+            q = q[len(pre):]
+    q = q.split('/')[0].split('?')[0]
+    if not q:
+        return None
+
+    def done(res, err):
+        if err or res is None:
+            return callback(None, err)
+        found = None
+        for u in res.get('users', []):
+            found = {'kind': 'user', 'id': u.get('id'), 'peer': peer_id_for('user', u['id']), 'title': ' '.join(x for x in (u.get('first_name'), u.get('last_name')) if x), 'username': u.get('username', ''), 'access_hash': u.get('access_hash')}
+        for c in res.get('chats', []):
+            kind = 'channel' if c.get('_') in ('channel', 'channelForbidden') else 'chat'
+            found = {'kind': kind, 'id': c.get('id'), 'peer': peer_id_for(kind, c['id']), 'title': c.get('title', ''), 'username': c.get('username', ''), 'access_hash': c.get('access_hash')}
+        callback(found, None if found else {'type': 'NOT_FOUND', 'description': 'не найдено'})
+    return _invoke(entry, 'contacts.resolveUsername', {'username': q}, done)
+
+
+def schedule_message(peer, text, when, callback=None, entities=None, silent=False):
+    """Отложенное сообщение: when это время (unix) в будущем. Право messages.send."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('messages.send', 'schedule_message', peer, (10, 60))
+    if entry is None or not ok or not isinstance(text, str) or not text.strip() or len(text) > 4096:
+        return None
+    when = int(when)
+    if when < time.time() + 10:
+        _h['say']('[%s] schedule_message: время должно быть в будущем' % entry['id'])
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    ents = _entities_to_tl(entities)
+    params = {'peer': ip, 'message': text, 'random_id': _random_id(), 'schedule_date': when,
+              'silent': True if silent else None}
+    if ents:
+        params['entities'] = ents
+    return _invoke(entry, 'messages.sendMessage', params, callback)
+
+
+def save_draft(peer, text, entities=None, callback=None):
+    """Черновик в чате (пустой текст убирает). Право messages.send."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('messages.send', 'save_draft', peer)
+    if entry is None or not ok or not isinstance(text, str) or len(text) > 4096:
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    params = {'peer': ip, 'message': text}
+    ents = _entities_to_tl(entities)
+    if ents:
+        params['entities'] = ents
+    return _invoke(entry, 'messages.saveDraft', params, callback)
+
+
+def get_drafts(callback):
+    """Все черновики: callback([{peer, text, date}], error). Право messages.read."""
+    entry = _wrap('messages.read', 'get_drafts', None, (10, 60))
+    if entry is None or not callable(callback):
+        return None
+
+    def done(res, err):
+        if err or res is None:
+            return callback(None, err)
+        out = []
+        for u in res.get('updates', []) if isinstance(res, dict) else []:
+            d = u.get('draft') or {}
+            if u.get('_') == 'updateDraftMessage' and d.get('_') == 'draftMessage':
+                out.append({'peer': _fw_peer(u.get('peer')), 'text': d.get('message', ''), 'date': d.get('date')})
+        callback(out, None)
+    return _invoke(entry, 'messages.getAllDrafts', {}, done)
+
+
+def _fw_peer(p):
+    if not isinstance(p, dict):
+        return None
+    t = p.get('_')
+    if t == 'peerUser':
+        return peer_id_for('user', p['user_id'])
+    if t == 'peerChat':
+        return peer_id_for('chat', p['chat_id'])
+    if t == 'peerChannel':
+        return peer_id_for('channel', p['channel_id'])
+    return None
+
+
+def _kind_of(peer):
+    res = _native('tl_input', {'kind': 'peer', 'peer': peer})
+    return res if res.get('ok') else None
+
+
+def join(target, callback=None):
+    """Вступить по @username, ссылке t.me/name или приглашению t.me/+hash. Право chats.manage."""
+    entry = _wrap('chats.manage', 'join', target, (5, 60))
+    if entry is None:
+        return None
+    t = str(target).strip()
+    for pre in ('https://t.me/', 'http://t.me/', 't.me/'):
+        if t.startswith(pre):
+            t = t[len(pre):]
+    t = t.lstrip('@').split('?')[0]
+    if t.startswith('+') or t.startswith('joinchat/'):
+        h = t.split('/')[-1].lstrip('+')
+        return _invoke(entry, 'messages.importChatInvite', {'hash': h}, callback)
+
+    def resolved(res, err):
+        chans = [c for c in (res or {}).get('chats', []) if c.get('_') == 'channel']
+        if err or not chans:
+            return callback(None, err or {'type': 'NOT_FOUND', 'description': 'канал не найден'}) if callable(callback) else None
+        c = chans[0]
+        _invoke(entry, 'channels.joinChannel', {'channel': {'_': 'inputChannel', 'channel_id': c['id'], 'access_hash': c['access_hash']}}, callback)
+    return _invoke(entry, 'contacts.resolveUsername', {'username': t}, resolved)
+
+
+def leave(peer, callback=None):
+    """Выйти из группы или канала. Право chats.manage."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.manage', 'leave', peer, (5, 60))
+    k = _kind_of(peer) if entry is not None and ok else None
+    if k is None:
+        return None
+    if k['kind'] == 'channel':
+        ip = _tl_input(entry, 'channel', peer)[0]
+        return _invoke(entry, 'channels.leaveChannel', {'channel': ip}, callback) if ip else None
+    if k['kind'] == 'chat':
+        return _invoke(entry, 'messages.deleteChatUser', {'chat_id': int(k['bare']), 'user_id': {'_': 'inputUserSelf'}}, callback)
+    return None
+
+
+def _user_input(entry, user):
+    return _tl_input(entry, 'user', str(user))[0]
+
+
+def invite(peer, user_ids, callback=None):
+    """Пригласить людей (их id из загруженных). Право chats.manage."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.manage', 'invite', peer, (5, 60))
+    k = _kind_of(peer) if entry is not None and ok else None
+    users = [_user_input(entry, u) for u in (user_ids if isinstance(user_ids, (list, tuple)) else [user_ids])][:50] if k else []
+    users = [u for u in users if u]
+    if k is None or not users:
+        return None
+    if k['kind'] == 'channel':
+        ip = _tl_input(entry, 'channel', peer)[0]
+        return _invoke(entry, 'channels.inviteToChannel', {'channel': ip, 'users': users}, callback) if ip else None
+    if k['kind'] == 'chat':
+        return _invoke(entry, 'messages.addChatUser', {'chat_id': int(k['bare']), 'user_id': users[0], 'fwd_limit': 50}, callback)
+    return None
+
+
+_RIGHTS = ('view_messages', 'send_messages', 'send_media', 'send_stickers', 'send_gifs', 'send_games', 'send_inline',
+           'embed_links', 'send_polls', 'change_info', 'invite_users', 'pin_topics', 'pin_messages')
+
+
+def _banned_rights(rights, until):
+    r = {'_': 'chatBannedRights', 'until_date': int(until)}
+    for k in _RIGHTS:
+        if rights.get(k):
+            r[k] = True
+    return r
+
+
+def _edit_banned(entry, peer, user, rights, until, callback):
+    ip = _tl_input(entry, 'channel', peer)[0]
+    up = _tl_input(entry, 'peer', str(user))[0]
+    if ip is None or up is None:
+        return None
+    return _invoke(entry, 'channels.editBanned', {'channel': ip, 'participant': up,
+                                                   'banned_rights': _banned_rights(rights, until)}, callback)
+
+
+def ban(peer, user, until=0, callback=None):
+    """Заблокировать в супергруппе или канале (until: unix, 0 навсегда). Право chats.manage."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.manage', 'ban', peer, (10, 60))
+    if entry is None or not ok:
+        return None
+    return _edit_banned(entry, peer, user, {'view_messages': True}, until, callback)
+
+
+def unban(peer, user, callback=None):
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.manage', 'unban', peer, (10, 60))
+    if entry is None or not ok:
+        return None
+    return _edit_banned(entry, peer, user, {}, 0, callback)
+
+
+def kick(peer, user, callback=None):
+    """Убрать из группы (бан и сразу разбан, человек может вернуться по ссылке). Право chats.manage."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.manage', 'kick', peer, (10, 60))
+    k = _kind_of(peer) if entry is not None and ok else None
+    if k is None:
+        return None
+    if k['kind'] == 'chat':
+        u = _user_input(entry, user)
+        return _invoke(entry, 'messages.deleteChatUser', {'chat_id': int(k['bare']), 'user_id': u}, callback) if u else None
+    return _edit_banned(entry, peer, user, {'view_messages': True}, 0,
+                        lambda r, e: unban(peer, user, callback) if not e else (callback(r, e) if callable(callback) else None))
+
+
+def restrict(peer, user, rights, until=0, callback=None):
+    """Ограничить участника: rights это dict запретов, например {'send_messages': True, 'send_media': True}. Право chats.manage."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.manage', 'restrict', peer, (10, 60))
+    if entry is None or not ok or not isinstance(rights, dict):
+        return None
+    return _edit_banned(entry, peer, user, rights, until, callback)
+
+
+_ADMIN = ('change_info', 'post_messages', 'edit_messages', 'delete_messages', 'ban_users', 'invite_users',
+          'pin_messages', 'add_admins', 'anonymous', 'manage_call', 'other', 'manage_topics')
+
+
+def edit_admin(peer, user, rights, rank='', callback=None):
+    """Назначить или снять админа: rights dict из {'delete_messages': True, 'ban_users': True, ...}, пустой снимает.
+    Право chats.manage."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.manage', 'edit_admin', peer, (5, 60))
+    if entry is None or not ok or not isinstance(rights, dict):
+        return None
+    ip = _tl_input(entry, 'channel', peer)[0]
+    u = _user_input(entry, user)
+    if ip is None or u is None:
+        return None
+    ar = {'_': 'chatAdminRights'}
+    for k in _ADMIN:
+        if rights.get(k):
+            ar[k] = True
+    return _invoke(entry, 'channels.editAdminRights', {'channel': ip, 'user_id': u, 'admin_rights': ar,
+                                                        'rank': str(rank)[:16]}, callback)
+
+
+def mute(peer, seconds=True, callback=None):
+    """Выключить уведомления чата: seconds число (на сколько), True навсегда, False включить. Право chats.settings."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.settings', 'mute', peer)
+    if entry is None or not ok:
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    if seconds is False:
+        until = 0
+    elif seconds is True:
+        until = 2147483647
+    else:
+        until = int(time.time()) + int(seconds)
+    return _invoke(entry, 'account.updateNotifySettings', {
+        'peer': {'_': 'inputNotifyPeer', 'peer': ip},
+        'settings': {'_': 'inputPeerNotifySettings', 'mute_until': until}}, callback)
+
+
+def archive(peer, archived=True, callback=None):
+    """Убрать чат в архив или вернуть. Право chats.settings."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.settings', 'archive', peer)
+    if entry is None or not ok:
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    return _invoke(entry, 'folders.editPeerFolders', {'folder_peers': [
+        {'_': 'inputFolderPeer', 'peer': ip, 'folder_id': 1 if archived else 0}]}, callback)
+
+
+def get_folders(callback):
+    """Папки чатов: callback([{id, title}], error). Право chats.settings."""
+    entry = _wrap('chats.settings', 'get_folders', None, (10, 60))
+    if entry is None or not callable(callback):
+        return None
+
+    def done(res, err):
+        if err or res is None:
+            return callback(None, err)
+        out = []
+        for f in res.get('filters', []):
+            if f.get('_') == 'dialogFilter':
+                t = f.get('title')
+                out.append({'id': f['id'], 'title': t.get('text') if isinstance(t, dict) else str(t)})
+        callback(out, None)
+    return _invoke(entry, 'messages.getDialogFilters', {}, done)
+
+
+def folder_add(folder_id, peer, callback=None):
+    """Добавить чат в папку. Право chats.settings."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.settings', 'folder_add', peer, (10, 60))
+    if entry is None or not ok:
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+
+    def got(res, err):
+        flt = next((f for f in (res or {}).get('filters', []) if f.get('_') == 'dialogFilter' and f.get('id') == int(folder_id)), None)
+        if err or flt is None:
+            return callback(None, err or {'type': 'NOT_FOUND', 'description': 'папки нет'}) if callable(callback) else None
+        flt = dict(flt)
+        flt['include_peers'] = list(flt.get('include_peers', [])) + [ip]
+        _invoke(entry, 'messages.updateDialogFilter', {'id': int(folder_id), 'filter': flt}, callback)
+    return _invoke(entry, 'messages.getDialogFilters', {}, got)
+
+
+_ACTIONS = {'typing': 'sendMessageTypingAction', 'record_voice': 'sendMessageRecordAudioAction',
+            'record_video': 'sendMessageRecordVideoAction', 'upload_photo': 'sendMessageUploadPhotoAction',
+            'choose_sticker': 'sendMessageChooseStickerAction', 'cancel': 'sendMessageCancelAction'}
+
+
+def set_typing(peer, action='typing', callback=None):
+    """Показать собеседникам «печатает...» и т. п. (typing, record_voice, record_video, upload_photo, choose_sticker, cancel).
+    Право chats.settings."""
+    peer, _, ok = _ids(peer)
+    entry = _wrap('chats.settings', 'set_typing', peer, (60, 60))
+    if entry is None or not ok or action not in _ACTIONS:
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    act = {'_': _ACTIONS[action]}
+    if action == 'upload_photo':
+        act['progress'] = 0
+    return _invoke(entry, 'messages.setTyping', {'peer': ip, 'action': act}, callback)
+
+
+def set_profile(first_name=None, last_name=None, about=None, callback=None):
+    """Имя, фамилия, «О себе» (что не указано, то не меняется). Право profile.write."""
+    entry = _wrap('profile.write', 'set_profile', None, (5, 60))
+    if entry is None:
+        return None
+    params = {}
+    if first_name is not None:
+        params['first_name'] = str(first_name)[:64]
+    if last_name is not None:
+        params['last_name'] = str(last_name)[:64]
+    if about is not None:
+        params['about'] = str(about)[:70]
+    if not params:
+        return None
+    return _invoke(entry, 'account.updateProfile', params, callback)
+
+
+def set_emoji_status(document_id=None, until=None, callback=None):
+    """Эмодзи-статус по document_id премиум-эмодзи (None снимает). Право profile.write, нужен Premium."""
+    entry = _wrap('profile.write', 'set_emoji_status', None, (5, 60))
+    if entry is None:
+        return None
+    if document_id is None:
+        status = {'_': 'emojiStatusEmpty'}
+    else:
+        status = {'_': 'emojiStatus', 'document_id': int(document_id)}
+        if until:
+            status['until'] = int(until)
+    return _invoke(entry, 'account.updateEmojiStatus', {'emoji_status': status}, callback)
+
+
+_PRIVACY_KEYS = {'status': 'inputPrivacyKeyStatusTimestamp', 'phone': 'inputPrivacyKeyPhoneNumber',
+                 'photo': 'inputPrivacyKeyProfilePhoto', 'forwards': 'inputPrivacyKeyForwards',
+                 'calls': 'inputPrivacyKeyPhoneCall', 'invites': 'inputPrivacyKeyChatInvite',
+                 'about': 'inputPrivacyKeyAbout', 'birthday': 'inputPrivacyKeyBirthday'}
+_PRIVACY_RULES = {'everyone': 'inputPrivacyValueAllowAll', 'contacts': 'inputPrivacyValueAllowContacts',
+                  'nobody': 'inputPrivacyValueDisallowAll'}
+
+
+def get_privacy(key, callback):
+    """Кому видно: callback(['everyone'|'contacts'|'nobody', ...], error). key: status, phone, photo, forwards, calls, invites, about, birthday."""
+    entry = _wrap('privacy.write', 'get_privacy', key, (10, 60))
+    if entry is None or key not in _PRIVACY_KEYS or not callable(callback):
+        return None
+
+    def done(res, err):
+        if err or res is None:
+            return callback(None, err)
+        names = {'privacyValueAllowAll': 'everyone', 'privacyValueAllowContacts': 'contacts',
+                 'privacyValueDisallowAll': 'nobody', 'privacyValueDisallowContacts': 'not_contacts',
+                 'privacyValueAllowUsers': 'users', 'privacyValueDisallowUsers': 'except_users'}
+        callback([names.get(r.get('_'), r.get('_')) for r in res.get('rules', [])], None)
+    return _invoke(entry, 'account.getPrivacy', {'key': {'_': _PRIVACY_KEYS[key]}}, done)
+
+
+def set_privacy(key, rule, callback=None):
+    """Поставить приватность: rule 'everyone' | 'contacts' | 'nobody'. Право privacy.write."""
+    entry = _wrap('privacy.write', 'set_privacy', key, (5, 60))
+    if entry is None or key not in _PRIVACY_KEYS or rule not in _PRIVACY_RULES:
+        return None
+    return _invoke(entry, 'account.setPrivacy', {'key': {'_': _PRIVACY_KEYS[key]},
+                                                  'rules': [{'_': _PRIVACY_RULES[rule]}]}, callback)
 
 
 def register_command(name, handler, description=''):

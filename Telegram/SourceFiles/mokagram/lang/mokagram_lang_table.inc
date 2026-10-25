@@ -741,4 +741,8 @@
 	{ "С чего начинаются команды плагинов в поле ввода: например .help или !help. Один или два знака.", "What plugin commands in the input field start with: for example .help or !help. One or two characters." },
 	{ "Режим разработчика", "Developer mode" },
 	{ "Плагин перезагружается сам, когда вы сохраняете его файл, без подтверждения прав. Включайте только для плагинов, которые пишете сами.", "A plugin reloads itself when you save its file, without asking for permissions again. Turn this on only for plugins you write yourself." },
+	{ "управление чатами: вступление, приглашения, баны, админы", "managing chats: joining, invites, bans, admins" },
+	{ "настройки чатов: звук, архив, папки, статус набора", "chat settings: sound, archive, folders, typing status" },
+	{ "изменение вашего профиля", "changing your profile" },
+	{ "настройки приватности", "privacy settings" },
 	{ "Яндекс Музыка", "Yandex Music" },
