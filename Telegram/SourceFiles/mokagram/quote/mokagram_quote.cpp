@@ -998,7 +998,7 @@ void ShowCustomBg(Fn<void()> refresh) {
 				object_ptr<Ui::InputField>(
 					content,
 					fieldStyle,
-					rpl::single(U("#RRGGBB")),
+					rpl::single(QString()),
 					S::String(key)),
 				QMargins(22, 4, 22, 8));
 			field->changes() | rpl::on_next([=] {
