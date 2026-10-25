@@ -42,6 +42,7 @@
 #include "main/main_session.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/notes/mokagram_notes.h"
+#include "mokagram/snippets/mokagram_snippets.h"
 #include "ui/widgets/fields/input_field.h"
 #include "window/window_session_controller.h"
 
@@ -94,7 +95,7 @@ namespace S = Mokagram::Settings;
 		u"mute"_q, u"unmute"_q, u"ban"_q, u"unban"_q, u"kick"_q,
 		u"del"_q, u"pin"_q, u"unpin"_q, u"id"_q, u"save"_q,
 		u"tr"_q, u"calc"_q, u"archive"_q, u"unarchive"_q, u"dl"_q,
-		u"tag"_q, u"note"_q,
+		u"tag"_q, u"note"_q, u"snip"_q,
 	};
 	return result;
 }
@@ -410,7 +411,8 @@ bool Handle(
 	const auto freeText = (command == u"tr"_q)
 		|| (command == u"calc"_q)
 		|| (command == u"tag"_q)
-		|| (command == u"note"_q);
+		|| (command == u"note"_q)
+		|| (command == u"snip"_q);
 	if (!freeText && !arg.isEmpty() && !all && !number.hasMatch()) {
 		// Обычная фраза, которая случайно начинается с команды.
 		return false;
@@ -478,6 +480,34 @@ bool Handle(
 		toast(arg.isEmpty()
 			? U(isTag ? "Тег убран" : "Заметка убрана")
 			: U(isTag ? "Тег сохранён" : "Заметка сохранена"));
+		return true;
+	}
+	if (command == u"snip"_q) {
+		const auto split = arg.indexOf(QRegularExpression(u"\\s"_q));
+		const auto first = (split < 0) ? arg : arg.left(split);
+		const auto rest = (split < 0) ? QString() : arg.mid(split).trimmed();
+		static const auto nameRe = QRegularExpression(
+			u"^[\\p{L}\\d_]{1,24}$"_q);
+		if (first.isEmpty() || first.toLower() == u"list"_q) {
+			const auto names = Snippets::Names();
+			toast(names.isEmpty()
+				? U("Сниппетов нет. Пример: .snip привет Здравствуйте!")
+				: (U("Сниппеты: ;") + names.join(u", ;"_q)));
+		} else if (first.toLower() == u"del"_q) {
+			toast(Snippets::Remove(rest)
+				? U("Сниппет удалён")
+				: U("Такого сниппета нет"));
+		} else if (!nameRe.match(first).hasMatch()) {
+			toast(U("Имя сниппета: буквы, цифры и _"));
+		} else if (rest.isEmpty()) {
+			const auto text = Snippets::Get(first);
+			toast(text.isEmpty()
+				? U("Такого сниппета нет. Пример: .snip ") + first + U(" текст")
+				: text.left(200));
+		} else {
+			Snippets::Set(first, rest);
+			toast(U("Сохранено. Пиши ;") + first.toLower() + U(" в тексте"));
+		}
 		return true;
 	}
 	if (command == u"dl"_q) {

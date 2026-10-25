@@ -134,10 +134,13 @@ int PaintTag(
 	const auto &font = st::normalFont;
 	const auto padding = 6;
 	const auto height = font->height - 2;
-	const auto width = font->width(tag) + 2 * padding;
-	if (left + width > maxRight) {
+	// Длинный тег обрезаем многоточием, чтобы он не заезжал на время.
+	const auto available = maxRight - left;
+	if (available < 3 * padding + font->width(u"\u2026"_q)) {
 		return 0;
 	}
+	const auto shown = font->elided(tag, available - 2 * padding);
+	const auto width = font->width(shown) + 2 * padding;
 	auto hq = PainterHighQualityEnabler(p);
 	auto background = color;
 	background.setAlphaF(0.18);
@@ -147,7 +150,7 @@ int PaintTag(
 	p.drawRoundedRect(rect, height / 2., height / 2.);
 	p.setPen(color);
 	p.setFont(font);
-	p.drawText(rect, Qt::AlignCenter, tag);
+	p.drawText(rect, Qt::AlignCenter, shown);
 	return width + 4;
 }
 

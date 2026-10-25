@@ -994,24 +994,28 @@ void PaintRow(
 			const auto nameW = std::min(
 				rowName.maxWidth(),
 				rectForName.width());
+			const auto muteExtra = drawMuteIcon
+				? ThreeStateIcon(
+					st::dialogsMuteIcon,
+					context.active,
+					context.selected).width() + st::dialogsMuteIconSkip
+				: 0;
 			const auto tagLeft = rectForName.left()
 				+ nameW
 				+ badgeWidth
-				+ (drawMuteIcon
-					? DialogsMuteIcon.value()
-						? ThreeStateIcon(
-							st::dialogsMuteIcon,
-							context.active,
-							context.selected).width() + st::dialogsMuteIconSkip
-						: 0
-					: 0)
+				+ muteExtra
 				+ 6;
+			// Правая граница: до даты, которую уже вычли из rectForName.
+			const auto tagRight = rectForName.left()
+				+ rectForName.width()
+				+ badgeWidth
+				+ muteExtra;
 			Mokagram::Notes::PaintTag(
 				p,
 				tag,
 				tagLeft,
 				rectForName.top(),
-				context.width - context.st->padding.right(),
+				tagRight,
 				(context.active
 					? st::dialogsNameFgActive
 					: st::windowActiveTextFg)->c);
