@@ -1543,7 +1543,7 @@ void CustomizeBox(
 		result.textBgActive = searchClear.color();
 		result.textMargins = style::margins(0, 7, 0, 7);
 		result.placeholderFgActive = st::windowSubTextFg;
-		result.placeholderScale = 1.;
+		result.placeholderScale = 0.;
 		result.placeholderShift = 0;
 		result.placeholderFont = st::normalFont;
 		result.border = 0;
@@ -2060,9 +2060,12 @@ void CustomizeBox(
 		field->show();
 		field->raise();
 		chipsWrap->toggle(false, anim::type::instant);
-		field->setText(query);
-		field->finishAnimating();
-		applyFilter();
+		// Текст ставим уже после показа окна, иначе подсказка поля не гаснет.
+		crl::on_main(box, [=] {
+			field->setFocusFast();
+			field->setText(query);
+			applyFilter();
+		});
 	}
 
 	// Плавное появление окна: закрывающая плёнка постепенно тает.

@@ -1129,7 +1129,7 @@ void PluginsBox(
 		result.textBgActive = searchClear.color();
 		result.textMargins = style::margins(0, 7, 0, 7);
 		result.placeholderFgActive = st::windowSubTextFg;
-		result.placeholderScale = 1.;
+		result.placeholderScale = 0.;
 		result.placeholderShift = 0;
 		result.placeholderFont = st::normalFont;
 		result.border = 0;
