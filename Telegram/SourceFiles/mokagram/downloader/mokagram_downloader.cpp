@@ -153,36 +153,16 @@ void InstallBinary(
 	return result;
 }
 
-// Понятная причина вместо сырой ошибки yt-dlp: длинный текст в подсказку не влезает.
+// Последняя строка ошибки yt-dlp без служебного префикса.
 [[nodiscard]] QString ShortError(const QByteArray &stderrText) {
 	auto lines = QString::fromUtf8(stderrText).split('\n', Qt::SkipEmptyParts);
 	while (!lines.isEmpty()) {
-		const auto line = lines.takeLast().trimmed();
-		if (!line.startsWith(u"ERROR:"_q)) {
-			continue;
+		auto line = lines.takeLast().trimmed();
+		if (line.startsWith(u"ERROR:"_q)) {
+			line = line.mid(6).trimmed();
+			line.remove(QRegularExpression(u"^\\[[^\\]]+\\]\\s*(\\S+:\\s*)?"_q));
+			return line.left(200);
 		}
-		if (line.contains(u"blocked"_q, Qt::CaseInsensitive)
-			|| line.contains(u"region"_q, Qt::CaseInsensitive)
-			|| line.contains(u"geo"_q, Qt::CaseInsensitive)) {
-			return U("сайт блокирует твой IP или регион");
-		}
-		if (line.contains(u"unreachable"_q, Qt::CaseInsensitive)
-			|| line.contains(u"Failed to establish"_q, Qt::CaseInsensitive)
-			|| line.contains(u"timed out"_q, Qt::CaseInsensitive)) {
-			return U("сайт не открывается с этого подключения");
-		}
-		if (line.contains(u"Unsupported URL"_q, Qt::CaseInsensitive)) {
-			return U("эта ссылка не поддерживается");
-		}
-		if (line.contains(u"private"_q, Qt::CaseInsensitive)
-			|| line.contains(u"login"_q, Qt::CaseInsensitive)) {
-			return U("пост закрыт или нужен вход");
-		}
-		if (line.contains(u"not found"_q, Qt::CaseInsensitive)
-			|| line.contains(u"404"_q)) {
-			return U("пост не найден");
-		}
-		return QString();
 	}
 	return QString();
 }
