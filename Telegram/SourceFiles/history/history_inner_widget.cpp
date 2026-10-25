@@ -3461,6 +3461,24 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}
 		}
 		addItemActions(item, item);
+		if (item || isUponSelected > 0) {
+			// Mokagram: скриншот выбранных сообщений (или одного).
+			_menu->addAction(
+				QString::fromUtf8("Скриншот сообщений"),
+				[=] {
+					auto ids = std::vector<FullMsgId>();
+					if (isUponSelected > 0) {
+						for (const auto selected : _selected) {
+							ids.push_back(selected->fullId());
+						}
+					}
+					if (ids.empty()) {
+						ids.push_back(itemId);
+					}
+					Mokagram::Quote::ShowQuoteBox(_controller, std::move(ids));
+				},
+				&st::menuIconCopy);
+		}
 		if (!selectedState.count) {
 			if (lnkPhoto) {
 				addPhotoActions(lnkPhoto, item);
@@ -3726,19 +3744,6 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 										Mokagram::Misc::CopyWithAuthor(item);
 									}
 								}
-							},
-							&st::menuIconCopy);
-						_menu->addAction(
-							QString::fromUtf8("Скриншот сообщений"),
-							[=] {
-								auto ids = std::vector<FullMsgId>();
-								for (const auto selected : _selected) {
-									ids.push_back(selected->fullId());
-								}
-								if (ids.empty()) {
-									ids.push_back(itemId);
-								}
-								Mokagram::Quote::ShowQuoteBox(_controller, std::move(ids));
 							},
 							&st::menuIconCopy);
 					}

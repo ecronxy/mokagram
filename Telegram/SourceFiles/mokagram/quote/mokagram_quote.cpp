@@ -905,6 +905,11 @@ struct RatioScope {
 	return image;
 }
 
+void ShowQuoteBoxNow(
+		not_null<Window::SessionController*> controller,
+		std::shared_ptr<Shot> shot,
+		int ratio);
+
 void ShowQuoteBox(
 		not_null<Window::SessionController*> controller,
 		std::vector<FullMsgId> ids) {
@@ -916,20 +921,30 @@ void ShowQuoteBox(
 	if (!shot) {
 		return;
 	}
+	// Первый проход запускает загрузку эмодзи и медиа; окно показываем,
+	// когда они готовы, чтобы ничего не прыгало на глазах.
+	auto warm = RenderShot(*shot, ratio);
+	Q_UNUSED(warm);
+	base::call_delayed(900, controller, [=] {
+		ShowQuoteBoxNow(controller, shot, ratio);
+	});
+}
+
+void ShowQuoteBoxNow(
+		not_null<Window::SessionController*> controller,
+		std::shared_ptr<Shot> shot,
+		int ratio) {
 	auto content = std::make_shared<QImage>(StackRows({ RenderShot(*shot, ratio) }));
 	if (content->isNull()) {
 		return;
 	}
 	const auto onUpdate = std::make_shared<Fn<void()>>();
-	// Эмодзи и медиа подгружаются не сразу: через пару секунд перерисовываем.
-	for (const auto delay : { 700, 2000 }) {
+	// Что догрузилось позже, подхватываем перерисовкой.
+	for (const auto delay : { 1200, 3000 }) {
 		base::call_delayed(delay, controller, [=] {
 			auto fresh = StackRows({ RenderShot(*shot, ratio) });
 			if (!fresh.isNull()) {
 				*content = std::move(fresh);
-				if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
-					content->save(u"/tmp/moka_quote_content.png"_q, "PNG");
-				}
 				if (*onUpdate) {
 					(*onUpdate)();
 				}
