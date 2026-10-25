@@ -269,15 +269,8 @@ void StoreBox(
 				: Ui::CreateChild<Ui::LinkButton>(
 					wrap,
 					U(Mokagram::Lang::Tr("Подробнее")));
-			const auto moreText = entry.details.isEmpty()
-				? nullptr
-				: Ui::CreateChild<Ui::FlatLabel>(
-					wrap,
-					entry.details,
-					st::boxLabel);
-			if (moreText) {
-				moreText->hide();
-			}
+			// Полный текст создаём только при раскрытии и убираем при сворачивании.
+			const auto moreText = std::make_shared<QPointer<Ui::FlatLabel>>();
 			const auto expanded = std::make_shared<bool>(false);
 			const auto relayout = std::make_shared<Fn<void()>>();
 			const auto access = entry.permissions.isEmpty()
@@ -330,11 +323,10 @@ void StoreBox(
 				if (more) {
 					more->move(kCardPad, bottom + 4);
 					bottom += 4 + more->height();
-					moreText->setVisible(*expanded);
-					if (*expanded) {
-						moreText->resizeToWidth(width - 2 * kCardPad);
-						moreText->move(kCardPad, bottom + 6);
-						bottom += 6 + moreText->height();
+					if (*expanded && *moreText) {
+						(*moreText)->resizeToWidth(width - 2 * kCardPad);
+						(*moreText)->move(kCardPad, bottom + 6);
+						bottom += 6 + (*moreText)->height();
 					}
 				}
 				if (access) {
@@ -348,6 +340,16 @@ void StoreBox(
 			if (more) {
 				more->setClickedCallback([=] {
 					*expanded = !*expanded;
+					if (*expanded) {
+						*moreText = Ui::CreateChild<Ui::FlatLabel>(
+							wrap,
+							entry.details,
+							st::boxLabel);
+						(*moreText)->show();
+					} else if (*moreText) {
+						(*moreText)->deleteLater();
+						*moreText = nullptr;
+					}
 					more->setText(*expanded
 						? U(Mokagram::Lang::Tr("Свернуть"))
 						: U(Mokagram::Lang::Tr("Подробнее")));
