@@ -77,6 +77,13 @@ constexpr auto kMaxAccountsKey = "misc.max_accounts";
 
 void RegisterSettings() {
 	Settings::Register({
+		.key = u"misc.welcome_shown"_q,
+		.title = u"welcome"_q,
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.hidden = true,
+	});
+	Settings::Register({
 		.key = QString::fromUtf8(kMaxAccountsKey),
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Аккаунты")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько аккаунтов можно добавить")),

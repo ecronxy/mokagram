@@ -2,6 +2,7 @@
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
 #include "mokagram/plugins/mokagram_plugin_store.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
@@ -2403,6 +2404,8 @@ void StartDebugCommands() {
 						Data::MessageUpdate::Flag::NewUnreadReaction);
 				}
 			}
+		} else if (cmd == u"welcome"_q) {
+			Mokagram::Plugins::ShowWelcome(controller);
 		} else if (cmd == u"pluginstore"_q) {
 			controller->show(Box(
 				Mokagram::Plugins::StoreBox,
