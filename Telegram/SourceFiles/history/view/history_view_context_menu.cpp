@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_who_reacted.h"
 #include "api/api_stickers_creator.h"
 #include "mokagram/misc/mokagram_misc.h"
+#include "mokagram/saveinator/mokagram_saveinator.h"
 #include "api/api_suggest_post.h"
 #include "api/api_toggling_media.h" // Api::ToggleFavedSticker
 #include "base/qt/qt_key_modifiers.h"
@@ -1947,6 +1948,12 @@ void FillContextMenuItems(
 	}
 
 	AddCopyLinkAction(result, link);
+	if (item && request.selectedItems.empty()) {
+		Mokagram::Saveinator::AddMessageAction(
+			result,
+			list->controller(),
+			item);
+	}
 	AddMessageActions(result, request, list);
 
 	const auto wasAmount = result->actions().size();

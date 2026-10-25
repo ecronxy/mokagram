@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_chat_section.h"
+#include "mokagram/saveinator/mokagram_saveinator.h"
 
 #include "history/admin_log/history_admin_log_section.h"
 #include "history/view/controls/history_view_top_controls.h"
@@ -2369,6 +2370,15 @@ void ChatWidget::sendVoice(const ComposeControls::VoiceToSend &data) {
 void ChatWidget::send(Api::SendOptions options) {
 	if (const auto page = _composeControls->shownRichMessage()) {
 		sendRichDraft(page, options);
+		return;
+	}
+	if (!options.scheduled
+		&& Mokagram::Saveinator::OfferSendDownload(
+			controller(),
+			prepareSendAction(options),
+			_composeControls->getTextWithAppliedMarkdown().text,
+			crl::guard(this, [=] { send(options); }),
+			crl::guard(this, [=] { _composeControls->clear(true); }))) {
 		return;
 	}
 	if (!options.scheduled) {

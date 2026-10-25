@@ -88,6 +88,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_key_modifiers.h"
 #include "base/unixtime.h"
 #include "mokagram/misc/mokagram_misc.h"
+#include "mokagram/saveinator/mokagram_saveinator.h"
 #include "base/call_delayed.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
@@ -3751,6 +3752,12 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			_menu->addAction(item->history()->peer->isMegagroup() ? tr::lng_context_copy_message_link(tr::now) : tr::lng_context_copy_post_link(tr::now), [=] {
 				HistoryView::CopyPostLink(controller, itemId, HistoryView::Context::History);
 			}, &st::menuIconLink);
+		}
+		if (item
+			&& !sponsored
+			&& isUponSelected != 2
+			&& isUponSelected != -2) {
+			Mokagram::Saveinator::AddMessageAction(_menu.get(), _controller, item);
 		}
 		if (sponsored) {
 			const auto hasAbout = ranges::any_of(

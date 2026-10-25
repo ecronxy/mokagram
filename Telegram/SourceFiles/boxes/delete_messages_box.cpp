@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "menu/menu_ttl_validator.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
@@ -37,6 +38,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 constexpr auto kDeleteMessagesBoxAnimationDuration = crl::time(80);
+
+// Mokagram: внутренний отступ карточки с флажками.
+constexpr auto kMokaCardPad = 12;
 
 } // namespace
 
@@ -82,13 +86,15 @@ crl::time DeleteMessagesBox::layerAnimationDuration() const {
 }
 
 void DeleteMessagesBox::prepare() {
+	Mokagram::BoxParts::RoundLayer(this);
+	setStyle(Mokagram::BoxParts::PillButtonsBox());
+
 	auto details = TextWithEntities();
 	const auto appendDetails = [&](TextWithEntities &&text) {
 		details.append(u"\n\n"_q).append(std::move(text));
 	};
 	auto deleteText = lifetime().make_state<rpl::variable<QString>>();
 	*deleteText = tr::lng_box_delete();
-	auto deleteStyle = &st::defaultBoxButton;
 	auto canDelete = true;
 	if (const auto peer = _wipeHistoryPeer) {
 		if (!_wipeHistoryFirstToDelete.isNull()) {
@@ -110,7 +116,6 @@ void DeleteMessagesBox::prepare() {
 							_wipeHistoryLastToDelete) + 1,
 						tr::marked),
 					tr::rich);
-			deleteStyle = &st::attentionBoxButton;
 		} else if (_wipeHistoryJustClear) {
 			const auto isChannel = peer->isChannel() && !peer->isMegagroup();
 			_revokeJustClearForChannel = isChannel;
@@ -131,7 +136,6 @@ void DeleteMessagesBox::prepare() {
 					lt_group,
 					peer->name());
 			details = tr::rich(details.text);
-			deleteStyle = &st::attentionBoxButton;
 		} else {
 			details.text = peer->isSelf()
 				? tr::lng_sure_delete_saved_messages(tr::now)
@@ -152,7 +156,6 @@ void DeleteMessagesBox::prepare() {
 			if (!peer->isUser()) {
 				*deleteText = tr::lng_box_leave();
 			}
-			deleteStyle = &st::attentionBoxButton;
 		}
 		if (_revokeJustClearForChannel) {
 		} else if (auto revoke = revokeText(peer)) {
@@ -262,13 +265,20 @@ void DeleteMessagesBox::prepare() {
 	}
 
 	if (canDelete) {
+		// Mokagram: удаление всегда выглядит как опасное действие.
 		addButton(
 			deleteText->value(),
 			[=] { deleteAndClear(); },
-			*deleteStyle);
-		addButton(tr::lng_cancel(), [=] { closeBox(); });
+			Mokagram::BoxParts::PillAttention());
+		addButton(
+			tr::lng_cancel(),
+			[=] { closeBox(); },
+			Mokagram::BoxParts::PillLight());
 	} else {
-		addButton(tr::lng_about_done(), [=] { closeBox(); });
+		addButton(
+			tr::lng_about_done(),
+			[=] { closeBox(); },
+			Mokagram::BoxParts::PillActive());
 	}
 
 	const auto &padding = st::boxPadding;
@@ -282,7 +292,9 @@ void DeleteMessagesBox::prepare() {
 			+ _text->height()
 			+ st::boxPadding.bottom();
 		if (_revoke) {
-			fullHeight += st::boxMediumSkip + _revoke->heightNoMargins();
+			fullHeight += st::boxMediumSkip
+				+ _revoke->heightNoMargins()
+				+ kMokaCardPad;
 		}
 		if (_autoDeleteSettings) {
 			fullHeight += st::boxMediumSkip
@@ -440,20 +452,41 @@ void DeleteMessagesBox::resizeEvent(QResizeEvent *e) {
 	_text->moveToLeft(padding.left(), padding.top());
 	auto top = _text->bottomNoMargins() + st::boxMediumSkip;
 	if (_revoke) {
-		const auto availableWidth = width() - 2 * padding.left();
+		using Mokagram::BoxParts::kOuterSide;
+		const auto left = kOuterSide + kMokaCardPad;
+		const auto availableWidth = width() - 2 * left;
 		_revoke->resizeToNaturalWidth(availableWidth);
-		_revoke->moveToLeft(padding.left(), top);
+		_revoke->moveToLeft(left, top);
 		top += _revoke->heightNoMargins() + st::boxLittleSkip;
 		if (_revokeRemember) {
 			_revokeRemember->resizeToNaturalWidth(availableWidth);
-			_revokeRemember->moveToLeft(padding.left(),top);
+			_revokeRemember->moveToLeft(left, top);
 			top += _revokeRemember->heightNoMargins();
 		}
 	}
 	if (_autoDeleteSettings) {
-		top += st::boxMediumSkip - st::boxLittleSkip;
+		top += st::boxMediumSkip - st::boxLittleSkip + kMokaCardPad;
 		_autoDeleteSettings->moveToLeft(padding.left(), top);
 	}
+}
+
+void DeleteMessagesBox::paintEvent(QPaintEvent *e) {
+	BoxContent::paintEvent(e);
+
+	if (!_revoke) {
+		return;
+	}
+	using Mokagram::BoxParts::kOuterSide;
+	const auto top = _revoke->y() + _revoke->getMargins().top();
+	const auto bottom = (_revokeRemember && !_revokeRemember->isHidden())
+		? _revokeRemember->bottomNoMargins()
+		: _revoke->bottomNoMargins();
+	auto p = QPainter(this);
+	Mokagram::BoxParts::PaintCard(p, QRect(
+		kOuterSide,
+		top - kMokaCardPad,
+		width() - 2 * kOuterSide,
+		bottom - top + 2 * kMokaCardPad));
 }
 
 void DeleteMessagesBox::keyPressEvent(QKeyEvent *e) {
