@@ -717,8 +717,11 @@ void PaintPlate(
 	auto hq = PainterHighQualityEnabler(p);
 	if (pack.emoji && pack.normalized.isNull() && pack.emoji->ready()) {
 		const auto ratio = style::DevicePixelRatio();
+		// Холст с запасом: у некоторых эмодзи фигура выходит за свою клетку.
+		constexpr auto kMargin = 8;
+		const auto canvas = kPackEmojiSize + 2 * kMargin;
 		auto image = QImage(
-			QSize(kPackEmojiSize, kPackEmojiSize) * ratio,
+			QSize(canvas, canvas) * ratio,
 			QImage::Format_ARGB32_Premultiplied);
 		image.setDevicePixelRatio(ratio);
 		image.fill(Qt::transparent);
@@ -727,7 +730,7 @@ void PaintPlate(
 			pack.emoji->paint(q, {
 				.textColor = QColor(Qt::white),
 				.now = crl::now(),
-				.position = QPoint(0, 0),
+				.position = QPoint(kMargin, kMargin),
 			});
 		}
 		auto bounds = QRect();
@@ -746,13 +749,15 @@ void PaintPlate(
 				bounds.center().y() - side / 2,
 				side,
 				side);
-			auto fitted = QImage(image.size(), image.format());
+			auto fitted = QImage(
+				QSize(kPackEmojiSize, kPackEmojiSize) * ratio,
+				image.format());
 			fitted.setDevicePixelRatio(ratio);
 			fitted.fill(Qt::transparent);
 			auto q = QPainter(&fitted);
 			q.setRenderHint(QPainter::SmoothPixmapTransform);
 			q.drawImage(
-				QRect(0, 0, kPackEmojiSize, kPackEmojiSize),
+				QRect(1, 1, kPackEmojiSize - 2, kPackEmojiSize - 2),
 				image,
 				square);
 			q.end();
