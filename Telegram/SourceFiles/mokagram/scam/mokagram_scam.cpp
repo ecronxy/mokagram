@@ -56,7 +56,6 @@ namespace {
 [[nodiscard]] bool OfferText(const QString &text) {
 	return ContainsAny(text, {
 		"предложение действует", "offer is valid",
-		"передайте подарок покупателю", "tg://send_gift",
 	}) || (ContainsAny(text, { "предлагает вам", "offers you" })
 		&& ContainsAny(text, {
 			"за подарок", "за коллекционный", "for your gift",
@@ -81,7 +80,7 @@ void MarkText(
 	if (from->isVerified() || from->id.value == kTelegramServiceId) {
 		return;
 	}
-	text = TextWithEntities{ QString(kMarkChar) + u"\n\n"_q }.append(std::move(text));
+	text = TextWithEntities{ QString(kMarkChar) + u"\n"_q }.append(std::move(text));
 }
 
 bool IsFakeOffer(not_null<const HistoryItem*> item) {
@@ -100,7 +99,6 @@ bool IsFakeOffer(not_null<const HistoryItem*> item) {
 	// с такой же фразой и таймером это подделка.
 	const auto offerText = ContainsAny(text, {
 		"предложение действует", "offer is valid",
-		"передайте подарок покупателю", "tg://send_gift",
 	}) || (ContainsAny(text, { "предлагает вам", "offers you" })
 		&& ContainsAny(text, {
 			"за подарок", "за коллекционный", "for your gift",
@@ -142,18 +140,24 @@ bool HasMark(const QString &text) {
 }
 
 void PaintBanner(QPainter &p, QRect rect) {
+	p.save();
 	auto hq = PainterHighQualityEnabler(p);
+	const auto red = QColor(0xFF, 0x5C, 0x5C);
+	rect.setHeight(rect.height() - 2);
 	p.setPen(Qt::NoPen);
-	p.setBrush(QColor(0xE0, 0x3E, 0x3E));
-	p.drawRoundedRect(rect, 6, 6);
-	p.setPen(Qt::white);
+	p.setBrush(QColor(0xFF, 0x3B, 0x30, 46));
+	p.drawRoundedRect(rect, 7, 7);
+	p.setBrush(red);
+	p.drawRoundedRect(QRect(rect.x(), rect.y(), 3, rect.height()), 1.5, 1.5);
+	p.setPen(red);
 	p.setFont(st::semiboldFont);
 	p.drawText(
-		rect.adjusted(8, 0, -8, 0),
+		rect.adjusted(11, 0, -6, 0),
 		Qt::AlignVCenter | Qt::AlignLeft,
 		st::semiboldFont->elided(
-			QString::fromUtf8("\xE2\x9A\xA0 Возможный фейк-оффер"),
-			rect.width() - 16));
+			QString::fromUtf8("\xE2\x9A\xA0 Похоже на скам"),
+			rect.width() - 17));
+	p.restore();
 }
 
 void ShowWarning(not_null<const HistoryItem*> item, Fn<void()> proceed) {

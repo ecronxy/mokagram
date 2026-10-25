@@ -153,6 +153,15 @@ bool DateRegEnabled() {
 	return !Key().isEmpty();
 }
 
+void Prefetch(quint64 userId) {
+	if (!DateRegEnabled()
+		|| Cache().find(userId) != Cache().end()
+		|| Errors().find(userId) != Errors().end()) {
+		return;
+	}
+	Fetch(userId);
+}
+
 rpl::producer<QString> RegistrationDate(quint64 userId) {
 	return [=](auto consumer) {
 		auto lifetime = rpl::lifetime();

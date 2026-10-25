@@ -110,6 +110,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item.h"
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/misc/mokagram_datereg.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include <deque>
 #include "history/history_item_helpers.h" // GetErrorForSending.
@@ -3482,6 +3483,10 @@ void HistoryWidget::showHistory(
 	if (peerId) {
 		using namespace HistoryView;
 		_peer = session().data().peer(peerId);
+		if (const auto user = _peer->asUser();
+			user && !user->isBot() && !user->isSelf()) {
+			Mokagram::Misc::Prefetch(user->id.value & PeerId::kChatTypeMask);
+		}
 		_contactStatus = std::make_unique<ContactStatus>(
 			controller(),
 			_topBars.get(),

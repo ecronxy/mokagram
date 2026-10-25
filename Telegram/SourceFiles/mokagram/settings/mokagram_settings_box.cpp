@@ -2064,7 +2064,7 @@ void StartDebugCommands() {
 			}
 		} else if (cmd == u"dellast"_q) {
 			if (const auto history = controller->activeChatCurrent().history()) {
-				if (const auto item = history->lastMessage(); item && item->originalText().text.contains(u"test fx hello"_q)) {
+				if (const auto item = history->lastMessage(); item && history->peer->isSelf() && item->out() && item->originalText().text.contains(u"test fx hello"_q)) {
 					history->session().data().histories().deleteMessages({ item->fullId() }, true);
 					history->session().data().histories().sendPendingReadInbox(history);
 				}

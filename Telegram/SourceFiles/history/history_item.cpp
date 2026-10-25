@@ -1549,6 +1549,10 @@ HistoryMessageReplyMarkup *HistoryItem::inlineReplyMarkup() {
 
 ReplyKeyboard *HistoryItem::inlineReplyKeyboard() {
 	if (const auto markup = inlineReplyMarkup()) {
+		// Mokagram: у подозрительного оффера кнопки не показываем.
+		if (Mokagram::Scam::HasMark(_text.text)) {
+			return nullptr;
+		}
 		return markup->inlineKeyboard.get();
 	}
 	return nullptr;

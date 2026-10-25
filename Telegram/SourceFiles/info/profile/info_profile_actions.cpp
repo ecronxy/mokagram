@@ -1947,6 +1947,9 @@ Section DetailsFiller::makeInfo() {
 					) | rpl::on_next([=](QString text) {
 						state->date = QString::fromUtf8("Регистрация: ")
 							+ text;
+						if (icon->underMouse()) {
+							Ui::Tooltip::Show(0, state);
+						}
 					}, icon->lifetime());
 				}
 				icon->events() | rpl::on_next([=](not_null<QEvent*> e) {
