@@ -1,6 +1,7 @@
 // Mokagram: английский вариант интерфейса. Русский текст остаётся ключом.
 #include "mokagram/lang/mokagram_lang.h"
 
+#include "core/application.h"
 #include "lang/lang_keys.h"
 
 #include <QtCore/QProcessEnvironment>
@@ -42,6 +43,10 @@ constexpr Pair kTable[] = {
 	if (!forced.isEmpty()) {
 		cached = (forced == u"ru") ? 1 : 2;
 		return cached;
+	}
+	// До запуска приложения язык ещё не известен (статические инициализаторы).
+	if (!Core::IsAppLaunched()) {
+		return 1;
 	}
 	const auto id = ::Lang::Id();
 	if (id.isEmpty()) {

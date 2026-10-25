@@ -1,5 +1,6 @@
 // Mokagram: скачивание медиа по ссылке из сообщения через API Saveinator.
 #include "mokagram/saveinator/mokagram_saveinator.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "api/api_common.h"
 #include "apiwrap.h"
@@ -60,6 +61,12 @@ constexpr auto kLimit = 10;
 constexpr auto kTimeout = 5 * 60 * 1000;
 constexpr auto kUserAgent = "Saveinator-mokaGram/1.0";
 constexpr auto kPollDelay = 2 * 1000;
+constexpr auto kMaxPollFailures = 3;
+
+// Первые проверки частые: короткие ролики готовятся за секунду-две.
+[[nodiscard]] int PollDelay(int polls) {
+	return (polls < 3) ? 700 : (polls < 8) ? 1200 : kPollDelay;
+}
 constexpr auto kRequestTimeout = 30 * 1000;
 constexpr auto kMaxJsonSize = 64 * 1024;
 constexpr auto kMaxFileSize = qint64(2) * 1024 * 1024 * 1024;
@@ -74,16 +81,16 @@ struct Choice {
 
 [[nodiscard]] QStringList MediaTitles() {
 	return {
-		QString::fromUtf8("Всё, что есть"),
-		QString::fromUtf8("Только видео"),
-		QString::fromUtf8("Только звук"),
-		QString::fromUtf8("Только фото"),
+		QString::fromUtf8(Mokagram::Lang::Tr("Всё, что есть")),
+		QString::fromUtf8(Mokagram::Lang::Tr("Только видео")),
+		QString::fromUtf8(Mokagram::Lang::Tr("Только звук")),
+		QString::fromUtf8(Mokagram::Lang::Tr("Только фото")),
 	};
 }
 
 [[nodiscard]] QStringList QualityTitles() {
 	return {
-		QString::fromUtf8("Лучшее"),
+		QString::fromUtf8(Mokagram::Lang::Tr("Лучшее")),
 		u"1080p"_q,
 		u"720p"_q,
 		u"480p"_q,
@@ -127,6 +134,8 @@ struct Job {
 	QString text;
 	QPointer<QNetworkReply> reply;
 	QPointer<QTimer> deadline;
+	int polls = 0;
+	int pollFailures = 0;
 	bool finished = false;
 };
 
@@ -149,22 +158,22 @@ auto SendingAsText = false;
 [[nodiscard]] QString ErrorText(const QString &code) {
 	if (code == u"capacity_exceeded"_q
 		|| code == u"shutting_down"_q) {
-		return QString::fromUtf8("Сервис скачивания занят. Попробуйте чуть позже.");
+		return QString::fromUtf8(Mokagram::Lang::Tr("Сервис скачивания занят. Попробуйте чуть позже."));
 	} else if (code == u"unsupported_url"_q) {
-		return QString::fromUtf8("Эта ссылка пока не поддерживается.");
+		return QString::fromUtf8(Mokagram::Lang::Tr("Эта ссылка пока не поддерживается."));
 	} else if (code == u"no_media"_q) {
-		return QString::fromUtf8("Медиа для скачивания не найдено.");
+		return QString::fromUtf8(Mokagram::Lang::Tr("Медиа для скачивания не найдено."));
 	} else if (code == u"too_large"_q) {
 		return QString::fromUtf8(
-			"Медиафайл превышает ограничение размера на сервере.");
+			Mokagram::Lang::Tr("Медиафайл превышает ограничение размера на сервере."));
 	} else if (code == u"timeout"_q) {
 		return QString::fromUtf8(
-			"Скачивание заняло слишком много времени. Попробуйте позже.");
+			Mokagram::Lang::Tr("Скачивание заняло слишком много времени. Попробуйте позже."));
 	} else if (code == u"not_found"_q) {
 		return QString::fromUtf8(
-			"Срок хранения истёк или результат недоступен.");
+			Mokagram::Lang::Tr("Срок хранения истёк или результат недоступен."));
 	}
-	return QString::fromUtf8("Не удалось скачать медиа по этой ссылке.");
+	return QString::fromUtf8(Mokagram::Lang::Tr("Не удалось скачать медиа по этой ссылке."));
 }
 
 [[nodiscard]] QString ExtensionFor(const QString &contentType) {
@@ -281,7 +290,8 @@ void Finish(const std::shared_ptr<Job> &job, const QString &error) {
 void SendJson(
 		const std::shared_ptr<Job> &job,
 		QNetworkReply *reply,
-		Fn<void(QJsonObject)> done) {
+		Fn<void(QJsonObject)> done,
+		Fn<void()> retry = nullptr) {
 	job->reply = reply;
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
@@ -301,6 +311,11 @@ void SendJson(
 			}
 		} else if (status == 400 && object.contains(u"error"_q)) {
 			Finish(job, object.value(u"error"_q).toString());
+		} else if (retry
+			&& (status == 0 || status >= 500)
+			&& ++job->pollFailures <= kMaxPollFailures) {
+			// Сеть моргнула или сервер занят: пробуем ещё раз, а не бросаем загрузку.
+			retry();
 		} else {
 			Finish(job, HttpError(reply));
 		}
@@ -329,7 +344,7 @@ void Deliver(const std::shared_ptr<Job> &job) {
 				Data::ShowSendErrorToast(controller, peer, error);
 			} else {
 				controller->showToast(QString::fromUtf8(
-					"В этот чат нельзя отправлять файлы."));
+					Mokagram::Lang::Tr("В этот чат нельзя отправлять файлы.")));
 			}
 			return;
 		}
@@ -478,16 +493,21 @@ void Poll(const std::shared_ptr<Job> &job, const QJsonObject &object) {
 	if (status == u"ready"_q) {
 		Ready(job, object);
 	} else if (status == u"queued"_q || status == u"running"_q) {
-		QTimer::singleShot(kPollDelay, [=] {
+		const auto poll = std::make_shared<Fn<void()>>();
+		*poll = [=] {
 			if (job->finished) {
 				return;
 			}
 			const auto path = u"/api/v1/downloads/"_q + job->id;
 			SendJson(job, Manager()->get(MakeRequest(job, path)), [=](
 					QJsonObject object) {
+				job->pollFailures = 0;
 				Poll(job, object);
+			}, [=] {
+				QTimer::singleShot(1500, [=] { (*poll)(); });
 			});
-		});
+		};
+		QTimer::singleShot(PollDelay(job->polls++), [=] { (*poll)(); });
 	} else {
 		const auto error = object.value(u"error"_q).toString();
 		Finish(job, error.isEmpty() ? u"failed"_q : error);
@@ -501,7 +521,7 @@ void Download(
 		Choice choice) {
 	if (Active().contains(link)) {
 		controller->showToast(
-			QString::fromUtf8("Эта ссылка уже скачивается."));
+			QString::fromUtf8(Mokagram::Lang::Tr("Эта ссылка уже скачивается.")));
 		return;
 	}
 	const auto job = std::make_shared<Job>(Job{
@@ -515,7 +535,7 @@ void Download(
 	});
 	Active().emplace(link);
 	controller->showToast(QString::fromUtf8(
-		"Скачиваю… Отправлю в чат, как только будет готово."));
+		Mokagram::Lang::Tr("Скачиваю… Отправлю в чат, как только будет готово.")));
 
 	const auto deadline = new QTimer();
 	deadline->setSingleShot(true);
@@ -594,7 +614,7 @@ void Download(
 	} else if (is({ "soundcloud.com" })) {
 		return u"SoundCloud"_q;
 	} else if (host.startsWith(u"music.yandex."_q)) {
-		return QString::fromUtf8("Яндекс Музыка");
+		return QString::fromUtf8(Mokagram::Lang::Tr("Яндекс Музыка"));
 	}
 	return QString();
 }
@@ -704,7 +724,7 @@ void ChooseBox(
 		Fn<void()> sendAsText) {
 	BoxParts::RoundLayer(box);
 	box->setStyle(BoxParts::PillButtonsBox());
-	box->setTitle(rpl::single(QString::fromUtf8("Скачать по ссылке")));
+	box->setTitle(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Скачать по ссылке"))));
 	const auto content = box->verticalLayout();
 
 	const auto url = QUrl(link);
@@ -736,7 +756,7 @@ void ChooseBox(
 		? std::vector<int>{ 1, 2 }
 		: std::vector<int>{ 0, 1, 2, 3 };
 	auto titles = QStringList();
-	const auto names = std::array{ "Всё", "Видео", "Звук", "Фото" };
+	const auto names = std::array{ Mokagram::Lang::Tr("Всё"), "Видео", Mokagram::Lang::Tr("Звук"), "Фото" };
 	for (const auto value : values) {
 		titles.push_back(QString::fromUtf8(names[value]));
 	}
@@ -745,7 +765,7 @@ void ChooseBox(
 	const auto media = (values.size() > 1)
 		? AddSegments(
 			content,
-			QString::fromUtf8("Формат"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Формат")),
 			titles,
 			(i != values.end()) ? int(i - values.begin()) : 0).get()
 		: nullptr;
@@ -759,9 +779,9 @@ void ChooseBox(
 			object_ptr<Ui::VerticalLayout>(content)));
 	const auto quality = AddSegments(
 		wrap->entity(),
-		QString::fromUtf8("Качество"),
+		QString::fromUtf8(Mokagram::Lang::Tr("Качество")),
 		{
-			QString::fromUtf8("Макс"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Макс")),
 			u"1080"_q,
 			u"720"_q,
 			u"480"_q,
@@ -785,7 +805,7 @@ void ChooseBox(
 	}, BoxParts::PillActive());
 	if (sendAsText) {
 		box->addLeftButton(
-			rpl::single(QString::fromUtf8("Ссылкой")),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Ссылкой"))),
 			[=] {
 				box->closeBox();
 				SendingAsText = true;
@@ -802,24 +822,20 @@ void ChooseBox(
 } // namespace
 
 void RegisterSettings() {
-	const auto section = QString::fromUtf8("Скачивание по ссылкам");
+	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Скачивание по ссылкам"));
 	const auto add = [&](Settings::Entry entry) {
 		entry.section = section;
 		entry.category = u"chats"_q;
 		entry.sectionIcon = u"update"_q;
 		entry.sectionNote = QString::fromUtf8(
-			"Нажмите правой кнопкой на сообщение со ссылкой на YouTube, "
-			"TikTok, X, Instagram, Reddit, Pinterest, VK, Spotify, "
-			"SoundCloud или Яндекс Музыку: отправьте ссылку или выберите "
-			"«Скачать по ссылке» в меню сообщения. Клиент спросит формат "
-			"и сам отправит готовое видео, фото или трек в чат.");
+			Mokagram::Lang::Tr("Нажмите правой кнопкой на сообщение со ссылкой на YouTube, TikTok, X, Instagram, Reddit, Pinterest, VK, Spotify, SoundCloud или Яндекс Музыку: отправьте ссылку или выберите «Скачать по ссылке» в меню сообщения. Клиент спросит формат и сам отправит готовое видео, фото или трек в чат."));
 		Settings::Register(std::move(entry));
 	};
 	add({
 		.key = QString::fromLatin1(kEnabledKey),
-		.title = QString::fromUtf8("Скачивание видео и музыки по ссылкам"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Скачивание видео и музыки по ссылкам")),
 		.description = QString::fromUtf8(
-			"Пункт «Скачать по ссылке» в меню сообщений."),
+			Mokagram::Lang::Tr("Пункт «Скачать по ссылке» в меню сообщений.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = true,
 	});
@@ -873,7 +889,7 @@ void AddMessageAction(
 	}
 	const auto weak = base::make_weak(controller);
 	const auto itemId = item->fullId();
-	menu->addAction(QString::fromUtf8("Скачать по ссылке"), [=] {
+	menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Скачать по ссылке")), [=] {
 		const auto strong = weak.get();
 		if (!strong) {
 			return;
