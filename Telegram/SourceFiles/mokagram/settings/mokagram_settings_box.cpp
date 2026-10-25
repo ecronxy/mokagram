@@ -236,6 +236,7 @@ struct Category {
 		{ "hide_blocked", "🚫" },
 		{ "lag.idle", "💤" },
 		{ "lag.toaster", "⚙️" },
+		{ "lag.emoji_cap", "😜" },
 		{ "lag.enabled", "📈" },
 		{ "lag.level", "📊" },
 		{ "lag.sensitivity", "📐" },

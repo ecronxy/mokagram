@@ -175,6 +175,78 @@ index 6b6e97d..ddfa7df 100644
  using Context = Ui::Text::CustomEmoji::Context;
  
  [[nodiscard]] QColor PreviewColorFromTextColor(QColor color);
+diff --git i/ui/text/text_emoji_budget.h w/ui/text/text_emoji_budget.h
+new file mode 100644
+index 0000000..851bea3
+--- /dev/null
++++ w/ui/text/text_emoji_budget.h
+@@ -0,0 +1,12 @@
++// Mokagram: потолок одновременно играющих премиум-эмодзи за кадр.
++#pragma once
++
++#include "base/basic_types.h"
++
++namespace Ui::Text {
++
++// 0: без ограничения. Остальные эмодзи сверх лимита замирают на текущем кадре.
++void SetCustomEmojiBudget(int limit);
++[[nodiscard]] bool TakeCustomEmojiBudget();
++
++} // namespace Ui::Text
+diff --git i/ui/text/text_renderer.cpp w/ui/text/text_renderer.cpp
+index 8ad5f61..9cc354d 100644
+--- i/ui/text/text_renderer.cpp
++++ w/ui/text/text_renderer.cpp
+@@ -5,6 +5,7 @@
+ // https://github.com/desktop-app/legal/blob/master/LEGAL
+ //
+ #include "ui/text/text_renderer.h"
++#include "ui/text/text_emoji_budget.h"
+ 
+ #include "ui/text/text_block.h"
+ #include "ui/text/text_extended_data.h"
+@@ -17,6 +18,31 @@
+ namespace Ui::Text {
+ namespace {
+ 
++int CustomEmojiLimit = 0;
++crl::time CustomEmojiWindow = 0;
++int CustomEmojiUsed = 0;
++
++} // namespace
++
++void SetCustomEmojiBudget(int limit) {
++	CustomEmojiLimit = std::max(limit, 0);
++}
++
++bool TakeCustomEmojiBudget() {
++	if (!CustomEmojiLimit) {
++		return true;
++	}
++	// Один кадр отрисовки: все эмодзи, нарисованные в пределах ~12 мс.
++	const auto now = crl::now();
++	if (now - CustomEmojiWindow > 12 || now < CustomEmojiWindow) {
++		CustomEmojiWindow = now;
++		CustomEmojiUsed = 0;
++	}
++	return ++CustomEmojiUsed <= CustomEmojiLimit;
++}
++
++namespace {
++
+ constexpr auto kQuoteHeaderTextLarge = 25;
+ 
+ const ClickHandlerPtr &CustomEmojiMismatchLink() {
+@@ -1206,6 +1232,9 @@ bool Renderer::drawLine(uint16 lineEnd, Blocks::const_iterator blocksEnd) {
+ 								: QPoint(
+ 									ex + _customEmojiSkip,
+ 									ey + _customEmojiSkip);
++							// Mokagram: сверх бюджета эмодзи не анимируется, а стоит на кадре.
++							_customEmojiContext->paused = _pausedEmoji
++								|| !TakeCustomEmojiBudget();
+ 							custom->paint(*_p, *_customEmojiContext);
+ 						}
+ 						if (showFallbackText) {
 diff --git i/ui/widgets/box_content_divider.cpp w/ui/widgets/box_content_divider.cpp
 index 948271f..f7b7b24 100644
 --- i/ui/widgets/box_content_divider.cpp

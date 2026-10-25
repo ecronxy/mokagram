@@ -725,6 +725,15 @@ void RegisterSettings() {
 		.defaultValue = true,
 	});
 	lag({
+		.key = u"lag.emoji_cap"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько эмодзи играет одновременно")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Остальные премиум-эмодзи замирают на кадре. 0 значит без ограничения.")),
+		.kind = S::Kind::Int,
+		.defaultValue = 24,
+		.minValue = 0,
+		.maxValue = 200,
+	});
+	lag({
 		.key = u"lag.toaster"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Режим тостера")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Максимальная экономия всегда: без анимаций и эффектов. Для слабых компьютеров и ноутбуков на батарее.")),
