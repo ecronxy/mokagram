@@ -1338,6 +1338,41 @@ void PaintGroupBg(not_null<Ui::RpWidget*> card) {
 
 } // namespace
 
+// После изменения, которое работает только с новым запуском: окно с
+// кнопками «Отмена» и «Перезагрузить». Ползунок шлёт много изменений
+// подряд, поэтому спрашиваем один раз, когда человек остановился.
+void AskForRestart() {
+	static auto generation = 0;
+	static auto shown = false;
+	const auto mine = ++generation;
+	QTimer::singleShot(900, [=] {
+		if (mine != generation || shown) {
+			return;
+		}
+		const auto window = Core::App().activeWindow();
+		if (!window) {
+			return;
+		}
+		shown = true;
+		window->show(Ui::MakeConfirmBox({
+			.text = TextWithEntities{ U("Для применения этого изменения "
+				"нужно перезагрузить клиент.") },
+			.confirmed = [](Fn<void()> close) {
+				shown = false;
+				close();
+				Core::Restart();
+			},
+			.cancelled = [](Fn<void()> close) {
+				shown = false;
+				close();
+			},
+			.confirmText = U("Перезагрузить"),
+			.cancelText = U("Отмена"),
+			.title = rpl::single(U("Нужна перезагрузка")),
+		}));
+	});
+}
+
 // К какой странице настроек mokaGram относится раздел.
 [[nodiscard]] QString PageOfGroup(const Group &group) {
 	if (group.entries.empty()) {
@@ -1569,8 +1604,7 @@ void CustomizeBox(
 				name,
 				[=] {
 					if (restart) {
-						toast(U("Изменение вступит в силу "
-							"после перезапуска клиента"));
+						AskForRestart();
 					}
 				}));
 			state->sections[s].items.push_back(int(state->rows.size()) - 1);
