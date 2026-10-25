@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_inner_widget.h"
+#include "base/call_delayed.h"
 
 #include "mokagram/history/mokagram_history.h"
 
@@ -538,6 +539,12 @@ InnerWidget::InnerWidget(
 		refreshDialogRow({ update.item->history(), update.item->fullId() });
 	}, lifetime());
 
+	struct RepaintThrottle {
+		crl::time last = 0;
+		bool scheduled = false;
+		bool dirty = false;
+	};
+	const auto throttle = std::make_shared<RepaintThrottle>();
 	session().changes().entryUpdates(
 		Data::EntryUpdate::Flag::Repaint
 		| Data::EntryUpdate::Flag::Height
@@ -549,6 +556,27 @@ InnerWidget::InnerWidget(
 			}
 			return;
 		}
+		// Mokagram: при потоке сообщений строки перерисовываются не чаще
+		// раза в 100 мс; всё, что накопилось, дорисовывается одним проходом.
+		const auto now = crl::now();
+		if (now - throttle->last < 100) {
+			throttle->dirty = true;
+			if (!throttle->scheduled) {
+				throttle->scheduled = true;
+				base::call_delayed(
+					std::max<crl::time>(100 - (now - throttle->last), 16),
+					this,
+					[=] {
+						throttle->scheduled = false;
+						throttle->last = crl::now();
+						if (std::exchange(throttle->dirty, false)) {
+							this->QWidget::update();
+						}
+					});
+			}
+			return;
+		}
+		throttle->last = now;
 		const auto repaintId = (_state == WidgetState::Default)
 			? _filterId
 			: 0;

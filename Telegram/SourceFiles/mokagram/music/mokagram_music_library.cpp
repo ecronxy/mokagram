@@ -1,4 +1,5 @@
 #include "mokagram/music/mokagram_music_library.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "base/random.h"
 #include "rpl/event_stream.h"
@@ -348,7 +349,7 @@ void BuildForYou(
 		int count,
 		Fn<void(std::vector<Track>, QString)> done) {
 	if (!HasTaste()) {
-		done({}, QString::fromUtf8("Пока нечего анализировать. Поставьте сердечко нескольким трекам и послушайте музыку: подборка подстроится под вас."));
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Пока нечего анализировать. Поставьте сердечко нескольким трекам и послушайте музыку: подборка подстроится под вас.")));
 		return;
 	}
 	const auto profile = std::make_shared<Profile>(BuildProfile());
@@ -433,7 +434,7 @@ void BuildForYou(
 			scored.push_back({ t, score, artistAffinity > 0.3 });
 		}
 		if (scored.empty()) {
-			done({}, QString::fromUtf8("Не нашлось подходящих треков. Попробуйте позже."));
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не нашлось подходящих треков. Попробуйте позже.")));
 			return;
 		}
 		// Жадный отбор: штрафы за повтор исполнителя и жанра, доля нового ~30%.
@@ -533,7 +534,7 @@ void BuildForYou(
 		});
 	}
 	if (jobs.empty()) {
-		done({}, QString::fromUtf8("Мало данных о вкусе: послушайте и полайкайте ещё несколько треков."));
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Мало данных о вкусе: послушайте и полайкайте ещё несколько треков.")));
 		return;
 	}
 	collector->pending = int(jobs.size());

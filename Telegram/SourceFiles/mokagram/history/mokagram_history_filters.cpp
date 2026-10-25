@@ -1,5 +1,6 @@
 // Mokagram: фильтры сообщений, реализация.
 #include "mokagram/history/mokagram_history_filters.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/plugins/mokagram_plugin_api.h"
 
 #include "mokagram/settings/mokagram_settings.h"
@@ -270,9 +271,9 @@ void Save() {
 
 QString ValidateFilter(const QString &pattern, bool ignoreCase) {
 	if (pattern.isEmpty()) {
-		return QString::fromUtf8("Пустой шаблон");
+		return QString::fromUtf8(Mokagram::Lang::Tr("Пустой шаблон"));
 	} else if (pattern.size() > kFilterMaxPattern) {
-		return QString::fromUtf8("Слишком длинный шаблон");
+		return QString::fromUtf8(Mokagram::Lang::Tr("Слишком длинный шаблон"));
 	}
 	const auto regex = Make(pattern, ignoreCase);
 	return regex.isValid() ? QString() : regex.errorString();

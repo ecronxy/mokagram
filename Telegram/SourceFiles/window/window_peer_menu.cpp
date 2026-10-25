@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/misc/mokagram_misc.h"
@@ -1117,7 +1118,7 @@ void Filler::addMokagramHistory() {
 	const auto controller = _controller;
 	const auto peerId = _peer->id.value;
 	_addAction(
-		QString::fromUtf8("История удалённых и правок"),
+		QString::fromUtf8(Mokagram::Lang::Tr("История удалённых и правок")),
 		[=] {
 			Mokagram::History::ShowHistoryBox(
 				controller,
@@ -1135,7 +1136,7 @@ void Filler::addMokagramGhost() {
 	}
 	const auto peer = _peer;
 	_addAction(
-		QString::fromUtf8("Прочитать для собеседника"),
+		QString::fromUtf8(Mokagram::Lang::Tr("Прочитать для собеседника")),
 		[=] {
 			if (const auto history = peer->owner().historyLoaded(peer)) {
 				Mokagram::Ghost::ReadNow(history);
@@ -1144,8 +1145,8 @@ void Filler::addMokagramGhost() {
 		&st::menuIconShowInChat);
 	_addAction(
 		Mokagram::Ghost::IsReadException(peer)
-			? QString::fromUtf8("Призрак: снова скрывать прочтение")
-			: QString::fromUtf8("Призрак: не скрывать прочтение здесь"),
+			? QString::fromUtf8(Mokagram::Lang::Tr("Призрак: снова скрывать прочтение"))
+			: QString::fromUtf8(Mokagram::Lang::Tr("Призрак: не скрывать прочтение здесь")),
 		[=] { Mokagram::Ghost::ToggleReadException(peer); },
 		&st::menuIconRestore);
 }
@@ -1171,7 +1172,7 @@ void Filler::addMokagramDeleteMine() {
 	const auto peer = _peer;
 	const auto controller = _controller;
 	_addAction(
-		QString::fromUtf8("Удалить все мои сообщения"),
+		QString::fromUtf8(Mokagram::Lang::Tr("Удалить все мои сообщения")),
 		[=] { Mokagram::History::ShowDeleteMyMessages(controller, peer); },
 		&st::menuIconDelete);
 }
@@ -1183,7 +1184,7 @@ void Filler::addMokagramToStart() {
 	const auto peer = _peer;
 	const auto controller = _controller;
 	_addAction(
-		QString::fromUtf8("В начало чата"),
+		QString::fromUtf8(Mokagram::Lang::Tr("В начало чата")),
 		[=] {
 			controller->showPeerHistory(
 				peer,
@@ -1204,8 +1205,8 @@ void Filler::addMokagramGuard() {
 	const auto peer = _peer;
 	_addAction(
 		Mokagram::Guard::ThreatExempt(peer)
-			? QString::fromUtf8("Угрозы: проверять снова")
-			: QString::fromUtf8("Угрозы: не проверять его"),
+			? QString::fromUtf8(Mokagram::Lang::Tr("Угрозы: проверять снова"))
+			: QString::fromUtf8(Mokagram::Lang::Tr("Угрозы: не проверять его")),
 		[=] { Mokagram::Guard::ToggleThreatExempt(peer); },
 		&st::menuIconRestore);
 }

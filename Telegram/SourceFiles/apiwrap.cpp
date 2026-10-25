@@ -4775,7 +4775,8 @@ void ApiWrap::sendMessage(
 	Mokagram::Snippets::Expand(message.textWithTags);
 	if (!Mokagram::Plugins::RunSendMessageHook(
 			message.textWithTags,
-			peer->id.value)) {
+			peer->id.value,
+			message.action.replyTo.messageId)) {
 		return;
 	}
 	const auto &textWithTags = message.textWithTags;

@@ -1,4 +1,5 @@
 #include "mokagram/quote/mokagram_quote.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "base/call_delayed.h"
 #include "core/application.h"
@@ -301,7 +302,7 @@ struct Options {
 		last = who->id;
 		line.text = item->originalText().text;
 		if (line.text.isEmpty()) {
-			line.text = U("[вложение]");
+			line.text = U(Mokagram::Lang::Tr("[вложение]"));
 		}
 		line.time = QDateTime::fromSecsSinceEpoch(item->date()).toString("HH:mm");
 		if (line.first) {
@@ -319,13 +320,13 @@ struct Gradient {
 
 const std::vector<Gradient> &Gradients() {
 	static const auto result = std::vector<Gradient>{
-		{ "Закат", QColor(0xf6, 0xd3, 0x65), QColor(0xfd, 0xa0, 0x85) },
-		{ "Океан", QColor(0x4f, 0xac, 0xfe), QColor(0x00, 0xc6, 0xfb) },
-		{ "Ночь", QColor(0x0f, 0x20, 0x27), QColor(0x2c, 0x53, 0x64) },
-		{ "Фиолет", QColor(0x8e, 0x2d, 0xe2), QColor(0x4a, 0x00, 0xe0) },
-		{ "Мята", QColor(0x11, 0x99, 0x8e), QColor(0x38, 0xef, 0x7d) },
-		{ "Графит", QColor(0x23, 0x25, 0x26), QColor(0x41, 0x43, 0x45) },
-		{ "Белый", QColor(0xf5, 0xf7, 0xfa), QColor(0xc3, 0xcf, 0xe2) },
+		{ Mokagram::Lang::Tr("Закат"), QColor(0xf6, 0xd3, 0x65), QColor(0xfd, 0xa0, 0x85) },
+		{ Mokagram::Lang::Tr("Океан"), QColor(0x4f, 0xac, 0xfe), QColor(0x00, 0xc6, 0xfb) },
+		{ Mokagram::Lang::Tr("Ночь"), QColor(0x0f, 0x20, 0x27), QColor(0x2c, 0x53, 0x64) },
+		{ Mokagram::Lang::Tr("Фиолет"), QColor(0x8e, 0x2d, 0xe2), QColor(0x4a, 0x00, 0xe0) },
+		{ Mokagram::Lang::Tr("Мята"), QColor(0x11, 0x99, 0x8e), QColor(0x38, 0xef, 0x7d) },
+		{ Mokagram::Lang::Tr("Графит"), QColor(0x23, 0x25, 0x26), QColor(0x41, 0x43, 0x45) },
+		{ Mokagram::Lang::Tr("Белый"), QColor(0xf5, 0xf7, 0xfa), QColor(0xc3, 0xcf, 0xe2) },
 	};
 	return result;
 }
@@ -727,7 +728,7 @@ protected:
 } // namespace
 
 void RegisterSettings() {
-	const auto section = U("Картинка-цитата");
+	const auto section = U(Mokagram::Lang::Tr("Картинка-цитата"));
 	const auto add = [&](S::Entry entry) {
 		entry.section = section;
 		entry.category = u"look"_q;
@@ -740,42 +741,42 @@ void RegisterSettings() {
 	}
 	add({
 		.key = u"quote.bg"_q,
-		.title = U("Фон картинки"),
-		.description = U("Меню «Скриншот сообщений» собирает картинку из сообщений как в чате."),
+		.title = U(Mokagram::Lang::Tr("Фон картинки")),
+		.description = U(Mokagram::Lang::Tr("Меню «Скриншот сообщений» собирает картинку из сообщений как в чате.")),
 		.kind = S::Kind::Choice,
 		.defaultValue = 5,
 		.choices = bgs,
 	});
 	add({
 		.key = u"quote.custom1"_q,
-		.title = U("Свой фон: цвет 1"),
+		.title = U(Mokagram::Lang::Tr("Свой фон: цвет 1")),
 		.kind = S::Kind::Color,
 		.defaultValue = QString(u"#ff9a8b"_q),
 	});
 	add({
 		.key = u"quote.custom2"_q,
-		.title = U("Свой фон: цвет 2"),
+		.title = U(Mokagram::Lang::Tr("Свой фон: цвет 2")),
 		.kind = S::Kind::Color,
 		.defaultValue = QString(u"#6a11cb"_q),
 	});
 	add({
 		.key = u"quote.theme"_q,
-		.title = U("Карточка"),
+		.title = U(Mokagram::Lang::Tr("Карточка")),
 		.kind = S::Kind::Choice,
 		.defaultValue = 0,
-		.choices = { U("Тёмная"), U("Светлая"), U("Без карточки") },
+		.choices = { U(Mokagram::Lang::Tr("Тёмная")), U(Mokagram::Lang::Tr("Светлая")), U(Mokagram::Lang::Tr("Без карточки")) },
 	});
 	add({
 		.key = u"quote.quality"_q,
-		.title = U("Качество картинки"),
-		.description = U("Во сколько раз больше, чем на экране. Выше: чётче и тяжелее."),
+		.title = U(Mokagram::Lang::Tr("Качество картинки")),
+		.description = U(Mokagram::Lang::Tr("Во сколько раз больше, чем на экране. Выше: чётче и тяжелее.")),
 		.kind = S::Kind::Choice,
 		.defaultValue = 1,
 		.choices = { U("2×"), U("3×"), U("4×") },
 	});
 	add({
 		.key = u"quote.padding"_q,
-		.title = U("Отступ от края, px"),
+		.title = U(Mokagram::Lang::Tr("Отступ от края, px")),
 		.kind = S::Kind::Int,
 		.defaultValue = 20,
 		.minValue = 0,
@@ -783,20 +784,20 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"quote.watermark"_q,
-		.title = U("Подпись mokaGram на скриншоте"),
+		.title = U(Mokagram::Lang::Tr("Подпись mokaGram на скриншоте")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
 	add({
 		.key = u"quote.shadow"_q,
-		.title = U("Тень под карточкой"),
+		.title = U(Mokagram::Lang::Tr("Тень под карточкой")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 	});
 	add({
 		.key = u"quote.width"_q,
-		.title = U("Ширина текстовой цитаты, px"),
-		.description = U("Только если сообщения не на экране и рисуются как текст."),
+		.title = U(Mokagram::Lang::Tr("Ширина текстовой цитаты, px")),
+		.description = U(Mokagram::Lang::Tr("Только если сообщения не на экране и рисуются как текст.")),
 		.kind = S::Kind::Int,
 		.defaultValue = 640,
 		.minValue = 360,
@@ -1014,7 +1015,7 @@ void ShowCustomBg(Fn<void()> refresh) {
 		return;
 	}
 	window->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(U("Свой фон")));
+		box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Свой фон"))));
 		box->setWidth(360);
 		const auto content = box->verticalLayout();
 		const auto add = [&](const QString &key, const QString &label) {
@@ -1033,9 +1034,9 @@ void ShowCustomBg(Fn<void()> refresh) {
 				}
 			}, field->lifetime());
 		};
-		add(u"quote.custom1"_q, U("Цвет 1, например #ff9a8b"));
-		add(u"quote.custom2"_q, U("Цвет 2, например #6a11cb"));
-		box->addButton(rpl::single(U("Готово")), [=] { box->closeBox(); });
+		add(u"quote.custom1"_q, U(Mokagram::Lang::Tr("Цвет 1, например #ff9a8b")));
+		add(u"quote.custom2"_q, U(Mokagram::Lang::Tr("Цвет 2, например #6a11cb")));
+		box->addButton(rpl::single(U(Mokagram::Lang::Tr("Готово"))), [=] { box->closeBox(); });
 	}));
 }
 
@@ -1067,7 +1068,7 @@ void ShowQuoteBoxNow(
 		content->save(u"/tmp/moka_quote_content.png"_q, "PNG");
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(U("Скриншот сообщений")));
+		box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Скриншот сообщений"))));
 		box->setWidth(620);
 		const auto layout = box->verticalLayout();
 		const auto masks = std::make_shared<std::vector<MaskRect>>();
@@ -1161,12 +1162,12 @@ void ShowQuoteBoxNow(
 		const auto hint = layout->add(
 			object_ptr<Ui::FlatLabel>(
 				layout,
-				U("Проведи мышью по картинке, чтобы скрыть имя или аватарку."),
+				U(Mokagram::Lang::Tr("Проведи мышью по картинке, чтобы скрыть имя или аватарку.")),
 				st::boxLabel),
 			QMargins(24, 0, 24, 8));
 		Q_UNUSED(hint);
 
-		Ui::AddSubsectionTitle(layout, rpl::single(U("Фон")));
+		Ui::AddSubsectionTitle(layout, rpl::single(U(Mokagram::Lang::Tr("Фон"))));
 		layout->add(
 			object_ptr<Swatches>(layout, S::Int(u"quote.bg"_q), [=](int i) {
 				S::SetInt(u"quote.bg"_q, i);
@@ -1176,28 +1177,28 @@ void ShowQuoteBoxNow(
 				}
 			}),
 			QMargins(24, 4, 24, 8));
-		Ui::AddSubsectionTitle(layout, rpl::single(U("Карточка")));
+		Ui::AddSubsectionTitle(layout, rpl::single(U(Mokagram::Lang::Tr("Карточка"))));
 		layout->add(
-			object_ptr<Pills>(layout, QStringList{ U("Тёмная"), U("Светлая"), U("Без карточки") }, S::Int(u"quote.theme"_q), [=](int i) {
+			object_ptr<Pills>(layout, QStringList{ U(Mokagram::Lang::Tr("Тёмная")), U(Mokagram::Lang::Tr("Светлая")), U(Mokagram::Lang::Tr("Без карточки")) }, S::Int(u"quote.theme"_q), [=](int i) {
 				S::SetInt(u"quote.theme"_q, i);
 				refresh();
 			}),
 			QMargins(24, 4, 24, 8));
-		Ui::AddSubsectionTitle(layout, rpl::single(U("Чем скрывать")));
+		Ui::AddSubsectionTitle(layout, rpl::single(U(Mokagram::Lang::Tr("Чем скрывать"))));
 		layout->add(
-			object_ptr<Pills>(layout, QStringList{ U("Размытие"), U("Пиксели"), U("Заливка") }, 0, [=](int i) {
+			object_ptr<Pills>(layout, QStringList{ U(Mokagram::Lang::Tr("Размытие")), U(Mokagram::Lang::Tr("Пиксели")), U(Mokagram::Lang::Tr("Заливка")) }, 0, [=](int i) {
 				*maskKind = i;
 			}),
 			QMargins(24, 4, 24, 8));
 		const auto shadow = layout->add(
-			object_ptr<Ui::Checkbox>(layout, U("Тень под карточкой"), S::Bool(u"quote.shadow"_q), st::defaultCheckbox),
+			object_ptr<Ui::Checkbox>(layout, U(Mokagram::Lang::Tr("Тень под карточкой")), S::Bool(u"quote.shadow"_q), st::defaultCheckbox),
 			QMargins(24, 2, 24, 8));
 		shadow->checkedChanges() | rpl::on_next([=](bool on) {
 			S::SetBool(u"quote.shadow"_q, on);
 			refresh();
 		}, shadow->lifetime());
 		const auto watermark = layout->add(
-			object_ptr<Ui::Checkbox>(layout, U("Подпись mokaGram"), S::Bool(u"quote.watermark"_q), st::defaultCheckbox),
+			object_ptr<Ui::Checkbox>(layout, U(Mokagram::Lang::Tr("Подпись mokaGram")), S::Bool(u"quote.watermark"_q), st::defaultCheckbox),
 			QMargins(24, 2, 24, 8));
 		watermark->checkedChanges() | rpl::on_next([=](bool on) {
 			S::SetBool(u"quote.watermark"_q, on);
@@ -1209,21 +1210,21 @@ void ShowQuoteBoxNow(
 		}, preview->lifetime());
 		refresh();
 
-		box->addButton(rpl::single(U("Копировать")), [=] {
+		box->addButton(rpl::single(U(Mokagram::Lang::Tr("Копировать"))), [=] {
 			QGuiApplication::clipboard()->setImage(result->image);
-			controller->showToast(U("Картинка скопирована"));
+			controller->showToast(U(Mokagram::Lang::Tr("Картинка скопирована")));
 		});
-		box->addButton(rpl::single(U("Сохранить")), [=] {
+		box->addButton(rpl::single(U(Mokagram::Lang::Tr("Сохранить"))), [=] {
 			auto dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
 			QDir().mkpath(dir);
 			const auto path = dir + u"/mokagram_"_q
 				+ QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")
 				+ u".png"_q;
 			controller->showToast(result->image.save(path, "PNG")
-				? U("Сохранено: ") + path
-				: U("Не получилось сохранить"));
+				? U(Mokagram::Lang::Tr("Сохранено: ")) + path
+				: U(Mokagram::Lang::Tr("Не получилось сохранить")));
 		});
-		box->addLeftButton(rpl::single(U("Отменить скрытие")), [=] {
+		box->addLeftButton(rpl::single(U(Mokagram::Lang::Tr("Отменить скрытие"))), [=] {
 			if (!masks->empty()) {
 				masks->pop_back();
 				refresh();

@@ -1,6 +1,7 @@
 // Mokagram: хост плагинов (встроенный Python).
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/plugins/mokagram_plugins.h"
 
@@ -28,6 +29,9 @@ namespace {
 #include "mokagram/plugins/py/host.inc"
 #include "mokagram/plugins/py/base_plugin.inc"
 #include "mokagram/plugins/py/sdk_api.inc"
+#include "mokagram/plugins/py/tl.inc"
+#include "mokagram/plugins/py/fw.inc"
+#include "mokagram/plugins/py/tl_schema.inc"
 
 constexpr auto kQueueLimit = size_t(256);
 constexpr auto kMaxHookBytes = size_t(1024 * 1024);
@@ -71,7 +75,7 @@ bool EnsurePython(const LogFn &log) {
 	if (!Py_IsInitialized()) {
 		Py_InitializeEx(0);
 		if (!Py_IsInitialized()) {
-			if (log) log("python: не удалось инициализировать");
+			if (log) log(Mokagram::Lang::Tr("python: не удалось инициализировать"));
 			return false;
 		}
 		if (log) log(std::string("python ") + Py_GetVersion());
@@ -254,7 +258,7 @@ PyMethodDef NativeMethod = {
 	"_moka_native",
 	NativeCall,
 	METH_VARARGS,
-	"Вызов клиента из хоста плагинов",
+	Mokagram::Lang::Tr("Вызов клиента из хоста плагинов"),
 };
 
 bool LoadHelpers() {
@@ -271,7 +275,8 @@ bool LoadHelpers() {
 	PyDict_SetItemString(globals, "_moka_native", native);
 	Py_DECREF(native);
 	if (PyRun_SimpleString(kTlNamesScript) != 0
-		|| PyRun_SimpleString(kHostScript) != 0) {
+		|| PyRun_SimpleString(kHostScript) != 0
+		|| PyRun_SimpleString(kFwScript) != 0) {
 		return false;
 	}
 	_helpersLoaded = true;
@@ -360,7 +365,7 @@ std::string PluginsDir() {
 int Start(LogFn log) {
 	if (const auto env = std::getenv("MOKAGRAM_PLUGINS")) {
 		if (std::string(env) == "0") {
-			if (log) log("plugins: отключены переменной MOKAGRAM_PLUGINS=0");
+			if (log) log(Mokagram::Lang::Tr("plugins: отключены переменной MOKAGRAM_PLUGINS=0"));
 			return 0;
 		}
 	}
@@ -369,7 +374,7 @@ int Start(LogFn log) {
 	}
 	const auto gil = Gil();
 	if (!LoadHelpers()) {
-		if (log) log("python: ошибка загрузки хоста плагинов");
+		if (log) log(Mokagram::Lang::Tr("python: ошибка загрузки хоста плагинов"));
 		return -1;
 	}
 	if (_started) {
@@ -383,8 +388,11 @@ int Start(LogFn log) {
 		PluginsDir(),
 		std::string(kSdkScript),
 		std::string(kApiScript),
+		std::string(kTlScript),
+		std::string(kTlSchema),
 	});
 	Drain(log);
+	QueueEvent("app_event", R"({"event":"START"})");
 	if (log) log("plugins loaded: " + count);
 	return count.empty() ? -1 : std::atoi(count.c_str());
 }
@@ -500,6 +508,25 @@ std::string CallTextHook(const std::string &messageJson, LogFn log) {
 	auto result = CallStr("_moka_text_hook", { messageJson });
 	Drain(log);
 	return result;
+}
+
+std::string CallBadgeHook(const std::string &messageJson, LogFn log) {
+	if (!_started) {
+		return {};
+	}
+	const auto gil = Gil();
+	auto result = CallStr("_moka_badge_hook", { messageJson });
+	Drain(log);
+	return result;
+}
+
+void RestoreBackupFile(const std::string &path, LogFn log) {
+	if (!_started) {
+		return;
+	}
+	const auto gil = Gil();
+	CallStr("_moka_restore", { path });
+	Drain(log);
 }
 
 bool Invoke(
@@ -618,7 +645,7 @@ void QueueHook(
 	}
 	_queueCv.notify_one();
 	if (dropped && (dropped % 100) == 1 && _logFn) {
-		_logFn("plugin: очередь хуков переполнена, отброшено событий: "
+		_logFn(Mokagram::Lang::Tr("plugin: очередь хуков переполнена, отброшено событий: ")
 			+ std::to_string(dropped));
 	}
 }

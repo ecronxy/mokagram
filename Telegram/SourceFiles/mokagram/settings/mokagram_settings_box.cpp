@@ -2,7 +2,9 @@
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
+#include "ui/power_saving.h"
 #include "mokagram/stars/mokagram_stars_stats.h"
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/quote/mokagram_quote.h"
@@ -119,12 +121,12 @@ struct Category {
 // Порядок разделов в окне и цвет значков.
 [[nodiscard]] const std::vector<Category> &Categories() {
 	static const auto result = std::vector<Category>{
-		{ "privacy", "Приватность", QColor(0x34, 0xC7, 0x59) },
-		{ "chats", "Чаты", QColor(0x0A, 0x84, 0xFF) },
-		{ "accounts", "Аккаунты", QColor(0xAF, 0x52, 0xDE) },
-		{ "look", "Внешний вид", QColor(0xFF, 0x37, 0x5F) },
-		{ "plugins", "Плагины", QColor(0xFF, 0x9F, 0x0A) },
-		{ "other", "Прочее", QColor(0x8E, 0x8E, 0x93) },
+		{ "privacy", Mokagram::Lang::Tr("Приватность"), QColor(0x34, 0xC7, 0x59) },
+		{ "chats", Mokagram::Lang::Tr("Чаты"), QColor(0x0A, 0x84, 0xFF) },
+		{ "accounts", Mokagram::Lang::Tr("Аккаунты"), QColor(0xAF, 0x52, 0xDE) },
+		{ "look", Mokagram::Lang::Tr("Внешний вид"), QColor(0xFF, 0x37, 0x5F) },
+		{ "plugins", Mokagram::Lang::Tr("Плагины"), QColor(0xFF, 0x9F, 0x0A) },
+		{ "other", Mokagram::Lang::Tr("Прочее"), QColor(0x8E, 0x8E, 0x93) },
 	};
 	return result;
 }
@@ -156,7 +158,7 @@ struct Category {
 	if (entry.key.startsWith(u"plugin."_q)) {
 		return entry.key.section('.', 1, 1);
 	}
-	return U("Прочее");
+	return U(Mokagram::Lang::Tr("Прочее"));
 }
 
 [[nodiscard]] const style::icon &IconByName(const QString &name) {
@@ -232,6 +234,13 @@ struct Category {
 		{ "history.sqlite", "📊" },
 		{ "history.filters_enabled", "📑" },
 		{ "hide_blocked", "🚫" },
+		{ "lag.idle", "💤" },
+		{ "lag.toaster", "⚙️" },
+		{ "lag.emoji_cap", "😜" },
+		{ "plugins.prefix", "🔧" },
+		{ "plugins.dev_reload", "⚙️" },
+		{ "plugins.autoupdate", "🔼" },
+		{ "lag.sticker_cap", "🎞" },
 		{ "lag.enabled", "📈" },
 		{ "lag.level", "📊" },
 		{ "lag.sensitivity", "📐" },
@@ -930,8 +939,8 @@ void ShowColorBox(const QString &title, const QString &key) {
 				grid->update();
 			}
 		}, field->lifetime());
-		box->addButton(rpl::single(U("Готово")), [=] { box->closeBox(); });
-		box->addLeftButton(rpl::single(U("По теме")), [=] {
+		box->addButton(rpl::single(U(Mokagram::Lang::Tr("Готово"))), [=] { box->closeBox(); });
+		box->addLeftButton(rpl::single(U(Mokagram::Lang::Tr("По теме"))), [=] {
 			SetString(key, QString());
 			field->setText(QString());
 			grid->update();
@@ -971,7 +980,7 @@ void ShowColorBox(const QString &title, const QString &key) {
 	}
 	if (entry.requiresRestart) {
 		description += (description.isEmpty() ? QString() : u"\n"_q)
-			+ U("Начнёт работать после перезапуска клиента.");
+			+ U(Mokagram::Lang::Tr("Начнёт работать после перезапуска клиента."));
 	}
 	const auto titleText = entry.title;
 	const auto title = Ui::CreateChild<Ui::FlatLabel>(
@@ -1075,7 +1084,7 @@ void ShowColorBox(const QString &title, const QString &key) {
 	} break;
 	case Kind::Color: {
 		const auto shown = [=](const QString &value) {
-			return value.isEmpty() ? U("По теме") : value.toUpper();
+			return value.isEmpty() ? U(Mokagram::Lang::Tr("По теме")) : value.toUpper();
 		};
 		valueLabel = Ui::CreateChild<Ui::FlatLabel>(
 			row,
@@ -1420,8 +1429,7 @@ void AskForRestart() {
 		}
 		shown = true;
 		window->show(Ui::MakeConfirmBox({
-			.text = TextWithEntities{ U("Для применения этого изменения "
-				"нужно перезагрузить клиент.") },
+			.text = TextWithEntities{ U(Mokagram::Lang::Tr("Для применения этого изменения нужно перезагрузить клиент.")) },
 			.confirmed = [](Fn<void()> close) {
 				shown = false;
 				close();
@@ -1431,9 +1439,9 @@ void AskForRestart() {
 				shown = false;
 				close();
 			},
-			.confirmText = U("Перезагрузить"),
-			.cancelText = U("Отмена"),
-			.title = rpl::single(U("Нужна перезагрузка")),
+			.confirmText = U(Mokagram::Lang::Tr("Перезагрузить")),
+			.cancelText = U(Mokagram::Lang::Tr("Отмена")),
+			.title = rpl::single(U(Mokagram::Lang::Tr("Нужна перезагрузка"))),
 		}));
 	});
 }
@@ -1461,7 +1469,7 @@ void AskForRestart() {
 	} else if (starts({ "player.", "lyrics." })) {
 		return u"music"_q;
 	} else if (starts({ "lag.", "misc.ping" })
-		|| group.name == U("Аккаунты")) {
+		|| group.name == U(Mokagram::Lang::Tr("Аккаунты"))) {
 		return u"system"_q;
 	} else if (starts({ "chats.", "fx." })) {
 		return u"chats"_q;
@@ -1472,14 +1480,14 @@ void AskForRestart() {
 }
 
 [[nodiscard]] QString PageTitle(const QString &page) {
-	if (page == u"privacy"_q) return U("Приватность");
-	if (page == u"security"_q) return U("Безопасность");
-	if (page == u"history"_q) return U("Удалёнки");
-	if (page == u"music"_q) return U("Музыка");
-	if (page == u"system"_q) return U("Система");
-	if (page == u"chats"_q) return U("Чаты");
-	if (page == u"tools"_q) return U("Инструменты");
-	return U("Кастомизация");
+	if (page == u"privacy"_q) return U(Mokagram::Lang::Tr("Приватность"));
+	if (page == u"security"_q) return U(Mokagram::Lang::Tr("Безопасность"));
+	if (page == u"history"_q) return U(Mokagram::Lang::Tr("Удалёнки"));
+	if (page == u"music"_q) return U(Mokagram::Lang::Tr("Музыка"));
+	if (page == u"system"_q) return U(Mokagram::Lang::Tr("Система"));
+	if (page == u"chats"_q) return U(Mokagram::Lang::Tr("Чаты"));
+	if (page == u"tools"_q) return U(Mokagram::Lang::Tr("Инструменты"));
+	return U(Mokagram::Lang::Tr("Кастомизация"));
 }
 
 void CustomizeBox(
@@ -1539,7 +1547,7 @@ void CustomizeBox(
 	const auto field = Ui::CreateChild<Ui::InputField>(
 		header,
 		fieldStyle,
-		rpl::single(U("Найти настройку")));
+		rpl::single(U(Mokagram::Lang::Tr("Найти настройку"))));
 	pill->hide();
 	field->hide();
 	header->widthValue() | rpl::on_next([=](int width) {
@@ -1609,7 +1617,7 @@ void CustomizeBox(
 		content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				U("Пока нет настроек."),
+				U(Mokagram::Lang::Tr("Пока нет настроек.")),
 				st::boxDividerLabel),
 			QMargins(24, 16, 24, 8),
 			style::al_top);
@@ -1638,7 +1646,7 @@ void CustomizeBox(
 		MakeTransparent(headLabel);
 		const auto resetSection = MakeResetButton(
 			head,
-			U("Сбросить"),
+			U(Mokagram::Lang::Tr("Сбросить")),
 			[=] {
 				for (const auto &entry : Entries()) {
 					if (SectionOf(entry) == name) {
@@ -1695,7 +1703,7 @@ void CustomizeBox(
 			content,
 			object_ptr<Ui::FlatLabel>(
 				content,
-				U("Ничего не найдено"),
+				U(Mokagram::Lang::Tr("Ничего не найдено")),
 				TextLabelStyle()),
 			QMargins(24, 24, 24, 8)));
 	state->empty->toggle(false, anim::type::instant);
@@ -1713,7 +1721,7 @@ void CustomizeBox(
 		const auto head = inner->add(
 			object_ptr<Ui::FlatLabel>(
 				inner,
-				U("ДАННЫЕ"),
+				U(Mokagram::Lang::Tr("ДАННЫЕ")),
 				HeadLabelStyle()),
 			QMargins(kPad, 20, kPad, 6));
 		MakeTransparent(head);
@@ -1723,9 +1731,8 @@ void CustomizeBox(
 		const auto grey = Categories().back().color;
 		AddActionRow(
 			actions,
-			U("Сохранить настройки в файл"),
-			U("Все ваши переключатели одним файлом, "
-				"чтобы перенести на другой компьютер."),
+			U(Mokagram::Lang::Tr("Сохранить настройки в файл")),
+			U(Mokagram::Lang::Tr("Все ваши переключатели одним файлом, чтобы перенести на другой компьютер.")),
 			st::menuIconExport,
 			grey,
 			true,
@@ -1733,32 +1740,32 @@ void CustomizeBox(
 				const auto initial = QDir::homePath() + u"/moka.mokaset"_q;
 				FileDialog::GetWritePath(
 					box.get(),
-					U("Экспорт настроек"),
-					U("Набор настроек mokaGram (*.mokaset)"),
+					U(Mokagram::Lang::Tr("Экспорт настроек")),
+					U(Mokagram::Lang::Tr("Набор настроек mokaGram (*.mokaset)")),
 					initial,
 					[=](QString &&path) {
 						auto file = QFile(path);
 						if (file.open(QIODevice::WriteOnly)
 							&& file.write(Export()) >= 0) {
-							toast(U("Настройки сохранены в файл"));
+							toast(U(Mokagram::Lang::Tr("Настройки сохранены в файл")));
 						} else {
-							toast(U("Не удалось записать файл"));
+							toast(U(Mokagram::Lang::Tr("Не удалось записать файл")));
 						}
 					});
 			},
 			QString::fromUtf8("📤"));
 		AddActionRow(
 			actions,
-			U("Загрузить настройки из файла"),
-			U("Перед применением покажем, сколько значений изменится."),
+			U(Mokagram::Lang::Tr("Загрузить настройки из файла")),
+			U(Mokagram::Lang::Tr("Перед применением покажем, сколько значений изменится.")),
 			st::menuIconDownload,
 			grey,
 			false,
 			[=] {
 				FileDialog::GetOpenPath(
 					box.get(),
-					U("Импорт настроек"),
-					U("Набор настроек mokaGram (*.mokaset)"),
+					U(Mokagram::Lang::Tr("Импорт настроек")),
+					U(Mokagram::Lang::Tr("Набор настроек mokaGram (*.mokaset)")),
 					[=](FileDialog::OpenResult &&result) {
 						auto data = result.remoteContent;
 						if (data.isEmpty() && !result.paths.isEmpty()) {
@@ -1770,22 +1777,21 @@ void CustomizeBox(
 						auto summary = ImportSummary();
 						auto error = QString();
 						if (data.isEmpty()) {
-							toast(U("Не удалось прочитать файл"));
+							toast(U(Mokagram::Lang::Tr("Не удалось прочитать файл")));
 							return;
 						} else if (!PreviewImport(data, &summary, &error)) {
 							toast(error);
 							return;
 						}
-						auto text = U("Будет изменено настроек: ")
+						auto text = U(Mokagram::Lang::Tr("Будет изменено настроек: "))
 							+ QString::number(summary.changed) + '.';
 						if (summary.unknown) {
-							text += U("\nНеизвестных (для плагинов, "
-								"которых нет): ")
+							text += U(Mokagram::Lang::Tr("\nНеизвестных (для плагинов, которых нет): "))
 								+ QString::number(summary.unknown)
-								+ U(", они сохранятся.");
+								+ U(Mokagram::Lang::Tr(", они сохранятся."));
 						}
 						if (summary.invalid) {
-							text += U("\nПропущено неверных значений: ")
+							text += U(Mokagram::Lang::Tr("\nПропущено неверных значений: "))
 								+ QString::number(summary.invalid) + '.';
 						}
 						const auto strong = weak.get();
@@ -1799,14 +1805,14 @@ void CustomizeBox(
 								.confirmed = [=](Fn<void()> closeConfirm) {
 									auto failure = QString();
 									if (Import(data, &failure)) {
-										toast(U("Настройки применены"));
+										toast(U(Mokagram::Lang::Tr("Настройки применены")));
 									} else {
 										toast(failure);
 									}
 									closeConfirm();
 								},
-								.confirmText = U("Применить"),
-								.title = U("Импорт настроек"),
+								.confirmText = U(Mokagram::Lang::Tr("Применить")),
+								.title = U(Mokagram::Lang::Tr("Импорт настроек")),
 							});
 						}));
 					});
@@ -1814,9 +1820,8 @@ void CustomizeBox(
 			QString::fromUtf8("🔽"));
 		AddActionRow(
 			actions,
-			U("Вернуть всё как было"),
-			U("Все настройки станут такими, какими были "
-				"после установки."),
+			U(Mokagram::Lang::Tr("Вернуть всё как было")),
+			U(Mokagram::Lang::Tr("Все настройки станут такими, какими были после установки.")),
 			st::menuIconRestoreAttention,
 			QColor(0xFF, 0x45, 0x3A),
 			false,
@@ -1827,13 +1832,12 @@ void CustomizeBox(
 				}
 				strong->show(Box([=](not_null<Ui::GenericBox*> confirm) {
 					Ui::ConfirmBox(confirm, {
-						.text = U("Вернуть все настройки к значениям "
-							"по умолчанию?"),
+						.text = U(Mokagram::Lang::Tr("Вернуть все настройки к значениям по умолчанию?")),
 						.confirmed = [=](Fn<void()> closeConfirm) {
 							ResetAll();
 							closeConfirm();
 						},
-						.confirmText = U("Сбросить"),
+						.confirmText = U(Mokagram::Lang::Tr("Сбросить")),
 					});
 				}));
 			},
@@ -1881,8 +1885,8 @@ void CustomizeBox(
 			section.reset.set(changed, !state->built);
 		}
 		state->empty->entity()->setText(query.isEmpty()
-			? U("Ничего не найдено")
-			: U("Ничего не найдено по запросу «") + query + U("»"));
+			? U(Mokagram::Lang::Tr("Ничего не найдено"))
+			: U(Mokagram::Lang::Tr("Ничего не найдено по запросу «")) + query + U("»"));
 		state->empty->toggle(
 			!any && !state->sections.empty(),
 			kindOfAnim);
@@ -2105,7 +2109,7 @@ void CommandsPage(
 		[=] { box->closeBox(); });
 	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
 		header,
-		U("Быстрые команды"),
+		U(Mokagram::Lang::Tr("Быстрые команды")),
 		st::boxTitle);
 	header->widthValue() | rpl::on_next([=](int width) {
 		close->move(0, (header->height() - close->height()) / 2);
@@ -2160,8 +2164,8 @@ void CommandsPage(
 			const auto card = addCard();
 			AddActionRow(
 				card,
-				enabled ? U("Команды включены") : U("Команды выключены"),
-				U("Нажми, чтобы переключить. Команда срабатывает, только если в поле ввода больше ничего нет."),
+				enabled ? U(Mokagram::Lang::Tr("Команды включены")) : U(Mokagram::Lang::Tr("Команды выключены")),
+				U(Mokagram::Lang::Tr("Нажми, чтобы переключить. Команда срабатывает, только если в поле ввода больше ничего нет.")),
 				st::menuIconChats,
 				enabled ? green : gray,
 				true,
@@ -2172,27 +2176,27 @@ void CommandsPage(
 				enabled ? QString::fromUtf8("✅") : QString::fromUtf8("🚫"));
 		}
 
-		addHead(U("Команды"));
+		addHead(U(Mokagram::Lang::Tr("Команды")));
 		const auto commands = std::vector<CommandInfo>{
-			{ ".mute [30m|2h|1d]", "Заглушить чат. Ответом в группе: запретить человеку писать", &st::menuIconMute, orange, "🔕" },
-			{ ".unmute", "Включить звук чата или снять запрет писать", &st::menuIconUnmute, orange, "🔔" },
-			{ ".ban", "Исключить человека (ответом в группе) или заблокировать в личке", &st::menuIconBlock, red, "🚫" },
-			{ ".unban", "Снять бан или разблокировать человека", &st::menuIconBlock, green, "✅" },
-			{ ".kick", "Исключить без вечного бана, можно вернуться (ответом)", &st::menuIconRemove, red, "⬅️" },
-			{ ".del", "Удалить сообщение, на которое ответил", &st::menuIconDelete, red, "🗑" },
-			{ ".del N", "Удалить свои последние N сообщений (ответом: N сообщений человека)", &st::menuIconDelete, red, "🗑" },
-			{ ".del all", "Ответом: удалить все сообщения человека. Без ответа: все твои загруженные", &st::menuIconDelete, red, "🗑" },
-			{ ".pin", "Закрепить сообщение (ответом)", &st::menuIconPin, blue, "📌" },
-			{ ".unpin", "Открепить сообщение (ответом)", &st::menuIconUnpin, blue, "📍" },
-			{ ".id", "Скопировать ID автора, чата и сообщения и ссылку на сообщение", &st::menuIconInfo, purple, "ℹ️" },
-			{ ".tr en", "Перевести и сразу отправить. Ответом на сообщение или .tr en текст", &st::menuIconTranslate, blue, "🗣" },
-			{ ".calc 2+2*3", "Посчитать: в поле останется «2+2*3 = 8»", &st::menuIconEdit, orange, "#️⃣" },
-			{ ".archive", "Отправить чат в архив (.unarchive вернёт)", &st::menuIconShowInFolder, gray, "📁" },
-			{ ".dl", "Скачать файл или фото из сообщения (ответом) в загрузки", &st::menuIconDownload, green, "🔽" },
-			{ ".tag", "Тег у собеседника: виден в списке чатов и под именем (.tag клиент, пусто = убрать)", &st::menuIconTagFilter, blue, "📑" },
-			{ ".snip", "Свои сниппеты: .snip привет Здравствуйте!, дальше пишешь ;привет, и при отправке подставится текст (.snip list, .snip del имя)", &st::menuIconEdit, blue, "📋" },
-			{ ".note", "Личная заметка о человеке: видна только тебе в его профиле", &st::menuIconEdit, blue, "✏️" },
-			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple, "📁" },
+			{ ".mute [30m|2h|1d]", Mokagram::Lang::Tr("Заглушить чат. Ответом в группе: запретить человеку писать"), &st::menuIconMute, orange, "🔕" },
+			{ ".unmute", Mokagram::Lang::Tr("Включить звук чата или снять запрет писать"), &st::menuIconUnmute, orange, "🔔" },
+			{ ".ban", Mokagram::Lang::Tr("Исключить человека (ответом в группе) или заблокировать в личке"), &st::menuIconBlock, red, "🚫" },
+			{ ".unban", Mokagram::Lang::Tr("Снять бан или разблокировать человека"), &st::menuIconBlock, green, "✅" },
+			{ ".kick", Mokagram::Lang::Tr("Исключить без вечного бана, можно вернуться (ответом)"), &st::menuIconRemove, red, "⬅️" },
+			{ ".del", Mokagram::Lang::Tr("Удалить сообщение, на которое ответил"), &st::menuIconDelete, red, "🗑" },
+			{ ".del N", Mokagram::Lang::Tr("Удалить свои последние N сообщений (ответом: N сообщений человека)"), &st::menuIconDelete, red, "🗑" },
+			{ ".del all", Mokagram::Lang::Tr("Ответом: удалить все сообщения человека. Без ответа: все твои загруженные"), &st::menuIconDelete, red, "🗑" },
+			{ ".pin", Mokagram::Lang::Tr("Закрепить сообщение (ответом)"), &st::menuIconPin, blue, "📌" },
+			{ ".unpin", Mokagram::Lang::Tr("Открепить сообщение (ответом)"), &st::menuIconUnpin, blue, "📍" },
+			{ ".id", Mokagram::Lang::Tr("Скопировать ID автора, чата и сообщения и ссылку на сообщение"), &st::menuIconInfo, purple, "ℹ️" },
+			{ ".tr en", Mokagram::Lang::Tr("Перевести и сразу отправить. Ответом на сообщение или .tr en текст"), &st::menuIconTranslate, blue, "🗣" },
+			{ ".calc 2+2*3", Mokagram::Lang::Tr("Посчитать: в поле останется «2+2*3 = 8»"), &st::menuIconEdit, orange, "#️⃣" },
+			{ ".archive", Mokagram::Lang::Tr("Отправить чат в архив (.unarchive вернёт)"), &st::menuIconShowInFolder, gray, "📁" },
+			{ ".dl", Mokagram::Lang::Tr("Скачать файл или фото из сообщения (ответом) в загрузки"), &st::menuIconDownload, green, "🔽" },
+			{ ".tag", Mokagram::Lang::Tr("Тег у собеседника: виден в списке чатов и под именем (.tag клиент, пусто = убрать)"), &st::menuIconTagFilter, blue, "📑" },
+			{ ".snip", Mokagram::Lang::Tr("Свои сниппеты: .snip привет Здравствуйте!, дальше пишешь ;привет, и при отправке подставится текст (.snip list, .snip del имя)"), &st::menuIconEdit, blue, "📋" },
+			{ ".note", Mokagram::Lang::Tr("Личная заметка о человеке: видна только тебе в его профиле"), &st::menuIconEdit, blue, "✏️" },
+			{ ".save", Mokagram::Lang::Tr("Переслать сообщение (ответом) в «Избранное»"), &st::menuIconSavedMessages, purple, "📁" },
 		};
 		{
 			const auto card = addCard();
@@ -2209,14 +2213,14 @@ void CommandsPage(
 					[=] {
 						QGuiApplication::clipboard()->setText(
 							name.section(' ', 0, 0));
-						toast(U("Скопировано: ") + name.section(' ', 0, 0));
+						toast(U(Mokagram::Lang::Tr("Скопировано: ")) + name.section(' ', 0, 0));
 					},
 					QString::fromUtf8(c.alt));
 			}
 		}
-		note(U("Нажми на команду, чтобы скопировать её."));
+		note(U(Mokagram::Lang::Tr("Нажми на команду, чтобы скопировать её.")));
 
-		addHead(U("Алиасы"));
+		addHead(U(Mokagram::Lang::Tr("Алиасы")));
 		{
 			const auto card = addCard();
 			const auto aliases = Mokagram::Commands::Aliases();
@@ -2225,7 +2229,7 @@ void CommandsPage(
 				AddActionRow(
 					card,
 					U(".") + alias,
-					U("то же, что .") + command + U(". Нажми, чтобы удалить."),
+					U(Mokagram::Lang::Tr("то же, что .")) + command + U(Mokagram::Lang::Tr(". Нажми, чтобы удалить.")),
 					st::menuIconRemove,
 					gray,
 					first,
@@ -2247,35 +2251,35 @@ void CommandsPage(
 			}
 			AddActionRow(
 				card,
-				U("Добавить алиас"),
-				U("Своё короткое имя для команды, например rm для .del"),
+				U(Mokagram::Lang::Tr("Добавить алиас")),
+				U(Mokagram::Lang::Tr("Своё короткое имя для команды, например rm для .del")),
 				st::menuIconAdd,
 				blue,
 				first,
 				[=] {
 					controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
-						inner->setTitle(rpl::single(U("Новый алиас")));
+						inner->setTitle(rpl::single(U(Mokagram::Lang::Tr("Новый алиас"))));
 						inner->setWidth(360);
 						const auto layout = inner->verticalLayout();
 						const auto nameField = layout->add(
 							object_ptr<Ui::InputField>(
 								layout,
 								st::defaultInputField,
-								rpl::single(U("Имя, например rm")),
+								rpl::single(U(Mokagram::Lang::Tr("Имя, например rm"))),
 								QString()),
 							QMargins(22, 10, 22, 4));
 						const auto commandField = layout->add(
 							object_ptr<Ui::InputField>(
 								layout,
 								st::defaultInputField,
-								rpl::single(U("Команда: ")
+								rpl::single(U(Mokagram::Lang::Tr("Команда: "))
 									+ Mokagram::Commands::CommandNames().join(u", "_q)),
 								QString()),
 							QMargins(22, 4, 22, 10));
 						inner->setFocusCallback([=] {
 							nameField->setFocusFast();
 						});
-						inner->addButton(rpl::single(U("Добавить")), [=] {
+						inner->addButton(rpl::single(U(Mokagram::Lang::Tr("Добавить"))), [=] {
 							auto alias = nameField->getLastText().trimmed().toLower();
 							auto command = commandField->getLastText().trimmed().toLower();
 							while (alias.startsWith('.')) {
@@ -2287,7 +2291,7 @@ void CommandsPage(
 							if (alias.isEmpty()
 								|| alias.contains(QRegularExpression(u"[^\\p{L}\\d_]"_q))
 								|| !Mokagram::Commands::CommandNames().contains(command)) {
-								toast(U("Нужны имя из букв и цифр и существующая команда"));
+								toast(U(Mokagram::Lang::Tr("Нужны имя из букв и цифр и существующая команда")));
 								return;
 							}
 							auto list = Mokagram::Commands::Aliases();
@@ -2296,7 +2300,7 @@ void CommandsPage(
 							inner->closeBox();
 							(*build)();
 						});
-						inner->addButton(rpl::single(U("Отмена")), [=] {
+						inner->addButton(rpl::single(U(Mokagram::Lang::Tr("Отмена"))), [=] {
 							inner->closeBox();
 						});
 					}));
@@ -2344,6 +2348,16 @@ void StartDebugCommands() {
 			controller->showPeerHistory(
 				PeerId(cmd.mid(5).toULongLong()),
 				Window::SectionShow::Way::Forward);
+		} else if (cmd.startsWith(u"sendtext:"_q)) {
+			// Только тестовый чат mokaChat: отправка через тот же путь, что и из поля ввода.
+			const auto history = controller->activeChatCurrent().history();
+			if (history && history->peer->id.value == 562954397233167ULL) {
+				auto message = Api::MessageToSend(Api::SendAction(history));
+				message.textWithTags.text = cmd.mid(9);
+				history->session().api().sendMessage(std::move(message));
+			}
+		} else if (cmd == u"quit"_q) {
+			Core::Quit();
 		} else if (cmd == u"history"_q) {
 			History::ShowChatsBox(controller);
 		} else if (cmd == u"deleted"_q) {
@@ -2379,13 +2393,13 @@ void StartDebugCommands() {
 		} else if (cmd == u"datetime"_q) {
 			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 				Ui::ChooseDateTimeBox(box, {
-					.title = rpl::single(u"Выбрать время"_q),
-					.submit = rpl::single(u"Запланировать"_q),
+					.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Выбрать время"))),
+					.submit = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Запланировать"))),
 					.done = [](TimeId) {},
 					.min = [] { return base::unixtime::now(); },
 					.time = base::unixtime::now() + 3600,
 					.max = [] { return base::unixtime::now() + 86400 * 30; },
-					.description = rpl::single(u"Описание"_q),
+					.description = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Описание"))),
 				});
 			}));
 		} else if (cmd == u"newgroup"_q) {
@@ -2471,6 +2485,10 @@ void StartDebugCommands() {
 			Core::App().openLocalUrl(cmd.mid(4), {});
 		} else if (cmd == u"menu"_q) {
 			controller->widget()->showMainMenu();
+		} else if (cmd == u"psave"_q) {
+			PowerSaving::SetForceAll(true);
+		} else if (cmd == u"psaveoff"_q) {
+			PowerSaving::SetForceAll(false);
 		} else if (cmd == u"msginfo"_q) {
 			if (const auto history = controller->activeChatCurrent().history()) {
 				if (const auto item = history->lastMessage()) {

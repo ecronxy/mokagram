@@ -1,4 +1,5 @@
 #include "mokagram/scam/mokagram_scam.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "core/application.h"
 #include "core/click_handler_types.h"
@@ -49,9 +50,9 @@ constexpr auto kMarkChar = QChar(0x2063);
 void RegisterSettings() {
 	S::Register({
 		.key = u"scam.enabled"_q,
-		.section = U("Защита от скама"),
-		.title = U("Предупреждать о скаме"),
-		.description = U("Помечает фейковые офферы, покупателей юзернеймов, гарант-боты и ссылки, спрятанные за текстом (псевдо-Fragment, мини-аппы). Настоящий оффер выглядит как карточка подарка по центру чата."),
+		.section = U(Mokagram::Lang::Tr("Защита от скама")),
+		.title = U(Mokagram::Lang::Tr("Предупреждать о скаме")),
+		.description = U(Mokagram::Lang::Tr("Помечает фейковые офферы, покупателей юзернеймов, гарант-боты и ссылки, спрятанные за текстом (псевдо-Fragment, мини-аппы). Настоящий оффер выглядит как карточка подарка по центру чата.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 		.category = u"privacy"_q,
@@ -180,8 +181,8 @@ bool BypassLinkGuard = false;
 			&& host != shownHost
 			&& !host.endsWith(u"."_q + shownHost)
 			&& !shownHost.endsWith(u"."_q + host)) {
-			return U("Текст ссылки показывает ") + shownHost
-				+ U(", а ведёт она на ")
+			return U(Mokagram::Lang::Tr("Текст ссылки показывает ")) + shownHost
+				+ U(Mokagram::Lang::Tr(", а ведёт она на "))
 				+ (host.isEmpty() ? url : host) + U(".");
 		}
 	}
@@ -193,12 +194,11 @@ bool BypassLinkGuard = false;
 			|| host.endsWith(u"tonkeeper.com"_q)
 			|| host.endsWith(u"playerok.com"_q)
 			|| host.endsWith(u"funpay.com"_q))) {
-		return U("Ссылка выдаёт себя за известный сервис, но ведёт на ")
+		return U(Mokagram::Lang::Tr("Ссылка выдаёт себя за известный сервис, но ведёт на "))
 			+ (host.isEmpty() ? url : host) + U(".");
 	}
 	if (IsMiniAppLink(url) && !text.isEmpty() && text != url) {
-		return U("Ссылка спрятана за текстом и открывает мини-апп. "
-			"Так фальшивые «Fragment» и «гаранты» просят номер телефона.");
+		return U(Mokagram::Lang::Tr("Ссылка спрятана за текстом и открывает мини-апп. Так фальшивые «Fragment» и «гаранты» просят номер телефона."));
 	}
 	if (GarantMention(url)) {
 		return U("Это гарант-бот. Настоящие площадки не проводят сделки "
@@ -288,19 +288,16 @@ bool GuardLink(
 		return false;
 	}
 	window->show(Ui::MakeConfirmBox({
-		.text = TextWithEntities{ reason + U("\n\nНе вводи номер телефона и "
-			"не подтверждай ничего на открывшейся странице. Сделки с "
-			"юзернеймами и подарками идут через Fragment, адрес которого "
-			"ты вводишь сам.") },
+		.text = TextWithEntities{ reason + U(Mokagram::Lang::Tr("\n\nНе вводи номер телефона и не подтверждай ничего на открывшейся странице. Сделки с юзернеймами и подарками идут через Fragment, адрес которого ты вводишь сам.")) },
 		.confirmed = [=](Fn<void()> close) {
 			close();
 			BypassLinkGuard = true;
 			again();
 			BypassLinkGuard = false;
 		},
-		.confirmText = U("Всё равно открыть"),
-		.cancelText = U("Не открывать"),
-		.title = rpl::single(U("Подозрительная ссылка")),
+		.confirmText = U(Mokagram::Lang::Tr("Всё равно открыть")),
+		.cancelText = U(Mokagram::Lang::Tr("Не открывать")),
+		.title = rpl::single(U(Mokagram::Lang::Tr("Подозрительная ссылка"))),
 	}));
 	return true;
 }
@@ -377,7 +374,7 @@ void PaintBanner(QPainter &p, QRect rect) {
 		rect.adjusted(11, 0, -6, 0),
 		Qt::AlignVCenter | Qt::AlignLeft,
 		st::semiboldFont->elided(
-			QString::fromUtf8("\xE2\x9A\xA0 Похоже на скам"),
+			QString::fromUtf8(Mokagram::Lang::Tr("\xE2\x9A\xA0 Похоже на скам")),
 			rect.width() - 17));
 	p.restore();
 }
@@ -397,9 +394,9 @@ void ShowWarning(not_null<const HistoryItem*> item, Fn<void()> proceed) {
 			close();
 			proceed();
 		},
-		.confirmText = U("Всё равно открыть"),
-		.cancelText = U("Не открывать"),
-		.title = rpl::single(U("Возможный скам")),
+		.confirmText = U(Mokagram::Lang::Tr("Всё равно открыть")),
+		.cancelText = U(Mokagram::Lang::Tr("Не открывать")),
+		.title = rpl::single(U(Mokagram::Lang::Tr("Возможный скам"))),
 	}));
 }
 

@@ -1,8 +1,10 @@
 // Mokagram: окно установки плагина при клике на файл .plugin в чате.
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "base/call_delayed.h"
 
 #include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/plugins/mokagram_plugin_store.h"
 
 #include "core/application.h"
@@ -43,6 +45,9 @@
 #include "window/window_session_controller.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QTimer>
 #include <QtCore/QMimeData>
 #include <QtCore/QUrl>
 #include <QtGui/QClipboard>
@@ -105,23 +110,30 @@ struct Info {
 }
 
 [[nodiscard]] QString PermissionTitle(const QString &key) {
-	if (key == "messages.send") return U("отправка сообщений");
-	if (key == "messages.read") return U("чтение сообщений и сведений о чатах");
-	if (key == "messages.edit") return U("правка ваших сообщений");
-	if (key == "network") return U("доступ в интернет");
-	if (key == "files") return U("доступ к файлам");
-	if (key == "native") return U("запуск программ и нативного кода");
-	if (key == "ui") return U("изменение интерфейса");
-	if (key == "hooks") return U("перехват действий клиента");
-	if (key == "settings") return U("свои настройки");
-	if (key == "intents") return U("действия других приложений");
-	if (key == "hooks.observe") return U("наблюдение за обновлениями и запросами");
-	if (key == "hooks.intercept") return U("перехват и изменение действий клиента");
-	if (key == "messages.edit") return U("правка сообщений");
-	if (key == "messages.delete") return U("удаление сообщений");
-	if (key == "dialogs.read") return U("список чатов");
-	if (key == "storage") return U("своё хранилище");
-	if (key == "background") return U("фоновые задачи");
+	if (key == "messages.send") return U(Mokagram::Lang::Tr("отправка сообщений"));
+	if (key == "messages.read") return U(Mokagram::Lang::Tr("чтение сообщений и сведений о чатах"));
+	if (key == "messages.edit") return U(Mokagram::Lang::Tr("правка ваших сообщений"));
+	if (key == "network") return U(Mokagram::Lang::Tr("доступ в интернет"));
+	if (key == "files") return U(Mokagram::Lang::Tr("доступ к файлам"));
+	if (key == "native") return U(Mokagram::Lang::Tr("запуск программ и нативного кода"));
+	if (key == "ui") return U(Mokagram::Lang::Tr("изменение интерфейса"));
+	if (key == "hooks") return U(Mokagram::Lang::Tr("перехват действий клиента"));
+	if (key == "settings") return U(Mokagram::Lang::Tr("свои настройки"));
+	if (key == "intents") return U(Mokagram::Lang::Tr("действия других приложений"));
+	if (key == "hooks.observe") return U(Mokagram::Lang::Tr("наблюдение за обновлениями и запросами"));
+	if (key == "hooks.intercept") return U(Mokagram::Lang::Tr("перехват и изменение действий клиента"));
+	if (key == "messages.edit") return U(Mokagram::Lang::Tr("правка сообщений"));
+	if (key == "messages.delete") return U(Mokagram::Lang::Tr("удаление сообщений"));
+	if (key == "dialogs.read") return U(Mokagram::Lang::Tr("список чатов"));
+	if (key == "storage") return U(Mokagram::Lang::Tr("своё хранилище"));
+	if (key == "tl.read") return U(Mokagram::Lang::Tr("чтение данных через API Telegram"));
+	if (key == "tl.write") return U(Mokagram::Lang::Tr("действия через API Telegram"));
+	if (key == "chats.manage") return U(Mokagram::Lang::Tr("управление чатами: вступление, приглашения, баны, админы"));
+	if (key == "chats.settings") return U(Mokagram::Lang::Tr("настройки чатов: звук, архив, папки, статус набора"));
+	if (key == "profile.write") return U(Mokagram::Lang::Tr("изменение вашего профиля"));
+	if (key == "privacy.write") return U(Mokagram::Lang::Tr("настройки приватности"));
+	if (key == "clipboard") return U(Mokagram::Lang::Tr("чтение буфера обмена"));
+	if (key == "background") return U(Mokagram::Lang::Tr("фоновые задачи"));
 	return key;
 }
 
@@ -324,7 +336,7 @@ void FillInstallBox(
 	const auto linkable = !username.isEmpty();
 	auto lead = QString();
 	if (!info.version.isEmpty()) {
-		lead = U("Версия ") + info.version;
+		lead = U(Mokagram::Lang::Tr("Версия ")) + info.version;
 	}
 	if (!lead.isEmpty() && !info.author.isEmpty()) {
 		lead += U("  •  ");
@@ -403,15 +415,15 @@ void FillInstallBox(
 	if (!installed.isEmpty()) {
 		AddCenteredLabel(
 			content,
-			U("Уже установлена версия ") + installed + U(", она будет заменена"),
+			U(Mokagram::Lang::Tr("Уже установлена версия ")) + installed + U(Mokagram::Lang::Tr(", она будет заменена")),
 			st::boxDividerLabel,
 			QMargins(24, 10, 24, 0));
 	}
 
 	AddButtons(
 		content,
-		U("Отмена"),
-		U(installed.isEmpty() ? "Установить" : "Обновить"),
+		U(Mokagram::Lang::Tr("Отмена")),
+		U(installed.isEmpty() ? Mokagram::Lang::Tr("Установить") : Mokagram::Lang::Tr("Обновить")),
 		[=] { box->closeBox(); },
 		[=] { install(); box->closeBox(); });
 
@@ -449,10 +461,10 @@ void Install(
 	if (controller) {
 		const auto name = info.name.isEmpty() ? info.id : info.name;
 		controller->showToast(!ok
-			? U("Не удалось сохранить плагин")
+			? U(Mokagram::Lang::Tr("Не удалось сохранить плагин"))
 			: loadError.isEmpty()
-			? U("Плагин «") + name + U("» установлен")
-			: U("Плагин «") + name + U("» не запустился: ") + loadError);
+			? U(Mokagram::Lang::Tr("Плагин «")) + name + U(Mokagram::Lang::Tr("» установлен"))
+			: U(Mokagram::Lang::Tr("Плагин «")) + name + U(Mokagram::Lang::Tr("» не запустился: ")) + loadError);
 	}
 }
 
@@ -464,9 +476,8 @@ void ShowInstallBox(
 	if (!info.error.isEmpty() || info.id.isEmpty()) {
 		controller->uiShow()->show(Ui::MakeInformBox(
 			info.error.isEmpty()
-				? U("В файле нет обязательного поля __id__. "
-					"Это не похоже на плагин Mokagram.")
-				: (U("Не удалось прочитать плагин: ") + info.error)));
+				? U(Mokagram::Lang::Tr("В файле нет обязательного поля __id__. Это не похоже на плагин Mokagram."))
+				: (U(Mokagram::Lang::Tr("Не удалось прочитать плагин: ")) + info.error)));
 		return;
 	}
 	auto version = QString();
@@ -475,7 +486,7 @@ void ShowInstallBox(
 		if (existing.open(QIODevice::ReadOnly)) {
 			version = ParseInfo(existing.readAll()).version;
 			if (version.isEmpty()) {
-				version = U("(без номера)");
+				version = U(Mokagram::Lang::Tr("(без номера)"));
 			}
 		}
 	}
@@ -532,7 +543,7 @@ void OpenPluginDocument(
 			}
 		}
 		if (bytes.isEmpty()) {
-			strong->showToast(U("Не удалось прочитать файл плагина"));
+			strong->showToast(U(Mokagram::Lang::Tr("Не удалось прочитать файл плагина")));
 			return;
 		}
 		ShowInstallBox(strong, bytes);
@@ -549,7 +560,10 @@ void OpenPluginDocument(
 	document->save(origin, QString());
 }
 
-bool RunSendMessageHook(TextWithTags &text, uint64 peerId) {
+bool RunSendMessageHook(
+		TextWithTags &text,
+		uint64 peerId,
+		FullMsgId replyTo) {
 	// Сообщение самого плагина (SDK send_message) через свой же хук не гоняем: петля.
 	if (IsFromPlugin()) {
 		return true;
@@ -557,6 +571,11 @@ bool RunSendMessageHook(TextWithTags &text, uint64 peerId) {
 	auto params = QJsonObject();
 	params.insert("text", text.text);
 	params.insert("peer", QString::number(peerId));
+	params.insert("entities", EntitiesToJsonArray(
+		TextUtilities::ConvertTextTagsToEntities(text.tags)));
+	if (replyTo.msg) {
+		params.insert("reply_to", QString::number(replyTo.msg.bare));
+	}
 	const auto answer = CallHook(
 		"send_message_hook",
 		QJsonDocument(params).toJson(QJsonDocument::Compact).toStdString(),
@@ -571,10 +590,17 @@ bool RunSendMessageHook(TextWithTags &text, uint64 peerId) {
 	if (root.value("cancel").toBool()) {
 		return false;
 	}
-	const auto changed = root.value("value").toObject().value("text");
+	const auto value = root.value("value").toObject();
+	const auto changed = value.value("text");
+	const auto entities = value.value("entities");
 	if (changed.isString() && changed.toString() != text.text) {
 		text.text = changed.toString();
 		text.tags.clear();
+	}
+	if (entities.isArray()) {
+		// Плагин вернул сущности: заменяем форматирование целиком.
+		text.tags = TextUtilities::ConvertEntitiesToTextTags(
+			EntitiesFromJsonArray(entities.toArray(), text.text.size()));
 	}
 	return true;
 }
@@ -836,14 +862,13 @@ Card AddPluginCard(
 	const auto author = entry.value("author").toString();
 	if (entry.value("state").toString() == "error") {
 		description += (description.isEmpty() ? QString() : U("\n\n"))
-			+ U("Ошибка: ") + entry.value("error").toString();
+			+ U(Mokagram::Lang::Tr("Ошибка: ")) + entry.value("error").toString();
 	}
 	// Файл изменили после установки: не запускается, пока пользователь не подтвердит.
 	const auto review = (entry.value("state").toString() == "needs_review");
 	if (review) {
 		description += (description.isEmpty() ? QString() : U("\n\n"))
-			+ U("Файл плагина изменился после установки, он не запущен. "
-				"Включите переключатель, чтобы подтвердить изменения.");
+			+ U(Mokagram::Lang::Tr("Файл плагина изменился после установки, он не запущен. Включите переключатель, чтобы подтвердить изменения."));
 	}
 	const auto icon = entry.value("icon").toString().trimmed();
 	const auto isSet = icon.contains('/');
@@ -900,10 +925,8 @@ Card AddPluginCard(
 			}
 			strong->show(Box([=](not_null<Ui::GenericBox*> confirm) {
 				Ui::ConfirmBox(confirm, {
-					.text = U("Плагин «") + name
-						+ U("» изменили после установки. Права, которые он "
-							"запрашивает сейчас, будут выданы заново. "
-							"Запустить?"),
+					.text = U(Mokagram::Lang::Tr("Плагин «")) + name
+						+ U(Mokagram::Lang::Tr("» изменили после установки. Права, которые он запрашивает сейчас, будут выданы заново. Запустить?")),
 					.confirmed = [=](Fn<void()> close) {
 						Approve(id.toStdString(), log);
 						close();
@@ -913,7 +936,7 @@ Card AddPluginCard(
 						close();
 						refresh();
 					},
-					.confirmText = U("Подтвердить"),
+					.confirmText = U(Mokagram::Lang::Tr("Подтвердить")),
 				});
 			}));
 		});
@@ -928,7 +951,7 @@ Card AddPluginCard(
 		mime->setUrls({ QUrl::fromLocalFile(path) });
 		QGuiApplication::clipboard()->setMimeData(mime);
 		if (const auto strong = controller) {
-			strong->showToast(U("Файл плагина скопирован, вставьте его в чат"));
+			strong->showToast(U(Mokagram::Lang::Tr("Файл плагина скопирован, вставьте его в чат")));
 		}
 	});
 	const auto open = MakeIconButton(panel, st::menuIconShowInFolder, [=] {
@@ -1045,7 +1068,7 @@ void PluginsBox(
 	const auto menuButton = MakeRoundButton(header, 2, nullptr);
 	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
 		header,
-		U("Плагины"),
+		U(Mokagram::Lang::Tr("Плагины")),
 		st::boxTitle);
 	static const auto searchClear = style::owned_color(QColor(0, 0, 0, 0));
 	static const auto fieldStyle = [] {
@@ -1072,7 +1095,7 @@ void PluginsBox(
 	const auto field = Ui::CreateChild<Ui::InputField>(
 		header,
 		fieldStyle,
-		rpl::single(U("Поиск")));
+		rpl::single(U(Mokagram::Lang::Tr("Поиск"))));
 	pill->hide();
 	field->hide();
 	header->widthValue() | rpl::on_next([=](int width) {
@@ -1101,7 +1124,7 @@ void PluginsBox(
 	engine->resize(engine->width(), 56);
 	const auto engineLabel = Ui::CreateChild<Ui::FlatLabel>(
 		engine,
-		U("Включить систему плагинов"),
+		U(Mokagram::Lang::Tr("Включить систему плагинов")),
 		st::boxLabel);
 	const auto engineSwitch = MakeSwitch(
 		engine,
@@ -1125,8 +1148,7 @@ void PluginsBox(
 	if (list.isEmpty()) {
 		AddCenteredLabel(
 			content,
-			U("Плагинов пока нет. Добавьте файл .plugin кнопкой ниже "
-				"или нажмите на него в чате."),
+			U(Mokagram::Lang::Tr("Плагинов пока нет. Добавьте файл .plugin кнопкой ниже или нажмите на него в чате.")),
 			st::boxDividerLabel,
 			QMargins(24, 16, 24, 8));
 	}
@@ -1142,14 +1164,14 @@ void PluginsBox(
 			}
 			strong->show(Box([=](not_null<Ui::GenericBox*> confirm) {
 				Ui::ConfirmBox(confirm, {
-					.text = U("Удалить плагин «")
+					.text = U(Mokagram::Lang::Tr("Удалить плагин «"))
 						+ (title.isEmpty() ? id : title) + U("»?"),
 					.confirmed = [=](Fn<void()> close) {
 						Remove(id.toStdString(), log);
 						close();
 						reopen();
 					},
-					.confirmText = U("Удалить"),
+					.confirmText = U(Mokagram::Lang::Tr("Удалить")),
 				});
 			}));
 		}, reopen, log));
@@ -1159,8 +1181,8 @@ void PluginsBox(
 	const auto pickPlugin = [=] {
 		FileDialog::GetOpenPath(
 			box.get(),
-			U("Выберите плагин"),
-			U("Плагин mokaGram (*.plugin);;") + FileDialog::AllFilesFilter(),
+			U(Mokagram::Lang::Tr("Выберите плагин")),
+			U(Mokagram::Lang::Tr("Плагин mokaGram (*.plugin);;")) + FileDialog::AllFilesFilter(),
 			crl::guard(box.get(), [=](FileDialog::OpenResult &&result) {
 				auto bytes = result.remoteContent;
 				if (bytes.isEmpty() && !result.paths.isEmpty()) {
@@ -1175,7 +1197,7 @@ void PluginsBox(
 				}
 				if (bytes.isEmpty()) {
 					if (!result.paths.isEmpty()) {
-						strong->showToast(U("Не удалось прочитать файл плагина"));
+						strong->showToast(U(Mokagram::Lang::Tr("Не удалось прочитать файл плагина")));
 					}
 					return;
 				}
@@ -1196,8 +1218,8 @@ void PluginsBox(
 		*menu = base::make_unique_q<Ui::PopupMenu>(
 			menuButton,
 			st::popupMenuWithIcons);
-		(*menu)->addAction(U("Добавить плагин"), pickPlugin, &st::menuIconAdd);
-		(*menu)->addAction(U("Магазин плагинов"), openStore, &st::menuIconShop);
+		(*menu)->addAction(U(Mokagram::Lang::Tr("Добавить плагин")), pickPlugin, &st::menuIconAdd);
+		(*menu)->addAction(U(Mokagram::Lang::Tr("Магазин плагинов")), openStore, &st::menuIconShop);
 		(*menu)->popup(QCursor::pos());
 	});
 	Ui::AddSkip(content, 14);
@@ -1283,6 +1305,36 @@ namespace {
 [[nodiscard]] const style::icon *MenuIconByName(QString name);
 } // namespace
 
+namespace {
+
+void RestoreFromBackupDocument(
+		not_null<DocumentData*> document,
+		FullMsgId fullId) {
+	const auto path = QDir::temp().filePath(
+		u"moka-restore-%1.zip"_q.arg(QString::number(document->id)));
+	QFile::remove(path);
+	document->save(fullId, path, LoadFromCloudOrLocal, false);
+	const auto timer = new QTimer(QCoreApplication::instance());
+	const auto started = crl::now();
+	QObject::connect(timer, &QTimer::timeout, [=] {
+		const auto info = QFileInfo(path);
+		if (!document->loading()
+			&& info.exists()
+			&& info.size() > 0
+			&& (document->size <= 0 || info.size() >= document->size)) {
+			timer->deleteLater();
+			RestoreBackupFile(path.toStdString(), [](const std::string &line) {
+				LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+			});
+		} else if (crl::now() - started > 120 * crl::time(1000)) {
+			timer->deleteLater();
+		}
+	});
+	timer->start(300);
+}
+
+} // namespace
+
 void AddMessageMenuItems(
 		not_null<Ui::PopupMenu*> menu,
 		HistoryItem *item,
@@ -1300,6 +1352,21 @@ void AddMessageMenuItems(
 	ctx.insert("date", double(item->date()));
 	const auto ctxJson = QJsonDocument(ctx).toJson(
 		QJsonDocument::Compact).toStdString();
+	// Бэкап mokaGram в Избранном: восстановление одним нажатием.
+	if (item->out() && item->history()->peer->isSelf()) {
+		if (const auto media = item->media()) {
+			if (const auto document = media->document()) {
+				const auto name = document->filename();
+				if (name.startsWith(u"moka-backup-"_q) && name.endsWith(u".zip"_q)) {
+					const auto fullId = item->fullId();
+					menu->addAction(
+						U(Mokagram::Lang::Tr("Восстановить из бэкапа")),
+						[=] { RestoreFromBackupDocument(document, fullId); },
+						&st::menuIconDownload);
+				}
+			}
+		}
+	}
 	const auto list = QJsonDocument::fromJson(
 		QByteArray::fromStdString(MenuItemsJson("message", ctxJson))).array();
 	for (const auto &value : list) {

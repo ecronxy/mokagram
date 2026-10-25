@@ -1,5 +1,6 @@
 // Mokagram: окно «Информация о сообщении» (ID, даты, пересылка, вложение, кодировщик голосового).
 #include "mokagram/msginfo/mokagram_message_info.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
@@ -46,11 +47,11 @@ namespace {
 
 [[nodiscard]] QString Size(int64 bytes) {
 	if (bytes >= 1024 * 1024) {
-		return QString::number(bytes / (1024. * 1024.), 'f', 2) + U(" МБ");
+		return QString::number(bytes / (1024. * 1024.), 'f', 2) + U(Mokagram::Lang::Tr(" МБ"));
 	} else if (bytes >= 1024) {
-		return QString::number(bytes / 1024., 'f', 1) + U(" КБ");
+		return QString::number(bytes / 1024., 'f', 1) + U(Mokagram::Lang::Tr(" КБ"));
 	}
-	return QString::number(bytes) + U(" Б");
+	return QString::number(bytes) + U(Mokagram::Lang::Tr(" Б"));
 }
 
 // Читает заголовок Ogg Opus: строка кодировщика и частота записи.
@@ -69,8 +70,8 @@ namespace {
 			| (quint32(at[2]) << 16)
 			| (quint32(at[3]) << 24);
 		if (rate > 0) {
-			result.push_back(U("частота микрофона ")
-				+ QString::number(rate) + U(" Гц"));
+			result.push_back(U(Mokagram::Lang::Tr("частота микрофона "))
+				+ QString::number(rate) + U(Mokagram::Lang::Tr(" Гц")));
 		}
 	}
 	const auto tags = bytes.indexOf("OpusTags");
@@ -82,7 +83,7 @@ namespace {
 			| (quint32(at[2]) << 16)
 			| (quint32(at[3]) << 24);
 		if (length > 0 && length < 200 && tags + 12 + int(length) <= bytes.size()) {
-			result.push_back(U("кодировщик ")
+			result.push_back(U(Mokagram::Lang::Tr("кодировщик "))
 				+ QString::fromUtf8(bytes.mid(tags + 12, length)));
 		}
 	}
@@ -101,13 +102,13 @@ struct Row {
 			rows.push_back({ label, value });
 		}
 	};
-	add(U("ID сообщения"), QString::number(item->id.bare));
-	add(U("Чат"), item->history()->peer->name()
+	add(U(Mokagram::Lang::Tr("ID сообщения")), QString::number(item->id.bare));
+	add(U(Mokagram::Lang::Tr("Чат")), item->history()->peer->name()
 		+ u" ("_q + QString::number(item->history()->peer->id.value) + u")"_q);
-	add(U("Отправлено"), FullDate(item->date()));
+	add(U(Mokagram::Lang::Tr("Отправлено")), FullDate(item->date()));
 	if (const auto edited = item->Get<HistoryMessageEdited>()) {
 		if (edited->date) {
-			add(U("Изменено"), FullDate(edited->date));
+			add(U(Mokagram::Lang::Tr("Изменено")), FullDate(edited->date));
 		}
 	}
 	if (const auto forwarded = item->Get<HistoryMessageForwarded>()) {
@@ -119,28 +120,28 @@ struct Row {
 		if (!forwarded->originalPostAuthor.isEmpty()) {
 			from += u" ("_q + forwarded->originalPostAuthor + u")"_q;
 		}
-		add(U("Переслано от"), from);
+		add(U(Mokagram::Lang::Tr("Переслано от")), from);
 		if (forwarded->originalDate) {
-			add(U("Исходное время"), FullDate(forwarded->originalDate));
+			add(U(Mokagram::Lang::Tr("Исходное время")), FullDate(forwarded->originalDate));
 		}
 		if (forwarded->originalId) {
-			add(U("ID оригинала"), QString::number(forwarded->originalId.bare));
+			add(U(Mokagram::Lang::Tr("ID оригинала")), QString::number(forwarded->originalId.bare));
 		}
 	}
 	if (const auto media = item->media()) {
 		if (const auto document = media->document()) {
-			add(U("Файл"), document->filename().isEmpty()
+			add(U(Mokagram::Lang::Tr("Файл")), document->filename().isEmpty()
 				? document->mimeString()
 				: document->filename());
-			add(U("Тип"), document->mimeString());
-			add(U("Размер"), Size(document->size));
+			add(U(Mokagram::Lang::Tr("Тип")), document->mimeString());
+			add(U(Mokagram::Lang::Tr("Размер")), Size(document->size));
 			if (document->isVoiceMessage()
 				|| document->isVideoMessage()
 				|| document->isSong()) {
-				add(U("Длительность"), QString::number(
+				add(U(Mokagram::Lang::Tr("Длительность")), QString::number(
 					document->duration() / 1000.,
 					'f',
-					1) + U(" с"));
+					1) + U(Mokagram::Lang::Tr(" с")));
 			}
 			if (document->isVoiceMessage()) {
 				auto bytes = QByteArray();
@@ -159,15 +160,15 @@ struct Row {
 					}
 				}
 				const auto hint = VoiceHint(bytes);
-				add(U("Голосовое (по заголовку файла)"), hint.isEmpty()
-					? U("Скачиваю голосовое, окно обновится само...")
+				add(U(Mokagram::Lang::Tr("Голосовое (по заголовку файла)")), hint.isEmpty()
+					? U(Mokagram::Lang::Tr("Скачиваю голосовое, окно обновится само..."))
 					: hint);
 			}
 		} else if (const auto photo = media->photo()) {
-			add(U("Фото"), QString::number(photo->id));
+			add(U(Mokagram::Lang::Tr("Фото")), QString::number(photo->id));
 		}
 	}
-	add(U("Просмотры"), item->hasViews()
+	add(U(Mokagram::Lang::Tr("Просмотры")), item->hasViews()
 		? QString::number(item->viewsCount())
 		: QString());
 	return rows;
@@ -219,7 +220,7 @@ void Show(
 			[=] { box->closeBox(); });
 		const auto title = Ui::CreateChild<Ui::FlatLabel>(
 			header,
-			U("Информация о сообщении"),
+			U(Mokagram::Lang::Tr("Информация о сообщении")),
 			st::boxTitle);
 		header->widthValue() | rpl::on_next([=](int width) {
 			close->moveToLeft(0, 0);
@@ -269,7 +270,7 @@ void Show(
 		row->resize(row->width(), stCopy.height);
 		const auto copy = Ui::CreateChild<Ui::RoundButton>(
 			row,
-			rpl::single(U("Копировать")),
+			rpl::single(U(Mokagram::Lang::Tr("Копировать"))),
 			stCopy);
 		row->widthValue() | rpl::on_next([=](int width) {
 			copy->setFullWidth(width);
@@ -277,7 +278,7 @@ void Show(
 		}, row->lifetime());
 		copy->setClickedCallback([=] {
 			QGuiApplication::clipboard()->setText(text.trimmed());
-			controller->showToast(U("Скопировано"));
+			controller->showToast(U(Mokagram::Lang::Tr("Скопировано")));
 		});
 	}));
 }

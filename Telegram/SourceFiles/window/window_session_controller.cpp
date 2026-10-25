@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "window/window_session_controller.h"
 
 #include "apiwrap.h"
@@ -2000,6 +2001,10 @@ void SessionController::setupScreenshotProtection() {
 				| rpl::map(!rpl::mappers::_1))
 			: (rpl::single(false) | rpl::type_erased);
 	}) | rpl::flatten_latest(), lifetime());
+	activeChatValue(
+	) | rpl::on_next([](Dialogs::Key key) {
+		Mokagram::Plugins::EmitChatOpened(key.peer());
+	}, lifetime());
 }
 
 void SessionController::setupShortcuts() {

@@ -48,7 +48,10 @@ void OpenPluginDocument(
 // Хук send_message_hook: плагины видят и могут изменить текст перед отправкой.
 // Возвращает false, если какой-то плагин отменил отправку. При изменении текста
 // форматирование (tags) сбрасывается: смещения после правки плагином уже неверны.
-[[nodiscard]] bool RunSendMessageHook(TextWithTags &text, uint64 peerId);
+[[nodiscard]] bool RunSendMessageHook(
+	TextWithTags &text,
+	uint64 peerId,
+	FullMsgId replyTo = FullMsgId());
 
 // Делает из прямоугольной кнопки пилюлю: накладывает на углы виджеты цвета фона.
 void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg);

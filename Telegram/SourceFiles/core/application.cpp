@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
+#include "mokagram/perf/mokagram_perf.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/plugins/mokagram_plugins.h"
 #include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/effects/mokagram_effects.h"
@@ -338,8 +340,10 @@ void Application::run() {
 
 	startLocalStorage();
 
+	Mokagram::Plugins::ApplyPendingRestore();
 	Mokagram::Settings::Load();
 	Mokagram::Badges::Start();
+	Mokagram::Perf::Start();
 	Mokagram::Guard::Start();
 	Mokagram::Streamer::RegisterSettings();
 	Mokagram::History::RegisterSettings();
@@ -407,9 +411,10 @@ void Application::run() {
 
 	rpl::combine(
 		_batterySaving->value(),
-		settings().ignoreBatterySavingValue()
-	) | rpl::on_next([=](bool saving, bool ignore) {
-		PowerSaving::SetForceAll(saving && !ignore);
+		settings().ignoreBatterySavingValue(),
+		Mokagram::Perf::EconomyValue()
+	) | rpl::on_next([=](bool saving, bool ignore, bool economy) {
+		PowerSaving::SetForceAll((saving && !ignore) || economy);
 	}, _lifetime);
 
 	style::ShortAnimationPlaying(

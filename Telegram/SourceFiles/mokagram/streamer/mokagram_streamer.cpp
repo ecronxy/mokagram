@@ -1,4 +1,5 @@
 #include "mokagram/streamer/mokagram_streamer.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/toast/toast.h"
@@ -133,7 +134,7 @@ bool CopyBlocked(Field field) {
 		return false;
 	}
 	Ui::Toast::Show(QString::fromUtf8(
-		"Режим стримера: копирование отключено"));
+		Mokagram::Lang::Tr("Режим стримера: копирование отключено")));
 	return true;
 }
 
@@ -146,11 +147,9 @@ bool SetClipboard(Field field, const QString &real) {
 }
 
 void RegisterSettings() {
-	const auto section = QString::fromUtf8("Режим стримера");
+	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Режим стримера"));
 	const auto note = QString::fromUtf8(
-		"Для тех, кто показывает экран зрителям: выбранные личные данные "
-		"заменяются точками везде в клиенте. Переписка и чужие имена "
-		"остаются как есть.");
+		Mokagram::Lang::Tr("Для тех, кто показывает экран зрителям: выбранные личные данные заменяются точками везде в клиенте. Переписка и чужие имена остаются как есть."));
 	const auto add = [&](
 			const char *key,
 			const char *title,
@@ -175,64 +174,60 @@ void RegisterSettings() {
 		});
 	};
 	add("streamer.enabled",
-		"Режим стримера",
-		"Прячет ваш номер, юзернейм и ID на экране, "
-		"чтобы их не увидели зрители.",
+		Mokagram::Lang::Tr("Режим стримера"),
+		Mokagram::Lang::Tr("Прячет ваш номер, юзернейм и ID на экране, чтобы их не увидели зрители."),
 		"",
 		"hide",
 		false,
 		"");
 	add("streamer.phone",
-		"Номер телефона",
-		"Ваш номер в настройках, профиле и меню.",
+		Mokagram::Lang::Tr("Номер телефона"),
+		Mokagram::Lang::Tr("Ваш номер в настройках, профиле и меню."),
 		"+888676767 → +•••••••••",
 		"phone",
 		true);
 	add("streamer.username",
-		"Юзернейм",
-		"Ваш @юзернейм там, где он показан.",
+		Mokagram::Lang::Tr("Юзернейм"),
+		Mokagram::Lang::Tr("Ваш @юзернейм там, где он показан."),
 		"@ecronx → @••••••",
 		"username",
 		true);
 	add("streamer.link",
-		"Ссылки на ваш профиль",
-		"Адреса вида t.me/ваш_ник.",
+		Mokagram::Lang::Tr("Ссылки на ваш профиль"),
+		Mokagram::Lang::Tr("Адреса вида t.me/ваш_ник."),
 		"t.me/ecronx → t.me/••••••",
 		"link",
 		true);
 	add("streamer.id",
-		"Числовой ID",
-		"Служебный номер вашего аккаунта.",
+		Mokagram::Lang::Tr("Числовой ID"),
+		Mokagram::Lang::Tr("Служебный номер вашего аккаунта."),
 		"",
 		"id",
 		true);
 	add("streamer.name",
-		"Имя и фамилия",
-		"Только ваши: в профиле, меню и настройках. "
-		"Чужие имена в чатах не трогаем.",
+		Mokagram::Lang::Tr("Имя и фамилия"),
+		Mokagram::Lang::Tr("Только ваши: в профиле, меню и настройках. Чужие имена в чатах не трогаем."),
 		"",
 		"person",
 		false);
 	add("streamer.notify",
-		"Текст уведомлений",
-		"Во всплывающих уведомлениях не видно, кто написал "
-		"и что именно.",
+		Mokagram::Lang::Tr("Текст уведомлений"),
+		Mokagram::Lang::Tr("Во всплывающих уведомлениях не видно, кто написал и что именно."),
 		"",
 		"notify",
 		false);
 	Settings::Register({
 		.key = u"streamer.copy"_q,
 		.section = section,
-		.title = QString::fromUtf8("Что копировать со скрытым"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Что копировать со скрытым")),
 		.description = QString::fromUtf8(
-			"Что попадёт в буфер обмена, если скопировать "
-			"спрятанное значение."),
+			Mokagram::Lang::Tr("Что попадёт в буфер обмена, если скопировать спрятанное значение.")),
 		.kind = Settings::Kind::Choice,
 		.defaultValue = int(CopyMode::Real),
 		.choices = {
-			QString::fromUtf8("Настоящее значение"),
-			QString::fromUtf8("Ничего"),
-			QString::fromUtf8("Точки"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Настоящее значение")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Ничего")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Точки")),
 		},
 		.dependsOn = u"streamer.enabled"_q,
 		.category = u"privacy"_q,

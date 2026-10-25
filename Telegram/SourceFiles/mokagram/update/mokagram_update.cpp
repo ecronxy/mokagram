@@ -1,4 +1,5 @@
 #include "mokagram/update/mokagram_update.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "core/application.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -262,7 +263,7 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 	const auto temporary = TemporaryPath();
 	if (!Unpack(packed, temporary)) {
 		QFile::remove(temporary);
-		return QString::fromUtf8("не удалось распаковать файл обновления.");
+		return QString::fromUtf8(Mokagram::Lang::Tr("не удалось распаковать файл обновления."));
 	}
 	QFile::setPermissions(temporary, QFile(target).permissions()
 		| QFileDevice::ExeOwner
@@ -282,7 +283,7 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 			QFile::encodeName(temporary).constData(),
 			QFile::encodeName(target).constData()) != 0) {
 		QFile::remove(temporary);
-		return QString::fromUtf8("не удалось заменить ") + target + u"."_q;
+		return QString::fromUtf8(Mokagram::Lang::Tr("не удалось заменить ")) + target + u"."_q;
 	}
 	return QString();
 }
@@ -296,13 +297,13 @@ void ShowRestart(const Manifest &manifest) {
 		.text = QString::fromUtf8("mokaGram ")
 			+ manifest.title
 			+ QString::fromUtf8(
-				" установлен. Новая версия заработает после перезапуска."),
+				Mokagram::Lang::Tr(" установлен. Новая версия заработает после перезапуска.")),
 		.confirmed = [] {
 			cSetRestarting(true);
 			Core::Quit();
 		},
-		.confirmText = QString::fromUtf8("Перезапустить"),
-		.cancelText = QString::fromUtf8("Позже"),
+		.confirmText = QString::fromUtf8(Mokagram::Lang::Tr("Перезапустить")),
+		.cancelText = QString::fromUtf8(Mokagram::Lang::Tr("Позже")),
 	}));
 }
 
@@ -312,13 +313,13 @@ void Download(const Manifest &manifest) {
 		return;
 	}
 	if (!QFileInfo(cExeDir()).isWritable()) {
-		Toast(QString::fromUtf8("Нет прав на запись в ")
+		Toast(QString::fromUtf8(Mokagram::Lang::Tr("Нет прав на запись в "))
 			+ cExeDir()
-			+ QString::fromUtf8(", обновите mokaGram вручную."));
+			+ QString::fromUtf8(Mokagram::Lang::Tr(", обновите mokaGram вручную.")));
 		return;
 	}
 	state.stage = Stage::Downloading;
-	Toast(QString::fromUtf8("Скачиваю mokaGram ") + manifest.title + u"..."_q);
+	Toast(QString::fromUtf8(Mokagram::Lang::Tr("Скачиваю mokaGram ")) + manifest.title + u"..."_q);
 	auto request = QNetworkRequest(
 		QUrl(QString::fromLatin1(kBaseUrl) + manifest.file));
 	request.setAttribute(
@@ -346,7 +347,7 @@ void Download(const Manifest &manifest) {
 		if (!intact) {
 			Data().stage = Stage::Idle;
 			Toast(QString::fromUtf8(
-				"Обновление скачалось с ошибкой, попробуйте позже."));
+				Mokagram::Lang::Tr("Обновление скачалось с ошибкой, попробуйте позже.")));
 			return;
 		}
 		Data().stage = Stage::Installing;
@@ -356,7 +357,7 @@ void Download(const Manifest &manifest) {
 				auto &state = Data();
 				state.stage = Stage::Idle;
 				if (!error.isEmpty()) {
-					Toast(QString::fromUtf8("Обновление не установлено: ")
+					Toast(QString::fromUtf8(Mokagram::Lang::Tr("Обновление не установлено: "))
 						+ error);
 					return;
 				}
@@ -372,7 +373,7 @@ void Offer(const Manifest &manifest, bool manual) {
 	if (!show) {
 		return;
 	}
-	auto text = QString::fromUtf8("Вышел mokaGram ") + manifest.title + u"."_q;
+	auto text = QString::fromUtf8(Mokagram::Lang::Tr("Вышел mokaGram ")) + manifest.title + u"."_q;
 	if (!manifest.notes.isEmpty()) {
 		text += u"\n\n"_q + manifest.notes;
 	}
@@ -390,8 +391,8 @@ void Offer(const Manifest &manifest, bool manual) {
 			}
 			close();
 		},
-		.confirmText = QString::fromUtf8("Обновить"),
-		.cancelText = QString::fromUtf8("Позже"),
+		.confirmText = QString::fromUtf8(Mokagram::Lang::Tr("Обновить")),
+		.cancelText = QString::fromUtf8(Mokagram::Lang::Tr("Позже")),
 	}));
 }
 
@@ -400,13 +401,13 @@ void Check(bool manual) {
 	if (!UpdatesAllowed()) {
 		if (manual) {
 			Toast(QString::fromUtf8(
-				"В этой сборке обновления выключены."));
+				Mokagram::Lang::Tr("В этой сборке обновления выключены.")));
 		}
 		return;
 	}
 	if (state.stage != Stage::Idle) {
 		if (manual) {
-			Toast(QString::fromUtf8("Обновление уже скачивается."));
+			Toast(QString::fromUtf8(Mokagram::Lang::Tr("Обновление уже скачивается.")));
 		}
 		return;
 	}
@@ -429,7 +430,7 @@ void Check(bool manual) {
 			: ParseManifest(data);
 		if (!manifest) {
 			if (manual) {
-				Toast(QString::fromUtf8("Не удалось проверить обновления."));
+				Toast(QString::fromUtf8(Mokagram::Lang::Tr("Не удалось проверить обновления.")));
 			}
 			return;
 		}
@@ -438,8 +439,8 @@ void Check(bool manual) {
 			if (manual) {
 				Toast((Data().installed > kVersion)
 					? QString::fromUtf8(
-						"Обновление уже установлено, перезапустите mokaGram.")
-					: QString::fromUtf8("У вас последняя версия mokaGram."));
+						Mokagram::Lang::Tr("Обновление уже установлено, перезапустите mokaGram."))
+					: QString::fromUtf8(Mokagram::Lang::Tr("У вас последняя версия mokaGram.")));
 			}
 			return;
 		}
@@ -466,27 +467,26 @@ bool VerifyDetached(
 }
 
 void RegisterSettings() {
-	const auto section = QString::fromUtf8("Обновления");
+	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Обновления"));
 	Settings::Register({
 		.key = QString::fromLatin1(kAutoKey),
 		.section = section,
-		.title = QString::fromUtf8("Проверять обновления"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Проверять обновления")),
 		.description = QString::fromUtf8(
-			"При запуске и раз в 6 часов смотреть, вышла ли новая версия."),
+			Mokagram::Lang::Tr("При запуске и раз в 6 часов смотреть, вышла ли новая версия.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = true,
 		.category = u"other"_q,
 		.sectionIcon = u"update"_q,
 		.sectionNote = QString::fromUtf8(
-			"Обновления приходят из github.com/ecronxy/mokagram "
-			"и ставятся, только если подпись совпала."),
+			Mokagram::Lang::Tr("Обновления приходят из github.com/ecronxy/mokagram и ставятся, только если подпись совпала.")),
 	});
 	Settings::Register({
 		.key = QString::fromLatin1(kCheckKey),
 		.section = section,
-		.title = QString::fromUtf8("Проверить сейчас"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Проверить сейчас")),
 		.kind = Settings::Kind::String,
-		.defaultValue = QString::fromUtf8("Версия ")
+		.defaultValue = QString::fromUtf8(Mokagram::Lang::Tr("Версия "))
 			+ QString::fromLatin1(kVersionTitle),
 		.category = u"other"_q,
 		.sectionIcon = u"update"_q,

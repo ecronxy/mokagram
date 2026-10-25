@@ -1,5 +1,6 @@
 // Mokagram: история сообщений, реализация (снимки, реестр настроек, хранилища).
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 
@@ -185,7 +186,7 @@ struct GhostSession {
 			: (u"["_q + row.media + u"]\n"_q + body);
 	}
 	if (body.isEmpty() && !hasMedia) {
-		body = u"[пусто]"_q;
+		body = QString::fromUtf8(Mokagram::Lang::Tr("[пусто]"));
 	}
 	return body;
 }
@@ -326,10 +327,8 @@ void RememberMedia(FullMsgId id, QByteArray tl) {
 }
 
 void RegisterSettings() {
-	const auto section = U("История и фильтры");
-	const auto note = U("Когда собеседник удаляет или правит сообщение, "
-		"у вас остаётся копия. Копии лежат только на этом компьютере "
-		"и никуда не отправляются.");
+	const auto section = U(Mokagram::Lang::Tr("История и фильтры"));
+	const auto note = U(Mokagram::Lang::Tr("Когда собеседник удаляет или правит сообщение, у вас остаётся копия. Копии лежат только на этом компьютере и никуда не отправляются."));
 	const auto add = [&](Settings::Entry entry) {
 		entry.section = section;
 		entry.category = u"chats"_q;
@@ -339,19 +338,17 @@ void RegisterSettings() {
 	};
 	add({
 		.key = u"history.save_deleted"_q,
-		.title = U("Сохранять удалённые сообщения"),
-		.description = U("Если собеседник удалил сообщение, вы всё равно "
-			"сможете его увидеть. Учитывайте приватность: сохраняются "
-			"и чужие сообщения."),
+		.title = U(Mokagram::Lang::Tr("Сохранять удалённые сообщения")),
+		.description = U(Mokagram::Lang::Tr("Если собеседник удалил сообщение, вы всё равно сможете его увидеть. Учитывайте приватность: сохраняются и чужие сообщения.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.icon = u"trash"_q,
-		.example = U("Собеседник удалил → у вас осталось"),
+		.example = U(Mokagram::Lang::Tr("Собеседник удалил → у вас осталось")),
 	});
 	add({
 		.key = u"history.show_ghosts"_q,
-		.title = U("Показывать удалённые в чате"),
-		.description = U("Удалённое сообщение остаётся в переписке с меткой."),
+		.title = U(Mokagram::Lang::Tr("Показывать удалённые в чате")),
+		.description = U(Mokagram::Lang::Tr("Удалённое сообщение остаётся в переписке с меткой.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = true,
 		.dependsOn = u"history.save_deleted"_q,
@@ -359,8 +356,8 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"history.dim_deleted"_q,
-		.title = U("Делать удалённые полупрозрачными"),
-		.description = U("Так их легко отличить от обычных."),
+		.title = U(Mokagram::Lang::Tr("Делать удалённые полупрозрачными")),
+		.description = U(Mokagram::Lang::Tr("Так их легко отличить от обычных.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = true,
 		.dependsOn = u"history.show_ghosts"_q,
@@ -368,62 +365,56 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"history.keep_ttl"_q,
-		.title = U("Не терять самоуничтожающиеся сообщения"),
-		.description = U("Голосовые, кружки, фото и видео с таймером "
-			"открываются на ПК как обычные и сохраняются у вас."),
+		.title = U(Mokagram::Lang::Tr("Не терять самоуничтожающиеся сообщения")),
+		.description = U(Mokagram::Lang::Tr("Голосовые, кружки, фото и видео с таймером открываются на ПК как обычные и сохраняются у вас.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = true,
 		.icon = u"history"_q,
 	});
 	add({
 		.key = u"history.save_edited"_q,
-		.title = U("Сохранять прошлые версии правок"),
-		.description = U("Если сообщение отредактировали, старый текст "
-			"останется у вас."),
+		.title = U(Mokagram::Lang::Tr("Сохранять прошлые версии правок")),
+		.description = U(Mokagram::Lang::Tr("Если сообщение отредактировали, старый текст останется у вас.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.icon = u"edit"_q,
 	});
 	add({
 		.key = u"history.save_for_bots"_q,
-		.title = U("Сохранять и в чатах с ботами"),
-		.description = U("По умолчанию переписка с ботами не сохраняется."),
+		.title = U(Mokagram::Lang::Tr("Сохранять и в чатах с ботами")),
+		.description = U(Mokagram::Lang::Tr("По умолчанию переписка с ботами не сохраняется.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.icon = u"bot"_q,
 	});
 	add({
 		.key = u"history.filters_enabled"_q,
-		.title = U("Фильтры сообщений"),
-		.description = U("Скрывает сообщения, подходящие под ваши "
-			"шаблоны (регулярные выражения)."),
+		.title = U(Mokagram::Lang::Tr("Фильтры сообщений")),
+		.description = U(Mokagram::Lang::Tr("Скрывает сообщения, подходящие под ваши шаблоны (регулярные выражения).")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.icon = u"filter"_q,
 	});
 	add({
 		.key = u"history.hide_blocked"_q,
-		.title = U("Прятать заблокированных везде"),
-		.description = U("Сообщения людей из чёрного списка не "
-			"показываются в чатах."),
+		.title = U(Mokagram::Lang::Tr("Прятать заблокированных везде")),
+		.description = U(Mokagram::Lang::Tr("Сообщения людей из чёрного списка не показываются в чатах.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.icon = u"block"_q,
 	});
 	add({
 		.key = u"history.mark"_q,
-		.title = U("Значок у удалённого"),
-		.description = U("Ставится рядом со временем удалённого сообщения, чтобы "
-			"его было видно в переписке."),
+		.title = U(Mokagram::Lang::Tr("Значок у удалённого")),
+		.description = U(Mokagram::Lang::Tr("Ставится рядом со временем удалённого сообщения, чтобы его было видно в переписке.")),
 		.kind = Settings::Kind::String,
 		.defaultValue = QString::fromUtf8("🗑"),
 		.icon = u"trash"_q,
 	});
 	add({
 		.key = u"history.keep_days"_q,
-		.title = U("Сколько дней хранить копии"),
-		.description = U("Более старые копии стираются. "
-			"0 значит хранить без ограничения по времени."),
+		.title = U(Mokagram::Lang::Tr("Сколько дней хранить копии")),
+		.description = U(Mokagram::Lang::Tr("Более старые копии стираются. 0 значит хранить без ограничения по времени.")),
 		.kind = Settings::Kind::Int,
 		.defaultValue = 30,
 		.minValue = 0,
@@ -432,9 +423,8 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"history.keep_mb"_q,
-		.title = U("Сколько места занять (МБ)"),
-		.description = U("Предел для одного аккаунта. "
-			"При переполнении удаляются самые старые копии."),
+		.title = U(Mokagram::Lang::Tr("Сколько места занять (МБ)")),
+		.description = U(Mokagram::Lang::Tr("Предел для одного аккаунта. При переполнении удаляются самые старые копии.")),
 		.kind = Settings::Kind::Int,
 		.defaultValue = 256,
 		.minValue = 16,
@@ -443,8 +433,8 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"history.keep_per_chat"_q,
-		.title = U("Сколько копий на один чат"),
-		.description = U("Чтобы один шумный чат не занял всё место."),
+		.title = U(Mokagram::Lang::Tr("Сколько копий на один чат")),
+		.description = U(Mokagram::Lang::Tr("Чтобы один шумный чат не занял всё место.")),
 		.kind = Settings::Kind::Int,
 		.defaultValue = 5000,
 		.minValue = 100,

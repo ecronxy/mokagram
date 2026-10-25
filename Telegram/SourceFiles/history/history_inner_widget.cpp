@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mokagram/appearance/mokagram_appearance.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "history/history_inner_widget.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
 #include "mokagram/effects/mokagram_effects.h"
@@ -3466,7 +3467,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 		if (item || isUponSelected > 0) {
 			if (item && isUponSelected <= 0) {
 				_menu->addAction(
-					QString::fromUtf8("Информация о сообщении"),
+					QString::fromUtf8(Mokagram::Lang::Tr("Информация о сообщении")),
 					[=] {
 						if (const auto strong = _controller->session().data().message(itemId)) {
 							Mokagram::MessageInfo::Show(_controller, strong);
@@ -3476,7 +3477,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}
 			// Mokagram: скриншот выбранных сообщений (или одного).
 			_menu->addAction(
-				QString::fromUtf8("Скриншот сообщений"),
+				QString::fromUtf8(Mokagram::Lang::Tr("Скриншот сообщений")),
 				[=] {
 					auto ids = std::vector<FullMsgId>();
 					if (isUponSelected > 0) {
@@ -3749,7 +3750,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 							[=] { copyContextText(itemId); },
 							&st::menuIconCopy);
 						_menu->addAction(
-							QString::fromUtf8("Копировать с датой и автором"),
+							QString::fromUtf8(Mokagram::Lang::Tr("Копировать с датой и автором")),
 							[=] {
 								if (const auto item = _history->owner().message(itemId)) {
 									if (!showCopyRestriction(item)) {
@@ -3802,7 +3803,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 		if (item || isUponSelected > 0) {
 			if (item && isUponSelected <= 0) {
 				_menu->addAction(
-					QString::fromUtf8("Информация о сообщении"),
+					QString::fromUtf8(Mokagram::Lang::Tr("Информация о сообщении")),
 					[=] {
 						if (const auto strong = _controller->session().data().message(itemId)) {
 							Mokagram::MessageInfo::Show(_controller, strong);
@@ -3812,7 +3813,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}
 			// Mokagram: скриншот выбранных сообщений (или одного).
 			_menu->addAction(
-				QString::fromUtf8("Скриншот сообщений"),
+				QString::fromUtf8(Mokagram::Lang::Tr("Скриншот сообщений")),
 				[=] {
 					auto ids = std::vector<FullMsgId>();
 					if (isUponSelected > 0) {

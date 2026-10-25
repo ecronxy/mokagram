@@ -1,4 +1,5 @@
 #include "mokagram/misc/mokagram_ping.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "core/application.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
@@ -30,11 +31,11 @@ struct Datacenter {
 
 const std::vector<Datacenter> &Datacenters() {
 	static const auto result = std::vector<Datacenter>{
-		{ "DC1 · Майами", "149.154.175.53" },
-		{ "DC2 · Амстердам", "149.154.167.51" },
-		{ "DC3 · Майами", "149.154.175.100" },
-		{ "DC4 · Амстердам", "149.154.167.91" },
-		{ "DC5 · Сингапур", "91.108.56.130" },
+		{ Mokagram::Lang::Tr("DC1 · Майами"), "149.154.175.53" },
+		{ Mokagram::Lang::Tr("DC2 · Амстердам"), "149.154.167.51" },
+		{ Mokagram::Lang::Tr("DC3 · Майами"), "149.154.175.100" },
+		{ Mokagram::Lang::Tr("DC4 · Амстердам"), "149.154.167.91" },
+		{ Mokagram::Lang::Tr("DC5 · Сингапур"), "91.108.56.130" },
 	};
 	return result;
 }
@@ -64,7 +65,7 @@ void Measure(
 		finish(-1, socket->errorString());
 	});
 	QTimer::singleShot(4000, socket, [=] {
-		finish(-1, QString::fromUtf8("нет ответа"));
+		finish(-1, QString::fromUtf8(Mokagram::Lang::Tr("нет ответа")));
 	});
 	socket->connectToHost(address, 443);
 }
@@ -77,7 +78,7 @@ void ShowPingBox() {
 		return;
 	}
 	window->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(QString::fromUtf8("Пинг дата-центров")));
+		box->setTitle(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Пинг дата-центров"))));
 		box->setWidth(380);
 		const auto content = box->verticalLayout();
 		Ui::AddSkip(content);
@@ -101,14 +102,14 @@ void ShowPingBox() {
 					label->setText(QString::fromUtf8(dc.name)
 						+ QString::fromUtf8(": ")
 						+ (ms >= 0
-							? QString::number(ms) + QString::fromUtf8(" мс")
-							: QString::fromUtf8("не отвечает")));
+							? QString::number(ms) + QString::fromUtf8(Mokagram::Lang::Tr(" мс"))
+							: QString::fromUtf8(Mokagram::Lang::Tr("не отвечает"))));
 				}));
 			}
 		};
-		box->addButton(rpl::single(QString::fromUtf8("Проверить снова")), run);
+		box->addButton(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Проверить снова"))), run);
 		box->addButton(
-			rpl::single(QString::fromUtf8("Закрыть")),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Закрыть"))),
 			[=] { box->closeBox(); });
 		run();
 	}));

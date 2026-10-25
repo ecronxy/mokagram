@@ -32,3 +32,4 @@ for name in sorted(names):
     out.append("    '%s': 0x%08x," % (name, names[name]))
 out.append('}')
 sys.stdout.write('\n'.join(out) + '\n')
+

@@ -1,4 +1,5 @@
 #include "mokagram/music/mokagram_music_ui.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/music/mokagram_music_library.h"
@@ -211,7 +212,7 @@ void PlayIndex(int index) {
 	queue.index = index;
 	queue.currentId = track.id;
 	queue.changes.fire({});
-	controller->showToast(QString::fromUtf8("Загружаю: ") + track.title);
+	controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Загружаю: ")) + track.title);
 	ResolveThen(track, [=](Track resolved, QString error) {
 		auto &queue = QueueState();
 		const auto controller = queue.controller.get();
@@ -219,7 +220,7 @@ void PlayIndex(int index) {
 			return;
 		}
 		if (!error.isEmpty()) {
-			controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
+			controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить: ")) + error);
 			return;
 		}
 		if (index < int(queue.tracks.size()) && queue.tracks[index].id == resolved.id) {
@@ -232,7 +233,7 @@ void PlayIndex(int index) {
 				return;
 			}
 			if (!error.isEmpty()) {
-				controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
+				controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить: ")) + error);
 				return;
 			}
 			const auto document = MakeDocument(&controller->session(), resolved, path);
@@ -281,14 +282,14 @@ void EnsureFile(
 	ResolveThen(track, [=](Track resolved, QString error) {
 		if (!error.isEmpty()) {
 			if (const auto controller = QueueState().controller.get()) {
-				controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
+				controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить: ")) + error);
 			}
 			return;
 		}
 		Download(resolved, [=](const QString &path, const QString &error) {
 			if (!error.isEmpty()) {
 				if (const auto controller = QueueState().controller.get()) {
-					controller->showToast(QString::fromUtf8("Не удалось загрузить: ") + error);
+					controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить: ")) + error);
 				}
 				return;
 			}
@@ -296,7 +297,7 @@ void EnsureFile(
 		});
 	});
 	if (controller) {
-		controller->showToast(QString::fromUtf8("Загружаю: ") + track.title);
+		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Загружаю: ")) + track.title);
 	}
 }
 
@@ -333,10 +334,10 @@ void SaveToDisk(const Track &track) {
 		const auto controller = QueueState().controller.get();
 		if (QFile::copy(path, target)) {
 			if (controller) {
-				controller->showToast(QString::fromUtf8("Сохранено: ") + target, 4000);
+				controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Сохранено: ")) + target, 4000);
 			}
 		} else if (controller) {
-			controller->showToast(QString::fromUtf8("Не удалось сохранить файл"));
+			controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Не удалось сохранить файл")));
 		}
 	});
 }
@@ -353,7 +354,7 @@ void ForwardTrack(
 			});
 			return true;
 		},
-		rpl::single(QString::fromUtf8("Переслать трек")));
+		rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Переслать трек"))));
 }
 
 // Профильная музыка Telegram хранится в документах: заливаем файл в «Избранное»
@@ -401,7 +402,7 @@ void AddToProfile(
 						document,
 						Data::FileOrigin(item->fullId()));
 					if (const auto controller = QueueState().controller.get()) {
-						controller->showToast(QString::fromUtf8("Добавлено в профиль: ") + track.title);
+						controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Добавлено в профиль: ")) + track.title);
 					}
 					finish();
 					return;
@@ -569,13 +570,13 @@ public:
 			p.drawText(
 				QRect(8, 0, width() - 8 - 110, height()),
 				Qt::AlignVCenter | Qt::AlignLeft,
-				QString::fromUtf8("Слушать подборку"));
+				QString::fromUtf8(Mokagram::Lang::Tr("Слушать подборку")));
 			p.setFont(st::normalFont);
 			p.setPen(onRefresh ? st::windowFg : st::windowSubTextFg);
 			p.drawText(
 				refreshRect(),
 				Qt::AlignVCenter | Qt::AlignRight,
-				QString::fromUtf8("Обновить"));
+				QString::fromUtf8(Mokagram::Lang::Tr("Обновить")));
 		}, lifetime());
 	}
 
@@ -664,7 +665,7 @@ private:
 		const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
 			_menu->addAction(text, std::move(callback), icon);
 		};
-		add(QString::fromUtf8("Воспроизвести"), [=] {
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Воспроизвести")), [=] {
 			if (_mode == RowMode::Queue) {
 				PlayIndex(index);
 			} else {
@@ -672,24 +673,24 @@ private:
 			}
 		}, &st::menuIconSoundOn);
 		add(IsLiked(track.id)
-			? QString::fromUtf8("Убрать из избранного")
-			: QString::fromUtf8("В избранное"), [=] {
+			? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
+			: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
 			SetLiked(track, !IsLiked(track.id));
 		}, &st::menuIconFave);
 		if (_mode == RowMode::Results) {
-			add(QString::fromUtf8("Играть следующим"), [=] { EnqueueNext(track); controller->showToast(QString::fromUtf8("Добавлено в очередь")); }, &st::menuIconAbove);
-			add(QString::fromUtf8("В конец очереди"), [=] { EnqueueLast(track); controller->showToast(QString::fromUtf8("Добавлено в очередь")); }, &st::menuIconBelow);
+			add(QString::fromUtf8(Mokagram::Lang::Tr("Играть следующим")), [=] { EnqueueNext(track); controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Добавлено в очередь"))); }, &st::menuIconAbove);
+			add(QString::fromUtf8(Mokagram::Lang::Tr("В конец очереди")), [=] { EnqueueLast(track); controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Добавлено в очередь"))); }, &st::menuIconBelow);
 		} else {
-			add(QString::fromUtf8("Выше"), [=] { QueueMove(index, -1); }, &st::menuIconAbove);
-			add(QString::fromUtf8("Ниже"), [=] { QueueMove(index, 1); }, &st::menuIconBelow);
-			add(QString::fromUtf8("Убрать из очереди"), [=] { QueueRemove(index); }, &st::menuIconDelete);
+			add(QString::fromUtf8(Mokagram::Lang::Tr("Выше")), [=] { QueueMove(index, -1); }, &st::menuIconAbove);
+			add(QString::fromUtf8(Mokagram::Lang::Tr("Ниже")), [=] { QueueMove(index, 1); }, &st::menuIconBelow);
+			add(QString::fromUtf8(Mokagram::Lang::Tr("Убрать из очереди")), [=] { QueueRemove(index); }, &st::menuIconDelete);
 		}
-		add(QString::fromUtf8("Скачать"), [=] { SaveToDisk(track); }, &st::menuIconDownload);
-		add(QString::fromUtf8("Переслать"), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
-		add(QString::fromUtf8("Добавить в профиль"), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
-		add(QString::fromUtf8("Копировать ссылку"), [=] {
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Скачать")), [=] { SaveToDisk(track); }, &st::menuIconDownload);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Добавить в профиль")), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Копировать ссылку")), [=] {
 			QGuiApplication::clipboard()->setText(track.permalink);
-			controller->showToast(QString::fromUtf8("Ссылка скопирована"));
+			controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Ссылка скопирована")));
 		}, &st::menuIconLink);
 		_menu->popup(QCursor::pos());
 	}
@@ -1013,7 +1014,7 @@ public:
 	}
 	void setLoading() {
 		reset();
-		_status = QString::fromUtf8("Ищу текст…");
+		_status = QString::fromUtf8(Mokagram::Lang::Tr("Ищу текст…"));
 		update();
 	}
 	void setLyrics(Lyrics lyrics) {
@@ -1021,7 +1022,7 @@ public:
 		_lyrics = std::move(lyrics);
 		_status = _lyrics.found
 			? QString()
-			: QString::fromUtf8("Текст этой песни не найден");
+			: QString::fromUtf8(Mokagram::Lang::Tr("Текст этой песни не найден"));
 		_weights.assign(_lyrics.lines.size(), 0.f);
 		update();
 	}
@@ -1313,31 +1314,31 @@ void ShowCurrentTrackMenu(
 		menu->addAction(text, std::move(callback), icon);
 	};
 	const auto instance = Media::Player::instance();
-	add(QString::fromUtf8("Пауза / играть"), [=] {
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Пауза / играть")), [=] {
 		instance->playPause(AudioMsgId::Type::Song);
 	}, &st::menuIconSoundOn);
 	if (PreviousAvailable()) {
-		add(QString::fromUtf8("Предыдущий"), [] { Step(-1); }, &st::menuIconAbove);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Предыдущий")), [] { Step(-1); }, &st::menuIconAbove);
 	}
 	if (NextAvailable()) {
-		add(QString::fromUtf8("Следующий"), [] { Step(1); }, &st::menuIconBelow);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Следующий")), [] { Step(1); }, &st::menuIconBelow);
 	}
 	menu->addSeparator();
 	add(IsLiked(track.id)
-		? QString::fromUtf8("Убрать из избранного")
-		: QString::fromUtf8("В избранное"), [=] {
+		? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
+		: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
 		SetLiked(track, !IsLiked(track.id));
 	}, &st::menuIconFave);
-	add(QString::fromUtf8("Скачать"), [=] { SaveToDisk(track); }, &st::menuIconDownload);
-	add(QString::fromUtf8("Переслать"), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
-	add(QString::fromUtf8("Добавить в профиль"), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
-	add(QString::fromUtf8("Копировать ссылку"), [=] {
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Скачать")), [=] { SaveToDisk(track); }, &st::menuIconDownload);
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Добавить в профиль")), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Копировать ссылку")), [=] {
 		QGuiApplication::clipboard()->setText(track.permalink);
-		controller->showToast(QString::fromUtf8("Ссылка скопирована"));
+		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Ссылка скопирована")));
 	}, &st::menuIconLink);
 	menu->addSeparator();
-	add(QString::fromUtf8("Поиск музыки"), [=] { ShowMusicBox(controller); }, &st::menuIconSearch);
-	add(QString::fromUtf8("Очередь"), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Поиск музыки")), [=] { ShowMusicBox(controller); }, &st::menuIconSearch);
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Очередь")), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
 	menu->popup(globalPosition);
 }
 
@@ -1385,7 +1386,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			[=] { box->closeBox(); });
 		const auto title = Ui::CreateChild<Ui::FlatLabel>(
 			header,
-			QString::fromUtf8("Сейчас играет"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Сейчас играет")),
 			st::boxTitle);
 		const auto searchButton = Mokagram::Plugins::MakeHeaderButton(
 			header,
@@ -1599,12 +1600,12 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		updateLyrics();
 
 		// Очередь: живой список, меняется при добавлении, перемещении и смене трека.
-		Ui::AddSubsectionTitle(content, rpl::single(QString::fromUtf8("Очередь")));
+		Ui::AddSubsectionTitle(content, rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Очередь"))));
 		const auto queueList = content->add(object_ptr<Ui::VerticalLayout>(content));
 		const auto empty = content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				QString::fromUtf8("Очередь пуста. Найдите музыку и выберите «Играть следующим» или «В конец очереди» в меню трека."),
+				QString::fromUtf8(Mokagram::Lang::Tr("Очередь пуста. Найдите музыку и выберите «Играть следующим» или «В конец очереди» в меню трека.")),
 				st::boxLabel),
 			QMargins(24, 4, 24, 8));
 		const auto rebuild = [=] {
@@ -1671,11 +1672,11 @@ void ShowMusicBox(
 			[=] { box->closeBox(); });
 		const auto title = Ui::CreateChild<Ui::FlatLabel>(
 			header,
-			QString::fromUtf8("Музыка"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Музыка")),
 			st::boxTitle);
 		const auto queueButton = Ui::CreateChild<Ui::RoundButton>(
 			header,
-			rpl::single(QString::fromUtf8("Очередь")),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Очередь"))),
 			st::defaultLightButton);
 		queueButton->setClickedCallback([=] {
 			box->closeBox();
@@ -1722,7 +1723,7 @@ void ShowMusicBox(
 		const auto input = Ui::CreateChild<Ui::InputField>(
 			searchWrap,
 			fieldStyle,
-			rpl::single(QString::fromUtf8("Поиск на SoundCloud")));
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Поиск на SoundCloud"))));
 		searchWrap->widthValue(
 		) | rpl::on_next([=](int width) {
 			input->setGeometry(18, 0, width - 36, 44);
@@ -1733,9 +1734,9 @@ void ShowMusicBox(
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(16, 4, 16, 6));
 		tabs->resize(tabs->width(), 36);
-		const auto tabSearch = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8("Поиск"));
-		const auto tabLiked = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8("Лайкнутые"));
-		const auto tabForYou = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8("Для вас"));
+		const auto tabSearch = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Поиск")));
+		const auto tabLiked = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Лайкнутые")));
+		const auto tabForYou = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Для вас")));
 		tabs->widthValue(
 		) | rpl::on_next([=](int width) {
 			const auto gap = 8;
@@ -1762,7 +1763,7 @@ void ShowMusicBox(
 						[=] {
 							QueueState().forYou.clear();
 							QueueState().results.clear();
-							*statusText = QString::fromUtf8("Подбираю музыку под ваш вкус…");
+							*statusText = QString::fromUtf8(Mokagram::Lang::Tr("Подбираю музыку под ваш вкус…"));
 							(*refreshForYou)();
 						}),
 					QMargins(16, 4, 16, 10));
@@ -1781,7 +1782,7 @@ void ShowMusicBox(
 			fill();
 		};
 		const auto buildForYou = [=] {
-			*statusText = QString::fromUtf8("Подбираю музыку под ваш вкус…");
+			*statusText = QString::fromUtf8(Mokagram::Lang::Tr("Подбираю музыку под ваш вкус…"));
 			fill();
 			BuildForYou(30, crl::guard(box, [=](std::vector<Track> tracks, QString note) {
 				auto &queue = QueueState();
@@ -1804,12 +1805,12 @@ void ShowMusicBox(
 			if (tab == 0) {
 				queue.results = queue.searchResults;
 				showStatus(queue.searchResults.empty()
-					? QString::fromUtf8("Введите название или исполнителя и нажмите Enter")
+					? QString::fromUtf8(Mokagram::Lang::Tr("Введите название или исполнителя и нажмите Enter"))
 					: QString());
 			} else if (tab == 1) {
 				queue.results = LikedTracks();
 				showStatus(queue.results.empty()
-					? QString::fromUtf8("Пока пусто. Нажмите сердечко у трека, и он появится здесь.")
+					? QString::fromUtf8(Mokagram::Lang::Tr("Пока пусто. Нажмите сердечко у трека, и он появится здесь."))
 					: QString());
 			} else {
 				queue.results = queue.forYou;
@@ -1831,7 +1832,7 @@ void ShowMusicBox(
 			auto &queue = QueueState();
 			queue.results = LikedTracks();
 			showStatus(queue.results.empty()
-				? QString::fromUtf8("Пока пусто. Нажмите сердечко у трека, и он появится здесь.")
+				? QString::fromUtf8(Mokagram::Lang::Tr("Пока пусто. Нажмите сердечко у трека, и он появится здесь."))
 				: QString());
 			fill();
 		}, box->lifetime());
@@ -1844,7 +1845,7 @@ void ShowMusicBox(
 			if (QueueState().tab != 0) {
 				setTab(0);
 			}
-			showStatus(QString::fromUtf8("Ищу…"));
+			showStatus(QString::fromUtf8(Mokagram::Lang::Tr("Ищу…")));
 			Search(query, 0, crl::guard(box, [=](SearchResult result) {
 				list->clear();
 				if (!result.error.isEmpty()) {
@@ -1852,7 +1853,7 @@ void ShowMusicBox(
 					return;
 				}
 				showStatus(result.tracks.empty()
-					? QString::fromUtf8("Ничего не найдено")
+					? QString::fromUtf8(Mokagram::Lang::Tr("Ничего не найдено"))
 					: QString());
 				auto &queue = QueueState();
 				queue.searchResults = result.tracks;
@@ -1864,7 +1865,7 @@ void ShowMusicBox(
 		input->changes() | rpl::on_next([=] {
 			// Подсказка не должна просвечивать под текстом.
 			input->setPlaceholder(rpl::single(input->getLastText().isEmpty()
-				? QString::fromUtf8("Поиск на SoundCloud")
+				? QString::fromUtf8(Mokagram::Lang::Tr("Поиск на SoundCloud"))
 				: QString()));
 		}, input->lifetime());
 		input->submits() | rpl::on_next(search, input->lifetime());

@@ -53,10 +53,30 @@ def _moka_parse(source):
                     detected.add('native')
                 if f.attr in ('send_message', 'send_file'):
                     detected.add('messages.send')
-                if f.attr in ('get_message', 'chat_info', 'get_dialogs', 'get_history', 'current_chat', 'mark_read'):
+                if f.attr in ('get_message', 'chat_info', 'get_dialogs', 'get_history', 'current_chat', 'mark_read', 'get_user_info', 'get_me'):
                     detected.add('messages.read')
-                if f.attr == 'edit_message':
+                if f.attr in ('edit_message', 'pin_message'):
                     detected.add('messages.edit')
+                if f.attr in ('join', 'leave', 'invite', 'ban', 'unban', 'kick', 'restrict', 'edit_admin'):
+                    detected.add('chats.manage')
+                if f.attr in ('mute', 'archive', 'get_folders', 'folder_add', 'set_typing'):
+                    detected.add('chats.settings')
+                if f.attr in ('set_profile', 'set_emoji_status'):
+                    detected.add('profile.write')
+                if f.attr in ('get_privacy', 'set_privacy'):
+                    detected.add('privacy.write')
+                if f.attr in ('get_entity',):
+                    detected.add('tl.read')
+                if f.attr in ('invoke_tl', 'press_button'):
+                    detected.add('tl.write')
+                if f.attr in ('forward_messages', 'react', 'send_album', 'schedule_message', 'save_draft'):
+                    detected.add('messages.send')
+                if f.attr in ('get_participants', 'search_messages', 'get_history_remote', 'input_peer', 'get_user', 'download_media'):
+                    detected.add('messages.read')
+                if f.attr in ('delete_messages', 'delete_message'):
+                    detected.add('messages.delete')
+                if f.attr == 'clipboard_get':
+                    detected.add('clipboard')
     out['meta'] = meta
     out['detected'] = sorted(detected)
     return json.dumps(out, ensure_ascii=False)
@@ -97,8 +117,12 @@ def _moka_drain():
     return '\n'.join(out)
 
 
+_fw_ring = collections.deque(maxlen=500)
+
+
 def _say(text):
     _log.append(text)
+    _fw_ring.append(text)
 
 
 # ---- SDK ----
@@ -120,6 +144,7 @@ def _moka_install_api(source):
     mod._h.update({
         'caller': _caller, 'granted': _granted, 'audit': _audit, 'say': _say,
         'native': _moka_native, 'data_dir': _data_dir, 'register_cb': _register_cb, 'hook_error': _hook_error,
+        'fw': _FW_EXPORT,
     })
     sys.modules['mokagram_sdk.api'] = mod
     sys.modules['moka'] = mod
@@ -307,6 +332,10 @@ def _fail(entry, exc):
     entry['error'] = ''.join(traceback.format_exception_only(type(exc), exc)).strip()
     _say('[%s] ошибка: %s' % (entry['id'], entry['error']))
     _say(traceback.format_exc().rstrip())
+    try:
+        _fw_error_screen(entry, 'Плагин «%s» не запустился' % (entry['meta'].get('__name__') or entry['id']), traceback.format_exc().rstrip())
+    except BaseException:
+        pass
 
 
 def _activate(entry, source):
@@ -323,6 +352,7 @@ def _activate(entry, source):
         if cls is None:
             raise RuntimeError('в файле нет класса, наследующего BasePlugin')
         inst = cls()
+        inst._moka_id = entry['id']
         inst.on_plugin_load()
         entry['plugin'] = inst
         entry['module'] = mod
@@ -335,13 +365,16 @@ def _activate(entry, source):
         _register_settings(entry)
         _register_filters(entry)
         _register_events(entry)
+        _fw_collect(entry, inst)
+        _fw_sync_updates()
     except BaseException as e:   # включая SystemExit: плагин не должен ронять клиент
         _fail(entry, e)
 
 
 # ---- события клиента (новое, изменённое, удалённое сообщение) ----
 
-_EVENTS = ('new_message', 'message_edited', 'message_deleted')
+_EVENTS = ('new_message', 'message_edited', 'message_deleted', 'new_reaction',
+           'chat_opened', 'peer_updated', 'user_status', 'typing', 'message_sent')
 
 
 def _register_events(entry):
@@ -366,6 +399,13 @@ def _register_events(entry):
         _say('[%s] message_text_hook: нет права messages.read' % entry['id'])
         wants_text = False
     entry['text_hook'] = wants_text
+    badge_fn = getattr(base, 'message_badge_hook', None)
+    wants_badge = getattr(type(inst), 'message_badge_hook', None) is not badge_fn
+    if wants_badge and not _granted(entry['id'], 'messages.read'):
+        _say('[%s] message_badge_hook: нет права messages.read' % entry['id'])
+        wants_badge = False
+    entry['badge_hook'] = wants_badge
+    _moka_native('filter_subscribe', json.dumps({'pid': entry['id'], 'on': wants_badge, 'kind': 'badge'}))
     _moka_native('filter_subscribe', json.dumps({'pid': entry['id'], 'on': wants_text, 'kind': 'text'}))
     entry['filter'] = wants_filter
     _moka_native('filter_subscribe', json.dumps({'pid': entry['id'], 'on': wants_filter}))
@@ -399,13 +439,40 @@ def _moka_filter(message_json):
     return '0'
 
 
+def _moka_badge_hook(message_json):
+    """Главный поток: подписи плагинов в подвале пузыря, склеиваются через ' · '."""
+    try:
+        message = json.loads(message_json)
+    except Exception:
+        return ''
+    parts = []
+    for entry in list(_plugins.values()):
+        inst = entry.get('plugin')
+        if inst is None or not entry.get('badge_hook') or 'message_badge_hook' in entry.get('hooks_off', ()):
+            continue
+        started = time.monotonic()
+        try:
+            res = inst.message_badge_hook(dict(message))
+        except BaseException as e:
+            _hook_error(entry, 'message_badge_hook', e)
+            continue
+        if time.monotonic() - started > 0.05:
+            _hook_slow(entry, 'message_badge_hook', time.monotonic() - started, 0.05)
+            continue
+        if isinstance(res, str) and res.strip():
+            parts.append(res.strip().replace('\n', ' '))
+    return ' · '.join(parts)
+
+
 def _moka_text_hook(message_json):
-    """Главный поток: цепочка плагинов меняет текст. '' без изменений, иначе 'T' + текст."""
+    """Главный поток: цепочка плагинов меняет текст. '' без изменений, 'T'+текст или 'J'+json {text, entities}.
+    Плагин возвращает строку, dict {'text', 'entities'} или кортеж (текст, сущности)."""
     try:
         message = json.loads(message_json)
     except Exception:
         return ''
     changed = False
+    with_entities = False
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')
         if inst is None or not entry.get('text_hook') or 'message_text_hook' in entry.get('hooks_off', ()):
@@ -419,10 +486,44 @@ def _moka_text_hook(message_json):
         if time.monotonic() - started > 0.05:
             _hook_slow(entry, 'message_text_hook', time.monotonic() - started, 0.05)
             continue
-        if isinstance(res, str) and res != message['text']:
-            message['text'] = res
+        text = ents = None
+        if isinstance(res, str):
+            text = res
+        elif isinstance(res, dict) and isinstance(res.get('text'), str):
+            text, ents = res['text'], res.get('entities')
+        elif isinstance(res, (tuple, list)) and len(res) == 2 and isinstance(res[0], str):
+            text, ents = res
+        if text is None:
+            continue
+        if ents is not None and isinstance(ents, list):
+            message['entities'] = ents
+            with_entities = True
             changed = True
-    return ('T' + message['text']) if changed else ''
+        if text != message['text']:
+            message['text'] = text
+            changed = True
+            if ents is None:
+                message['entities'] = []   # текст изменился, старые смещения не подходят
+                with_entities = True
+    if not changed:
+        return ''
+    if with_entities:
+        return 'J' + json.dumps({'text': message['text'], 'entities': message.get('entities', [])}, ensure_ascii=False)
+    return 'T' + message['text']
+
+
+def _moka_app_event(kind):
+    """START, STOP, PAUSE, RESUME всем включённым плагинам (права не нужны)."""
+    enum = getattr(sys.modules['mokagram_sdk.base_plugin'], 'AppEvent', None)
+    ev = getattr(enum, kind, kind) if enum else kind
+    for entry in list(_plugins.values()):
+        inst = entry.get('plugin')
+        if inst is None or 'on_app_event' in entry.get('hooks_off', ()):
+            continue
+        try:
+            inst.on_app_event(ev)
+        except BaseException as e:
+            _hook_error(entry, 'on_app_event', e)
 
 
 def _moka_event(name, payload_json):
@@ -430,6 +531,20 @@ def _moka_event(name, payload_json):
     try:
         payload = json.loads(payload_json)
     except Exception:
+        return ''
+    if name == '__cb':
+        # итог асинхронного вызова клиента: {pid, token, payload}
+        try:
+            _moka_invoke(payload['pid'], payload['token'], json.dumps(payload.get('payload') or {}))
+        except Exception:
+            pass
+        return ''
+    try:
+        _fw_event(name, payload)
+    except BaseException:
+        pass
+    if name == 'app_event':
+        _moka_app_event(payload.get('event', ''))
         return ''
     hook = 'on_' + name
     for entry in list(_plugins.values()):
@@ -443,7 +558,7 @@ def _moka_event(name, payload_json):
             continue
         started = time.monotonic()
         try:
-            fn(dict(payload))
+            _fw_call(entry, fn, dict(payload), 5.0)
             _hook_ok(entry, hook)
         except BaseException as e:
             _hook_error(entry, hook, e)
@@ -468,6 +583,16 @@ def _register_cb(entry, fn, once=False):
 
 
 def _moka_invoke(pid, token, payload_json):
+    if pid == '_fw':
+        fn = _fw_cbs.pop(token, None)
+        if fn is None:
+            return 'false'
+        try:
+            fn(json.loads(payload_json) if payload_json else {})
+        except BaseException as e:
+            _say('каркас: колбэк: %s' % e)
+            return 'false'
+        return 'true'
     entry = _plugins.get(pid)
     if entry is None or entry.get('plugin') is None:
         return 'false'
@@ -493,6 +618,10 @@ def _deactivate(entry):
         pass
     entry['cbs'] = {}
     entry['commands'] = {}
+    entry['watchers'] = []
+    entry['jobs'] = []
+    for sub in [s for s in _fw_db_subs if s[0] == entry['id']]:
+        _fw_db_subs.remove(sub)
     for t in list(entry.get('timers', {}).values()):
         t.cancel()
     entry['timers'] = {}
@@ -534,6 +663,8 @@ def _moka_load_file(name):
     elif not _engine:
         entry['state'] = 'paused'
         entry['error'] = None
+    elif _fw_missing_deps(meta):
+        entry['error'] = 'нужны плагины: ' + ', '.join(_fw_missing_deps(meta))
     else:
         digest = _sha256(raw)
         rec = _grants.get(pid)
@@ -552,18 +683,31 @@ def _moka_load_file(name):
     return pid
 
 
-def _moka_init(folder, sdk_source, api_source):
+def _moka_install_tl(source, schema):
+    mod = types.ModuleType('mokagram_sdk.tl')
+    exec(compile(source, 'mokagram_sdk/tl.py', 'exec'), mod.__dict__)
+    mod._SRC = schema
+    sys.modules['mokagram_sdk.tl'] = mod
+    sys.modules['mokagram_sdk'].tl = mod
+    return mod
+
+
+def _moka_init(folder, sdk_source, api_source, tl_source='', tl_schema=''):
     global _folder
     _folder = folder
     _install_sdk = _moka_install_sdk
     _install_sdk(sdk_source)
     _moka_install_api(api_source)
+    if tl_source:
+        sys.modules['mokagram_sdk.api']._h['tl'] = _moka_install_tl(tl_source, tl_schema)
     _load_state()
     _load_grants()
-    if os.path.isdir(folder):
-        for name in sorted(os.listdir(folder)):
-            if name.endswith('.plugin'):
-                _moka_load_file(name)
+    _fw_load_all(folder)
+    if '_fw_start' in globals():
+        try:
+            _fw_start()
+        except BaseException as e:
+            _say('каркас: %s' % e)
     return len(_plugins)
 
 
@@ -637,6 +781,10 @@ def _moka_remove(pid):
     if entry is None:
         return 'false'
     _deactivate(entry)
+    try:
+        _fw_sync_updates()
+    except BaseException:
+        pass
     _disabled.discard(pid)
     _save_state()
     if _grants.pop(pid, None) is not None:
@@ -649,6 +797,10 @@ def _moka_remove(pid):
 
 
 def _moka_shutdown():
+    try:
+        _moka_app_event('STOP')
+    except BaseException:
+        pass
     for entry in list(_plugins.values()):
         _deactivate(entry)
     return ''
@@ -685,6 +837,17 @@ def _register_settings(entry):
                 'icon': str(getattr(it, 'icon', '') or ''),
                 'kind': 'button', 'default': '',
                 'pid': entry['id'], 'cb': _register_cb(entry, lambda p, f=click: f(None)),
+            })
+            continue
+        if cls == 'Password' and isinstance(key, str) and key and buttons < 30:
+            buttons += 1
+            out.append({
+                'key': 'plugin.%s.__secret_%s' % (entry['id'], key[:40]), 'section': section,
+                'title': str(getattr(it, 'text', '') or key)[:120],
+                'description': str(getattr(it, 'subtext', '') or 'Хранится зашифрованно')[:200],
+                'icon': str(getattr(it, 'icon', '') or ''),
+                'kind': 'button', 'default': '',
+                'pid': entry['id'], 'cb': _register_cb(entry, lambda p, k=key, t=str(getattr(it, 'text', '') or key): _fw_password_dialog(entry, k, t)),
             })
             continue
         if cls not in ('Switch', 'Selector', 'Input', 'EditText') or not isinstance(key, str) or not key or len(key) > 64:
@@ -894,6 +1057,10 @@ def _moka_hook_observe(kind, ctor, hexdata):
     except Exception as e:
         _say('хук: неверные данные: %s' % e)
         return ''
+    try:
+        _fw_observe(kind, ctor, raw)
+    except BaseException:
+        pass
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')
         ids = entry.get('filters', {}).get(kind)
@@ -926,28 +1093,12 @@ def _moka_hook_observe(kind, ctor, hexdata):
 _HOOK_BUDGETS = {'send_message_hook': 0.15}   # секунд, перехват в главном потоке
 
 
-def _run_command(cur):
-    text = str(cur.get('text', '')).strip()
-    if not text.startswith('/'):
-        return False
-    head, _, rest = text[1:].partition(' ')
-    cmd = head.split('@')[0].lower()
-    for entry in list(_plugins.values()):
-        item = entry.get('commands', {}).get(cmd)
-        if item is None or entry.get('plugin') is None:
-            continue
-        try:
-            item[0]({'args': rest.strip(), 'peer': cur.get('peer'), 'text': text})
-        except BaseException as e:
-            _hook_error(entry, 'command', e)
-        return True
-    return False
-
-
 def _moka_hook(name, params_json):
     cur = json.loads(params_json)
-    if name == 'send_message_hook' and _run_command(cur):
-        return json.dumps({'cancel': True})
+    if name == 'send_message_hook':
+        res = _run_command(cur)
+        if res:
+            return res if isinstance(res, str) else json.dumps({'cancel': True})
     budget = _HOOK_BUDGETS.get(name, 0.15)
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')

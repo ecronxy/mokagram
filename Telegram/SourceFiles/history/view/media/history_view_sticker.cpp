@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_click_handler.h"
 #include "data/data_file_origin.h"
 #include "chat_helpers/stickers_lottie.h"
+#include "ui/text/text_emoji_budget.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
@@ -329,7 +330,8 @@ void Sticker::paintAnimationFrame(
 		? PowerSaving::kEmojiChat
 		: PowerSaving::kStickersChat;
 	const auto paused = context.paused
-		|| (_diceIndex < 0 && On(powerSavingFlag));
+		|| (_diceIndex < 0 && On(powerSavingFlag))
+		|| !Ui::Text::TakeStickerBudget();
 	const auto frame = _player
 		? _player->frame(
 			_size,

@@ -1,5 +1,6 @@
 // Mokagram: экраны истории (удалённые, правки, список чатов) и редактор фильтров.
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include <map>
 #include <set>
 #include "ui/boxes/confirm_box.h"
@@ -63,7 +64,7 @@ constexpr auto kPageSize = 50;
 	if (const auto peer = session->data().peerLoaded(PeerId(id))) {
 		return peer->name();
 	}
-	return U("Чат ") + QString::number(id);
+	return U(Mokagram::Lang::Tr("Чат ")) + QString::number(id);
 }
 
 [[nodiscard]] QString FormatTime(int32 time) {
@@ -278,18 +279,18 @@ void HistoryBox(
 		box,
 		content,
 		messageId
-			? U("Прежние версии")
+			? U(Mokagram::Lang::Tr("Прежние версии"))
 			: deleted
-			? (peerId ? U("Удалённые") : U("Удалённые везде"))
-			: U("История правок"));
+			? (peerId ? U(Mokagram::Lang::Tr("Удалённые")) : U(Mokagram::Lang::Tr("Удалённые везде")))
+			: U(Mokagram::Lang::Tr("История правок")));
 	const auto selection = std::make_shared<Selection>();
 
 	if (!messageId && deleted) {
 		const auto periods = std::vector<QString>{
-			U("За всё время"), U("За сутки"), U("За неделю"), U("За месяц") };
+			U(Mokagram::Lang::Tr("За всё время")), U(Mokagram::Lang::Tr("За сутки")), U(Mokagram::Lang::Tr("За неделю")), U(Mokagram::Lang::Tr("За месяц")) };
 		const auto types = std::vector<QString>{
-			U("Все типы"), U("Фото"), U("Видео"), U("Голосовые"),
-			U("Кружки"), U("Файлы") };
+			U(Mokagram::Lang::Tr("Все типы")), U(Mokagram::Lang::Tr("Фото")), U(Mokagram::Lang::Tr("Видео")), U(Mokagram::Lang::Tr("Голосовые")),
+			U(Mokagram::Lang::Tr("Кружки")), U(Mokagram::Lang::Tr("Файлы")) };
 		const auto periodButton = Ui::CreateChild<Ui::RoundButton>(
 			content.get(),
 			rpl::single(periods[filter.period] + U(" ▾")),
@@ -336,15 +337,15 @@ void HistoryBox(
 
 		const auto selectAll = Ui::CreateChild<Ui::RoundButton>(
 			content.get(),
-			rpl::single(U("Выбрать всё")),
+			rpl::single(U(Mokagram::Lang::Tr("Выбрать всё"))),
 			st::dialogsPickButton);
 		const auto removePicked = Ui::CreateChild<Ui::RoundButton>(
 			content.get(),
-			rpl::single(U("Удалить (0)")),
+			rpl::single(U(Mokagram::Lang::Tr("Удалить (0)"))),
 			st::dialogsPickDanger);
 		const auto clearAll = Ui::CreateChild<Ui::RoundButton>(
 			content.get(),
-			rpl::single(U("Очистить")),
+			rpl::single(U(Mokagram::Lang::Tr("Очистить"))),
 			st::dialogsPickCancel);
 		AddButtonsRow(content, { selectAll, removePicked, clearAll });
 		selectAll->setClickedCallback([=] {
@@ -357,7 +358,7 @@ void HistoryBox(
 		selection->changed.events(
 		) | rpl::on_next([=] {
 			removePicked->setText(rpl::single(
-				U("Удалить (%1)").arg(selection->picked.size())));
+				U(Mokagram::Lang::Tr("Удалить (%1)")).arg(selection->picked.size())));
 		}, box->lifetime());
 		removePicked->setClickedCallback([=] {
 			if (selection->picked.empty()) {
@@ -366,8 +367,8 @@ void HistoryBox(
 			const auto count = selection->picked.size();
 			ConfirmAndRun(
 				controller,
-				U("Удалить выбранные сообщения из истории (%1)?").arg(count),
-				U("Удалить"),
+				U(Mokagram::Lang::Tr("Удалить выбранные сообщения из истории (%1)?")).arg(count),
+				U(Mokagram::Lang::Tr("Удалить")),
 				[=] {
 					for (const auto &key : selection->picked) {
 						store->removeOne(key.first, key.second);
@@ -382,9 +383,9 @@ void HistoryBox(
 			ConfirmAndRun(
 				controller,
 				peerId
-					? U("Очистить все удалённые сообщения этого чата?")
-					: U("Очистить все удалённые сообщения из всех чатов?"),
-				U("Очистить"),
+					? U(Mokagram::Lang::Tr("Очистить все удалённые сообщения этого чата?"))
+					: U(Mokagram::Lang::Tr("Очистить все удалённые сообщения из всех чатов?")),
+				U(Mokagram::Lang::Tr("Очистить")),
 				[=] {
 					if (peerId) {
 						store->clearPeer(peerId);
@@ -399,7 +400,7 @@ void HistoryBox(
 	const auto empty = content->add(
 		object_ptr<Ui::FlatLabel>(
 			content,
-			U("Загрузка..."),
+			U(Mokagram::Lang::Tr("Загрузка...")),
 			st::boxLabel),
 		QMargins(24, 12, 24, 12));
 	const auto list = content->add(
@@ -467,7 +468,7 @@ void HistoryBox(
 						: (row.media + U("\n") + body);
 				}
 				if (body.isEmpty()) {
-					body = U("(пусто)");
+					body = U(Mokagram::Lang::Tr("(пусто)"));
 				}
 				const auto parts = AddCard(weakList);
 				const auto card = parts.card;
@@ -500,8 +501,8 @@ void HistoryBox(
 			weakEmpty->setText(list->count()
 				? QString()
 				: (deleted
-					? U("Здесь пока нет удалённых сообщений.")
-					: U("Здесь пока нет сохранённых правок.")));
+					? U(Mokagram::Lang::Tr("Здесь пока нет удалённых сообщений."))
+					: U(Mokagram::Lang::Tr("Здесь пока нет сохранённых правок."))));
 			weakEmpty->setVisible(!list->count());
 		});
 	};
@@ -509,7 +510,7 @@ void HistoryBox(
 
 	const auto more = Ui::CreateChild<Ui::RoundButton>(
 		content.get(),
-		rpl::single(U("Показать ещё")),
+		rpl::single(U(Mokagram::Lang::Tr("Показать ещё"))),
 		st::dialogsPickCancel);
 	more->setClickedCallback(loadMore);
 	if (messageId) {
@@ -518,7 +519,7 @@ void HistoryBox(
 	}
 	const auto switchKind = Ui::CreateChild<Ui::RoundButton>(
 		content.get(),
-		rpl::single(deleted ? U("Правки") : U("Удалённые")),
+		rpl::single(deleted ? U(Mokagram::Lang::Tr("Правки")) : U(Mokagram::Lang::Tr("Удалённые"))),
 		st::dialogsPickCancel);
 	switchKind->setClickedCallback([=] {
 		box->closeBox();
@@ -538,15 +539,15 @@ void ChatsBox(
 	const auto store = &StoreFor(session);
 	Plugins::RoundedWindow(box);
 	const auto content = box->verticalLayout();
-	AddHeader(box, content, U("История по чатам"));
+	AddHeader(box, content, U(Mokagram::Lang::Tr("История по чатам")));
 	const auto selection = std::make_shared<Selection>();
 	const auto allDeleted = Ui::CreateChild<Ui::RoundButton>(
 		content.get(),
-		rpl::single(U("Все удалённые")),
+		rpl::single(U(Mokagram::Lang::Tr("Все удалённые"))),
 		st::dialogsPickButton);
 	const auto removePicked = Ui::CreateChild<Ui::RoundButton>(
 		content.get(),
-		rpl::single(U("Очистить (0)")),
+		rpl::single(U(Mokagram::Lang::Tr("Очистить (0)"))),
 		st::dialogsPickDanger);
 	AddButtonsRow(content, { allDeleted, removePicked });
 	allDeleted->setClickedCallback([=] {
@@ -555,7 +556,7 @@ void ChatsBox(
 	selection->changed.events(
 	) | rpl::on_next([=] {
 		removePicked->setText(rpl::single(
-			U("Очистить (%1)").arg(selection->picked.size())));
+			U(Mokagram::Lang::Tr("Очистить (%1)")).arg(selection->picked.size())));
 	}, box->lifetime());
 	const auto list = content->add(
 		object_ptr<Ui::VerticalLayout>(content),
@@ -569,8 +570,8 @@ void ChatsBox(
 		const auto count = selection->picked.size();
 		ConfirmAndRun(
 			controller,
-			U("Очистить историю выбранных чатов (%1)?").arg(count),
-			U("Очистить"),
+			U(Mokagram::Lang::Tr("Очистить историю выбранных чатов (%1)?")).arg(count),
+			U(Mokagram::Lang::Tr("Очистить")),
 			[=] {
 				for (const auto &key : selection->picked) {
 					store->clearPeer(key.first);
@@ -592,7 +593,7 @@ void ChatsBox(
 		weakList->add(
 			object_ptr<Ui::FlatLabel>(
 				weakList,
-				U("История пока пуста."),
+				U(Mokagram::Lang::Tr("История пока пуста.")),
 				st::boxLabel),
 			QMargins(24, 12, 24, 12));
 	}
@@ -611,7 +612,7 @@ void ChatsBox(
 		const auto sub = card->add(
 			object_ptr<Ui::FlatLabel>(
 				card,
-				U("удалено %1 · правок %2").arg(counts.deleted).arg(
+				U(Mokagram::Lang::Tr("удалено %1 · правок %2")).arg(counts.deleted).arg(
 					counts.edited),
 				st::boxLabel),
 			QMargins(18, 4, 56, 14));
@@ -640,7 +641,7 @@ void FiltersBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
 		uint64 peerId) {
-	box->setTitle(rpl::single(U("Фильтры сообщений")));
+	box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Фильтры сообщений"))));
 	box->setWidth(st::boxWideWidth);
 	const auto content = box->verticalLayout();
 	Ui::AddSkip(content);
@@ -660,20 +661,20 @@ void FiltersBox(
 			weakList->add(
 				object_ptr<Ui::FlatLabel>(
 					weakList,
-					U("Фильтров пока нет."),
+					U(Mokagram::Lang::Tr("Фильтров пока нет.")),
 					st::boxLabel),
 				st::boxPadding);
 		}
 		for (const auto &filter : filters) {
 			auto text = filter.pattern;
 			text += filter.peers.empty()
-				? U("  (везде)")
-				: U("  (чатов: %1)").arg(filter.peers.size());
+				? U(Mokagram::Lang::Tr("  (везде)"))
+				: U(Mokagram::Lang::Tr("  (чатов: %1)")).arg(filter.peers.size());
 			weakList->add(
 				object_ptr<Ui::FlatLabel>(weakList, text, st::boxLabel),
 				st::boxPadding);
 			const auto remove = weakList->add(
-				object_ptr<Ui::LinkButton>(weakList, U("Удалить")),
+				object_ptr<Ui::LinkButton>(weakList, U(Mokagram::Lang::Tr("Удалить"))),
 				st::boxPadding);
 			const auto id = filter.id;
 			remove->setClickedCallback([=] {
@@ -696,16 +697,16 @@ void FiltersBox(
 		object_ptr<Ui::InputField>(
 			content,
 			st::defaultInputField,
-			rpl::single(U("Регулярное выражение"))),
+			rpl::single(U(Mokagram::Lang::Tr("Регулярное выражение")))),
 		st::boxPadding);
 	const auto ignoreCase = content->add(
-		object_ptr<Ui::Checkbox>(content, U("Без учёта регистра"), true),
+		object_ptr<Ui::Checkbox>(content, U(Mokagram::Lang::Tr("Без учёта регистра")), true),
 		st::boxPadding);
 	const auto sample = content->add(
 		object_ptr<Ui::InputField>(
 			content,
 			st::defaultInputField,
-			rpl::single(U("Проверка: введи тестовую строку"))),
+			rpl::single(U(Mokagram::Lang::Tr("Проверка: введи тестовую строку")))),
 		st::boxPadding);
 	const auto status = content->add(
 		object_ptr<Ui::FlatLabel>(content, QString(), st::boxLabel),
@@ -719,23 +720,23 @@ void FiltersBox(
 		}
 		const auto error = ValidateFilter(text, ignoreCase->checked());
 		if (!error.isEmpty()) {
-			status->setText(U("Ошибка: ") + error);
+			status->setText(U(Mokagram::Lang::Tr("Ошибка: ")) + error);
 		} else if (sample->getLastText().isEmpty()) {
-			status->setText(U("Выражение корректно."));
+			status->setText(U(Mokagram::Lang::Tr("Выражение корректно.")));
 		} else {
 			status->setText(TestFilter(
 				text,
 				ignoreCase->checked(),
 				sample->getLastText())
-				? U("Совпадает, сообщение будет скрыто.")
-				: U("Не совпадает."));
+				? U(Mokagram::Lang::Tr("Совпадает, сообщение будет скрыто."))
+				: U(Mokagram::Lang::Tr("Не совпадает.")));
 		}
 	};
 	pattern->changes() | rpl::on_next(refresh, pattern->lifetime());
 	sample->changes() | rpl::on_next(refresh, sample->lifetime());
 	ignoreCase->checkedChanges() | rpl::on_next(refresh, ignoreCase->lifetime());
 
-	box->addButton(rpl::single(U("Добавить")), [=] {
+	box->addButton(rpl::single(U(Mokagram::Lang::Tr("Добавить"))), [=] {
 		const auto text = pattern->getLastText();
 		if (!ValidateFilter(text, ignoreCase->checked()).isEmpty()) {
 			refresh();
@@ -754,11 +755,11 @@ void FiltersBox(
 		pattern->setText(QString());
 		sample->setText(QString());
 	});
-	box->addButton(rpl::single(U("Закрыть")), [=] { box->closeBox(); });
+	box->addButton(rpl::single(U(Mokagram::Lang::Tr("Закрыть"))), [=] { box->closeBox(); });
 	if (peerId) {
 		const auto shown = [=] { return ShowHiddenInChat(peerId); };
 		box->addLeftButton(
-			rpl::single(U("Показать скрытое")),
+			rpl::single(U(Mokagram::Lang::Tr("Показать скрытое"))),
 			[=] {
 				SetShowHiddenInChat(peerId, !shown());
 			});
@@ -842,7 +843,7 @@ void FillGhostMenu(
 		: QString();
 	if (count == 1) {
 		const auto &first = entries.front();
-		menu->addAction(QString::fromUtf8("Ответить"), [=] {
+		menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Ответить")), [=] {
 			if (!insertText) {
 				return;
 			}
@@ -861,13 +862,13 @@ void FillGhostMenu(
 			insertText(result);
 		}, &st::menuIconReply);
 	}
-	menu->addAction(QString::fromUtf8("Переслать") + suffix, [=] {
+	menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")) + suffix, [=] {
 		Window::ShowChooseRecipientBox(controller, [=](
 				not_null<Data::Thread*> thread) {
 			// По одному сообщению на каждое удалённое.
 			for (const auto &entry : entries) {
 				auto message = Api::MessageToSend(Api::SendAction(thread));
-				const auto head = QString::fromUtf8("Переслано от ");
+				const auto head = QString::fromUtf8(Mokagram::Lang::Tr("Переслано от "));
 				message.textWithTags.text = head
 					+ entry.name
 					+ '\n'
@@ -882,7 +883,7 @@ void FillGhostMenu(
 			return true;
 		});
 	}, &st::menuIconForward);
-	menu->addAction(QString::fromUtf8("Копировать текст") + suffix, [=] {
+	menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Копировать текст")) + suffix, [=] {
 		auto all = QStringList();
 		for (const auto &entry : entries) {
 			all.push_back((count > 1)
@@ -891,7 +892,7 @@ void FillGhostMenu(
 		}
 		QGuiApplication::clipboard()->setText(all.join('\n'));
 	}, &st::menuIconCopy);
-	menu->addAction(QString::fromUtf8("Убрать из истории") + suffix, [=] {
+	menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Убрать из истории")) + suffix, [=] {
 		for (const auto &entry : entries) {
 			if (const auto strong = session->data().message(entry.id)) {
 				RemoveGhost(strong);
@@ -944,8 +945,8 @@ void RunDeleteMine(std::shared_ptr<DeleteMineState> state) {
 		}
 		if (const auto controller = state->controller.get()) {
 			controller->showToast(state->cancelled
-				? QString::fromUtf8("Остановлено. Удалено сообщений: %1").arg(state->deleted)
-				: QString::fromUtf8("Готово. Удалено сообщений: %1").arg(state->deleted));
+				? QString::fromUtf8(Mokagram::Lang::Tr("Остановлено. Удалено сообщений: %1")).arg(state->deleted)
+				: QString::fromUtf8(Mokagram::Lang::Tr("Готово. Удалено сообщений: %1")).arg(state->deleted));
 		}
 	};
 	// Фаза 2: удаляем найденные id пачками.
@@ -964,7 +965,7 @@ void RunDeleteMine(std::shared_ptr<DeleteMineState> state) {
 		const auto done = [=](const MTPmessages_AffectedMessages &result) {
 			session->api().applyAffectedMessages(peer, result);
 			state->deleted += count;
-			setLabel(QString::fromUtf8("Удалено %1 из %2").arg(state->deleted).arg(state->found));
+			setLabel(QString::fromUtf8(Mokagram::Lang::Tr("Удалено %1 из %2")).arg(state->deleted).arg(state->found));
 			(*deleteNext)();
 		};
 		const auto fail = [=](const MTP::Error &) {
@@ -1008,7 +1009,7 @@ void RunDeleteMine(std::shared_ptr<DeleteMineState> state) {
 				}, [&](const auto &) {
 				});
 			}
-			setLabel(QString::fromUtf8("Найдено своих сообщений: %1").arg(state->found));
+			setLabel(QString::fromUtf8(Mokagram::Lang::Tr("Найдено своих сообщений: %1")).arg(state->found));
 			if (messages.isEmpty() || !lowest) {
 				if (qEnvironmentVariableIsSet("MOKAGRAM_DELETE_DRYRUN")) {
 					state->ids.clear();
@@ -1018,7 +1019,7 @@ void RunDeleteMine(std::shared_ptr<DeleteMineState> state) {
 					return;
 				}
 				state->deleting = true;
-				setLabel(QString::fromUtf8("Найдено: %1. Удаляю…").arg(state->found));
+				setLabel(QString::fromUtf8(Mokagram::Lang::Tr("Найдено: %1. Удаляю…")).arg(state->found));
 				(*deleteNext)();
 			} else {
 				(*searchNext)(lowest);
@@ -1077,15 +1078,14 @@ void ShowDeleteMyMessages(
 		not_null<Window::SessionController*> controller,
 		not_null<PeerData*> peer) {
 	const auto title = peer->isSelf()
-		? QString::fromUtf8("Избранное")
+		? QString::fromUtf8(Mokagram::Lang::Tr("Избранное"))
 		: peer->name();
 	const auto weak = base::make_weak(controller);
 	const auto session = base::make_weak(&peer->session());
 	const auto peerId = peer->id;
 	controller->show(Ui::MakeConfirmBox({
 		.text = rpl::single(QString::fromUtf8(
-			"Удалить все ваши сообщения в «%1»?\n\n"
-			"Они исчезнут у всех участников чата. Отменить это нельзя.").arg(title)),
+			Mokagram::Lang::Tr("Удалить все ваши сообщения в «%1»?\n\nОни исчезнут у всех участников чата. Отменить это нельзя.")).arg(title)),
 		.confirmed = [=](Fn<void()> &&close) {
 			close();
 			const auto strong = weak.get();
@@ -1098,18 +1098,18 @@ void ShowDeleteMyMessages(
 			state->controller = weak;
 			strong->show(Box([=](not_null<Ui::GenericBox*> box) {
 				state->box = box;
-				box->setTitle(rpl::single(QString::fromUtf8("Удаление моих сообщений")));
+				box->setTitle(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Удаление моих сообщений"))));
 				const auto content = box->verticalLayout();
 				Ui::AddSkip(content);
 				state->label = content->add(
 					object_ptr<Ui::FlatLabel>(
 						content,
-						QString::fromUtf8("Ищу ваши сообщения…"),
+						QString::fromUtf8(Mokagram::Lang::Tr("Ищу ваши сообщения…")),
 						st::boxLabel),
 					st::boxPadding);
 				Ui::AddSkip(content);
 				box->addButton(
-					rpl::single(QString::fromUtf8("Остановить")),
+					rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Остановить"))),
 					[=] {
 						state->cancelled = true;
 						if (const auto strong = state->session.get()) {
@@ -1126,9 +1126,9 @@ void ShowDeleteMyMessages(
 			}));
 			RunDeleteMine(state);
 		},
-		.confirmText = rpl::single(QString::fromUtf8("Удалить")),
+		.confirmText = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Удалить"))),
 		.confirmStyle = &st::attentionBoxButton,
-		.title = rpl::single(QString::fromUtf8("Удалить все мои сообщения")),
+		.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Удалить все мои сообщения"))),
 	}));
 }
 
@@ -1154,8 +1154,8 @@ void RunDeleteMulti(std::shared_ptr<DeleteMultiState> multi) {
 		}
 		if (const auto controller = multi->controller.get()) {
 			controller->showToast(multi->cancelled
-				? QString::fromUtf8("Остановлено. Удалено сообщений: %1").arg(multi->deleted)
-				: QString::fromUtf8("Готово. Удалено сообщений: %1").arg(multi->deleted));
+				? QString::fromUtf8(Mokagram::Lang::Tr("Остановлено. Удалено сообщений: %1")).arg(multi->deleted)
+				: QString::fromUtf8(Mokagram::Lang::Tr("Готово. Удалено сообщений: %1")).arg(multi->deleted));
 		}
 	};
 	if (!session || multi->cancelled || multi->index >= int(multi->peers.size())) {
@@ -1167,10 +1167,10 @@ void RunDeleteMulti(std::shared_ptr<DeleteMultiState> multi) {
 	const auto title = !peer
 		? QString()
 		: peer->isSelf()
-		? QString::fromUtf8("Избранное")
+		? QString::fromUtf8(Mokagram::Lang::Tr("Избранное"))
 		: peer->name();
 	if (multi->label) {
-		multi->label->setText(QString::fromUtf8("Чат %1 из %2: %3")
+		multi->label->setText(QString::fromUtf8(Mokagram::Lang::Tr("Чат %1 из %2: %3"))
 			.arg(multi->index + 1)
 			.arg(multi->peers.size())
 			.arg(title));
@@ -1203,16 +1203,15 @@ void ShowDeleteMyMessagesForPeers(
 		}
 	}
 	if (allowed.empty()) {
-		controller->showToast(U("В выбранных чатах нечего удалять."));
+		controller->showToast(U(Mokagram::Lang::Tr("В выбранных чатах нечего удалять.")));
 		return;
 	}
 	const auto weak = base::make_weak(controller);
 	ConfirmAndRun(
 		controller,
-		U("Удалить все ваши сообщения в выбранных чатах (%1)?\n\n"
-			"Они исчезнут у всех участников. Отменить это нельзя.")
+		U(Mokagram::Lang::Tr("Удалить все ваши сообщения в выбранных чатах (%1)?\n\nОни исчезнут у всех участников. Отменить это нельзя."))
 			.arg(allowed.size()),
-		U("Удалить"),
+		U(Mokagram::Lang::Tr("Удалить")),
 		[=] {
 			const auto strong = weak.get();
 			if (!strong) {
@@ -1224,18 +1223,18 @@ void ShowDeleteMyMessagesForPeers(
 			multi->peers = allowed;
 			strong->show(Box([=](not_null<Ui::GenericBox*> progress) {
 				multi->box = progress;
-				progress->setTitle(rpl::single(U("Удаление моих сообщений")));
+				progress->setTitle(rpl::single(U(Mokagram::Lang::Tr("Удаление моих сообщений"))));
 				const auto inner = progress->verticalLayout();
 				Ui::AddSkip(inner);
 				multi->label = inner->add(
 					object_ptr<Ui::FlatLabel>(
 						inner,
-						U("Ищу ваши сообщения…"),
+						U(Mokagram::Lang::Tr("Ищу ваши сообщения…")),
 						st::boxLabel),
 					st::boxPadding);
 				Ui::AddSkip(inner);
 				progress->addButton(
-					rpl::single(U("Остановить")),
+					rpl::single(U(Mokagram::Lang::Tr("Остановить"))),
 					[=] {
 						multi->cancelled = true;
 						if (const auto current = multi->current) {

@@ -1,4 +1,5 @@
 #include "mokagram/stars/mokagram_stars_stats.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "api/api_credits.h"
 #include "core/application.h"
@@ -49,19 +50,19 @@ struct Stats {
 
 [[nodiscard]] QString Category(const Data::CreditsHistoryEntry &e) {
 	if (e.gift || e.stargift) {
-		return U("Подарки");
+		return U(Mokagram::Lang::Tr("Подарки"));
 	} else if (!e.extended.empty()) {
-		return U("Платные медиа");
+		return U(Mokagram::Lang::Tr("Платные медиа"));
 	} else if (e.reaction) {
-		return U("Реакции");
+		return U(Mokagram::Lang::Tr("Реакции"));
 	} else if (e.paidMessagesCount) {
-		return U("Платные сообщения");
+		return U(Mokagram::Lang::Tr("Платные сообщения"));
 	} else if (!e.subscriptionUntil.isNull()) {
-		return U("Подписки");
+		return U(Mokagram::Lang::Tr("Подписки"));
 	} else if (e.peerType == Data::CreditsHistoryEntry::PeerType::Ads) {
-		return U("Реклама");
+		return U(Mokagram::Lang::Tr("Реклама"));
 	}
-	return U("Боты и прочее");
+	return U(Mokagram::Lang::Tr("Боты и прочее"));
 }
 
 [[nodiscard]] QString Number(qint64 value) {
@@ -70,8 +71,8 @@ struct Stats {
 
 [[nodiscard]] QString ShortMonth(int month) {
 	static const auto names = std::array<const char*, 12>{
-		"янв", "фев", "мар", "апр", "май", "июн",
-		"июл", "авг", "сен", "окт", "ноя", "дек" };
+		Mokagram::Lang::Tr("янв"), Mokagram::Lang::Tr("фев"), Mokagram::Lang::Tr("мар"), Mokagram::Lang::Tr("апр"), Mokagram::Lang::Tr("май"), Mokagram::Lang::Tr("июн"),
+		Mokagram::Lang::Tr("июл"), Mokagram::Lang::Tr("авг"), Mokagram::Lang::Tr("сен"), Mokagram::Lang::Tr("окт"), Mokagram::Lang::Tr("ноя"), Mokagram::Lang::Tr("дек") };
 	return U(names[std::clamp(month, 1, 12) - 1]);
 }
 
@@ -263,15 +264,15 @@ void Fill(
 		}, row->lifetime());
 	};
 
-	head(U("Итого потрачено"));
-	line(U("За всё время"), Number(total), true);
-	line(U("За 30 дней"), Number(lastMonth), true);
-	line(U("Из них себе (подарки и покупки)"), Number(toSelf), true);
+	head(U(Mokagram::Lang::Tr("Итого потрачено")));
+	line(U(Mokagram::Lang::Tr("За всё время")), Number(total), true);
+	line(U(Mokagram::Lang::Tr("За 30 дней")), Number(lastMonth), true);
+	line(U(Mokagram::Lang::Tr("Из них себе (подарки и покупки)")), Number(toSelf), true);
 	if (!stats.done) {
-		line(U("Загружено операций"), Number(int(stats.list.size())) + U("…"));
+		line(U(Mokagram::Lang::Tr("Загружено операций")), Number(int(stats.list.size())) + U("…"));
 	}
 
-	head(U("По месяцам"));
+	head(U(Mokagram::Lang::Tr("По месяцам")));
 	auto bars = std::vector<std::pair<QString, qint64>>();
 	for (auto i = kMonths - 1; i >= 0; --i) {
 		const auto k = nowKey - i;
@@ -281,7 +282,7 @@ void Fill(
 		object_ptr<Chart>(content, std::move(bars)),
 		QMargins(24, 6, 24, 6));
 
-	head(U("По категориям"));
+	head(U(Mokagram::Lang::Tr("По категориям")));
 	auto cats = std::vector<std::pair<QString, qint64>>(
 		byCategory.begin(), byCategory.end());
 	std::sort(cats.begin(), cats.end(), [](auto &a, auto &b) {
@@ -291,10 +292,10 @@ void Fill(
 		line(c.first, Number(c.second), true);
 	}
 	if (cats.empty()) {
-		line(U("Трат пока нет"), QString());
+		line(U(Mokagram::Lang::Tr("Трат пока нет")), QString());
 	}
 
-	head(U("Кому больше всего"));
+	head(U(Mokagram::Lang::Tr("Кому больше всего")));
 	auto peers = std::vector<std::pair<uint64, qint64>>(
 		byPeer.begin(), byPeer.end());
 	std::sort(peers.begin(), peers.end(), [](auto &a, auto &b) {
@@ -345,7 +346,7 @@ void ShowSpendingStatsBox() {
 	}
 	const auto session = &controller->session();
 	window->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(U("Траты звёзд")));
+		box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Траты звёзд"))));
 		box->setWidth(440);
 		const auto stats = std::make_shared<Stats>();
 		const auto holder = box->verticalLayout();
@@ -357,7 +358,7 @@ void ShowSpendingStatsBox() {
 		const auto refresh = crl::guard(box, render);
 		Load(session, stats, refresh);
 		box->addButton(
-			rpl::single(U("Закрыть")),
+			rpl::single(U(Mokagram::Lang::Tr("Закрыть"))),
 			[=] { box->closeBox(); });
 		render();
 	}));

@@ -7,6 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_builder.h"
 
+#include <array>
+#include <map>
+
 #include "apiwrap.h"
 #include "lang/lang_keys.h"
 #include "api/api_user_privacy.h"
@@ -41,6 +44,51 @@ constexpr auto kGroupInset = 4;
 	return value.isValid()
 		? reinterpret_cast<Ui::VerticalLayout*>(value.value<quintptr>())
 		: nullptr;
+}
+
+// Скруглённые углы подсветки рисуем готовыми картинками: вычитание контуров
+// на каждый кадр (QPathClipper) заметно грузило процессор при анимации в шапке.
+struct CornerKey {
+	int radius = 0;
+	QRgb color = 0;
+	int ratio = 1;
+	friend inline auto operator<=>(const CornerKey&, const CornerKey&) = default;
+};
+[[nodiscard]] const std::array<QImage, 4> &CornerMasks(
+		int radius,
+		const QColor &color) {
+	static auto cache = std::map<CornerKey, std::array<QImage, 4>>();
+	const auto ratio = style::DevicePixelRatio();
+	const auto key = CornerKey{ radius, color.rgba(), ratio };
+	const auto i = cache.find(key);
+	if (i != cache.end()) {
+		return i->second;
+	}
+	if (cache.size() > 16) {
+		cache.clear();
+	}
+	auto top = QImage(
+		QSize(radius, radius) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	top.setDevicePixelRatio(ratio);
+	top.fill(Qt::transparent);
+	{
+		// Левый верхний угол: квадрат без четверти круга.
+		auto q = QPainter(&top);
+		q.setRenderHint(QPainter::Antialiasing);
+		auto path = QPainterPath();
+		path.addRect(QRectF(0, 0, radius, radius));
+		auto circle = QPainterPath();
+		circle.addEllipse(QRectF(0, 0, 2 * radius, 2 * radius));
+		q.fillPath(path.subtracted(circle), color);
+	}
+	auto result = std::array<QImage, 4>{
+		top,
+		top.mirrored(true, false),
+		top.mirrored(false, true),
+		top.mirrored(true, true),
+	};
+	return cache.emplace(key, std::move(result)).first->second;
 }
 
 [[nodiscard]] not_null<Ui::VerticalLayout*> BeginGroup(
@@ -132,19 +180,14 @@ constexpr auto kGroupInset = 4;
 			if (r < 1) {
 				continue;
 			}
+			const auto &masks = CornerMasks(r, outerBg->c);
 			for (const auto right : { false, true }) {
 				for (const auto bottom : { false, true }) {
 					const auto x = right ? (card.x() + card.width() - r) : card.x();
 					const auto y = bottom ? (seg.bottom - r) : seg.top;
-					auto path = QPainterPath();
-					path.addRect(QRectF(x, y, r, r));
-					auto circle = QPainterPath();
-					circle.addEllipse(QRectF(
-						right ? (x - r) : x,
-						bottom ? (y - r) : y,
-						2 * r,
-						2 * r));
-					p.fillPath(path.subtracted(circle), outerBg);
+					p.drawImage(
+						QRectF(x, y, r, r),
+						masks[(right ? 1 : 0) + (bottom ? 2 : 0)]);
 				}
 			}
 		}
