@@ -718,6 +718,20 @@ void RegisterSettings() {
 		.defaultValue = true,
 	});
 	lag({
+		.key = u"lag.idle"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Экономия в фоне")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Когда окно не в фокусе, анимации, эмодзи и эффекты приостанавливаются. Сообщения, плагины и уведомления работают как обычно.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+	});
+	lag({
+		.key = u"lag.toaster"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Режим тостера")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Максимальная экономия всегда: без анимаций и эффектов. Для слабых компьютеров и ноутбуков на батарее.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = false,
+	});
+	lag({
 		.key = u"lag.level"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Что отключать при лагах")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Мягко: фон чата, эффекты, спойлеры. Средне: ещё стикеры и эмодзи. Жёстко: всё.")),
@@ -787,7 +801,7 @@ struct LagState {
 
 void LagTick(LagState &state) {
 	const auto now = crl::now();
-	const auto delta = (state.last > 0) ? (now - state.last - 100) : 0;
+	const auto delta = (state.last > 0) ? (now - state.last - 200) : 0;
 	state.last = now;
 	if (!S::Bool(u"lag.enabled"_q)) {
 		if (state.active) {
@@ -860,10 +874,24 @@ void Start() {
 	// Лаг-монитор: опоздание таймера на главном потоке = подвисание интерфейса.
 	static auto state = LagState();
 	static auto timer = new QTimer();
-	timer->setTimerType(Qt::PreciseTimer);
-	timer->setInterval(100);
+	// Грубый таймер: Qt склеивает пробуждения, процессор спит дольше.
+	timer->setTimerType(Qt::CoarseTimer);
+	timer->setInterval(200);
 	QObject::connect(timer, &QTimer::timeout, [] { LagTick(state); });
 	timer->start();
+	// Пока окно в фоне, подвисания никто не видит: таймер спит и не будит процессор.
+	QObject::connect(qApp, &QGuiApplication::applicationStateChanged, [](
+			Qt::ApplicationState application) {
+		if (application == Qt::ApplicationActive) {
+			if (!timer->isActive()) {
+				// После сна не считаем паузу подвисанием.
+				state.last = 0;
+				timer->start();
+			}
+		} else {
+			timer->stop();
+		}
+	});
 
 	static auto lifetime = rpl::lifetime();
 	Core::App().domain().activeSessionValue(

@@ -4,6 +4,7 @@
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
+#include "ui/power_saving.h"
 #include "mokagram/stars/mokagram_stars_stats.h"
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/quote/mokagram_quote.h"
@@ -233,6 +234,8 @@ struct Category {
 		{ "history.sqlite", "📊" },
 		{ "history.filters_enabled", "📑" },
 		{ "hide_blocked", "🚫" },
+		{ "lag.idle", "💤" },
+		{ "lag.toaster", "⚙️" },
 		{ "lag.enabled", "📈" },
 		{ "lag.level", "📊" },
 		{ "lag.sensitivity", "📐" },
@@ -2467,6 +2470,10 @@ void StartDebugCommands() {
 			Core::App().openLocalUrl(cmd.mid(4), {});
 		} else if (cmd == u"menu"_q) {
 			controller->widget()->showMainMenu();
+		} else if (cmd == u"psave"_q) {
+			PowerSaving::SetForceAll(true);
+		} else if (cmd == u"psaveoff"_q) {
+			PowerSaving::SetForceAll(false);
 		} else if (cmd == u"msginfo"_q) {
 			if (const auto history = controller->activeChatCurrent().history()) {
 				if (const auto item = history->lastMessage()) {
