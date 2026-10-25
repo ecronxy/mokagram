@@ -177,10 +177,10 @@ index 6b6e97d..ddfa7df 100644
  [[nodiscard]] QColor PreviewColorFromTextColor(QColor color);
 diff --git i/ui/text/text_emoji_budget.h w/ui/text/text_emoji_budget.h
 new file mode 100644
-index 0000000..851bea3
+index 0000000..fc47787
 --- /dev/null
 +++ w/ui/text/text_emoji_budget.h
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,16 @@
 +// Mokagram: потолок одновременно играющих премиум-эмодзи за кадр.
 +#pragma once
 +
@@ -192,9 +192,13 @@ index 0000000..851bea3
 +void SetCustomEmojiBudget(int limit);
 +[[nodiscard]] bool TakeCustomEmojiBudget();
 +
++// То же для анимированных стикеров в сообщениях.
++void SetStickerBudget(int limit);
++[[nodiscard]] bool TakeStickerBudget();
++
 +} // namespace Ui::Text
 diff --git i/ui/text/text_renderer.cpp w/ui/text/text_renderer.cpp
-index 8ad5f61..9cc354d 100644
+index 8ad5f61..3a3158f 100644
 --- i/ui/text/text_renderer.cpp
 +++ w/ui/text/text_renderer.cpp
 @@ -5,6 +5,7 @@
@@ -205,13 +209,16 @@ index 8ad5f61..9cc354d 100644
  
  #include "ui/text/text_block.h"
  #include "ui/text/text_extended_data.h"
-@@ -17,6 +18,31 @@
+@@ -17,6 +18,50 @@
  namespace Ui::Text {
  namespace {
  
 +int CustomEmojiLimit = 0;
 +crl::time CustomEmojiWindow = 0;
 +int CustomEmojiUsed = 0;
++int StickerLimit = 0;
++crl::time StickerWindow = 0;
++int StickerUsed = 0;
 +
 +} // namespace
 +
@@ -232,12 +239,28 @@ index 8ad5f61..9cc354d 100644
 +	return ++CustomEmojiUsed <= CustomEmojiLimit;
 +}
 +
++void SetStickerBudget(int limit) {
++	StickerLimit = std::max(limit, 0);
++}
++
++bool TakeStickerBudget() {
++	if (!StickerLimit) {
++		return true;
++	}
++	const auto now = crl::now();
++	if (now - StickerWindow > 12 || now < StickerWindow) {
++		StickerWindow = now;
++		StickerUsed = 0;
++	}
++	return ++StickerUsed <= StickerLimit;
++}
++
 +namespace {
 +
  constexpr auto kQuoteHeaderTextLarge = 25;
  
  const ClickHandlerPtr &CustomEmojiMismatchLink() {
-@@ -1206,6 +1232,9 @@ bool Renderer::drawLine(uint16 lineEnd, Blocks::const_iterator blocksEnd) {
+@@ -1206,6 +1251,9 @@ bool Renderer::drawLine(uint16 lineEnd, Blocks::const_iterator blocksEnd) {
  								: QPoint(
  									ex + _customEmojiSkip,
  									ey + _customEmojiSkip);

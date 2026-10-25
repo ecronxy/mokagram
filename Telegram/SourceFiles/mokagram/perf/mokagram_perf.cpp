@@ -33,6 +33,7 @@ struct State {
 void Apply() {
 	auto &state = Data();
 	Ui::Text::SetCustomEmojiBudget(S::Int(u"lag.emoji_cap"_q));
+	Ui::Text::SetStickerBudget(S::Int(u"lag.sticker_cap"_q));
 	state.economy = S::Bool(u"lag.toaster"_q)
 		|| (state.idleEconomy && S::Bool(u"lag.idle"_q));
 }

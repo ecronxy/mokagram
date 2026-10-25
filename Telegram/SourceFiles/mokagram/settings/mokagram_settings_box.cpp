@@ -237,6 +237,7 @@ struct Category {
 		{ "lag.idle", "💤" },
 		{ "lag.toaster", "⚙️" },
 		{ "lag.emoji_cap", "😜" },
+		{ "lag.sticker_cap", "🎞" },
 		{ "lag.enabled", "📈" },
 		{ "lag.level", "📊" },
 		{ "lag.sensitivity", "📐" },
