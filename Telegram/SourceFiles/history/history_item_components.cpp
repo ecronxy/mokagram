@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item_components.h"
 
+#include "mokagram/scam/mokagram_scam.h"
+
 #include "api/api_text_entities.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/algorithm.h"
@@ -836,6 +838,16 @@ void ReplyMarkupClickHandler::onClick(ClickContext context) const {
 	}
 	auto my = context.other.value<ClickHandlerContext>();
 	my.itemId = _itemId;
+	if (getUrlButton()) {
+		if (const auto item = _owner->message(_itemId)) {
+			if (Mokagram::Scam::IsFakeOffer(item)) {
+				Mokagram::Scam::ShowWarning(item, [=] {
+					Api::ActivateBotCommand(my, _row, _column);
+				});
+				return;
+			}
+		}
+	}
 	Api::ActivateBotCommand(my, _row, _column);
 }
 
@@ -883,6 +895,7 @@ ReplyKeyboard::ReplyKeyboard(
 		const auto owner = &_item->history()->owner();
 		const auto session = &owner->session();
 		const auto context = _item->fullId();
+		const auto mokaFlagged = Mokagram::Scam::IsFakeOffer(_item);
 		const auto rowCount = int(markup->data.rows.size());
 		_rows.reserve(rowCount);
 		for (auto i = 0; i != rowCount; ++i) {
@@ -901,7 +914,10 @@ ReplyKeyboard::ReplyKeyboard(
 					? base::duplicate(row[j].text).replace(
 						RegExp,
 						QChar(0x2B50))
-					: row[j].text;
+					: ((mokaFlagged
+						&& (type == Type::Url || type == Type::Auth))
+						? (QString::fromUtf8("\xE2\x9A\xA0 ") + row[j].text)
+						: row[j].text);
 				const auto withEmoji = [&](const style::IconEmoji &icon) {
 					return Ui::Text::IconEmoji(&icon).append(text);
 				};

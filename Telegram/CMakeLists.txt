@@ -83,6 +83,8 @@ PRIVATE
     mokagram/effects/mokagram_effects.cpp
     mokagram/effects/mokagram_effects.h
     mokagram/quote/mokagram_quote.cpp
+    mokagram/scam/mokagram_scam.cpp
+    mokagram/scam/mokagram_scam.h
     mokagram/quote/mokagram_quote.h
     mokagram/appearance/mokagram_appearance.cpp
     mokagram/appearance/mokagram_appearance.h
