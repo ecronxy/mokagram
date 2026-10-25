@@ -7,7 +7,6 @@
 
 namespace Mokagram::Misc {
 
-void RegisterDateRegSettings();
 
 [[nodiscard]] bool DateRegEnabled();
 

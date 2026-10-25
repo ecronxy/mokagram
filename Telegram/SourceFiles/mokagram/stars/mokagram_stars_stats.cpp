@@ -8,6 +8,7 @@
 #include "data/data_user.h"
 #include "main/main_session.h"
 #include "ui/layers/generic_box.h"
+#include "ui/effects/credits_graphics.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/vertical_list.h"
@@ -171,6 +172,7 @@ void Fill(
 		const Stats &stats) {
 	auto total = qint64(0);
 	auto lastMonth = qint64(0);
+	auto toSelf = qint64(0);
 	auto byCategory = std::map<QString, qint64>();
 	auto byPeer = std::map<uint64, qint64>();
 	auto byMonth = std::map<int, qint64>();
@@ -184,6 +186,9 @@ void Fill(
 		const auto amount = Spent(e);
 		total += amount;
 		byCategory[Category(e)] += amount;
+		if (e.barePeerId == session->userId().bare) {
+			toSelf += amount;
+		}
 		if (e.barePeerId && e.peerType == Data::CreditsHistoryEntry::PeerType::Peer) {
 			byPeer[e.barePeerId] += amount;
 		}
@@ -198,7 +203,7 @@ void Fill(
 		Ui::AddSkip(content);
 		Ui::AddSubsectionTitle(content, rpl::single(text));
 	};
-	const auto line = [&](const QString &left, const QString &right) {
+	const auto line = [&](const QString &left, const QString &right, bool star = false) {
 		const auto row = content->add(
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(24, 3, 24, 3));
@@ -207,16 +212,25 @@ void Fill(
 		const auto r = Ui::CreateChild<Ui::FlatLabel>(row, right, st::boxLabel);
 		l->show();
 		r->show();
+		const auto icon = star ? Ui::CreateSingleStarWidget(row, st::boxLabel.style.font->height).get() : static_cast<Ui::RpWidget*>(nullptr);
+		if (icon) {
+			icon->show();
+		}
 		row->widthValue() | rpl::on_next([=](int w) {
-			l->resizeToNaturalWidth(w - r->naturalWidth() - 12);
+			const auto extra = icon ? icon->width() + 4 : 0;
+			l->resizeToNaturalWidth(w - r->naturalWidth() - extra - 12);
 			l->moveToLeft(0, 0);
 			r->moveToRight(0, 0);
+			if (icon) {
+				icon->moveToRight(r->naturalWidth() + 4, 0);
+			}
 		}, row->lifetime());
 	};
 
 	head(U("Итого потрачено"));
-	line(U("За всё время"), U("⭐ ") + Number(total));
-	line(U("За 30 дней"), U("⭐ ") + Number(lastMonth));
+	line(U("За всё время"), Number(total), true);
+	line(U("За 30 дней"), Number(lastMonth), true);
+	line(U("Из них себе (подарки и покупки)"), Number(toSelf), true);
 	if (!stats.done) {
 		line(U("Загружено операций"), Number(int(stats.list.size())) + U("…"));
 	}
@@ -238,7 +252,7 @@ void Fill(
 		return a.second > b.second;
 	});
 	for (const auto &c : cats) {
-		line(c.first, U("⭐ ") + Number(c.second));
+		line(c.first, Number(c.second), true);
 	}
 	if (cats.empty()) {
 		line(U("Трат пока нет"), QString());
@@ -269,7 +283,7 @@ void Fill(
 		if (name.isEmpty()) {
 			name = U("ID ") + QString::number(p.first);
 		}
-		line(name, U("⭐ ") + Number(p.second));
+		line(name, Number(p.second), true);
 	}
 	Ui::AddSkip(content);
 }

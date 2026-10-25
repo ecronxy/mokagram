@@ -22,7 +22,6 @@
 namespace Mokagram::Misc {
 namespace {
 
-constexpr auto kKeySetting = "profile.datereg_key";
 
 #if __has_include("mokagram/misc/mokagram_datereg_key.h")
 #include "mokagram/misc/mokagram_datereg_key.h"
@@ -30,12 +29,8 @@ constexpr auto kKeySetting = "profile.datereg_key";
 constexpr auto kMokagramDateRegDefaultKey = "";
 #endif
 
-// Свой ключ из настроек главнее зашитого в сборку.
 QString Key() {
-	const auto own = Settings::String(QString::fromUtf8(kKeySetting)).trimmed();
-	return own.isEmpty()
-		? QString::fromUtf8(kMokagramDateRegDefaultKey)
-		: own;
+	return QString::fromUtf8(kMokagramDateRegDefaultKey);
 }
 
 QNetworkAccessManager &Net() {
@@ -153,19 +148,6 @@ void Fetch(quint64 userId) {
 }
 
 } // namespace
-
-void RegisterDateRegSettings() {
-	Settings::Register({
-		.key = QString::fromUtf8(kKeySetting),
-		.section = QString::fromUtf8("Профиль"),
-		.title = QString::fromUtf8("Ключ API даты регистрации"),
-		.description = QString::fromUtf8("Необязательно: свой ключ из @dateregbot. Если пусто, берётся ключ, зашитый в сборку."),
-		.kind = Settings::Kind::String,
-		.defaultValue = QString(),
-		.category = u"privacy"_q,
-		.sectionIcon = u"person"_q,
-	});
-}
 
 bool DateRegEnabled() {
 	return !Key().isEmpty();

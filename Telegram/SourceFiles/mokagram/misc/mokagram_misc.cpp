@@ -133,7 +133,6 @@ void RegisterSettings() {
 		.sectionIcon = u"person"_q,
 		.action = [] { Stars::ShowSpendingStatsBox(); },
 	});
-	RegisterDateRegSettings();
 	Guard::RegisterSettings();
 }
 
