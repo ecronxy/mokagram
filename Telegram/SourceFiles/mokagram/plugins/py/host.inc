@@ -57,7 +57,13 @@ def _moka_parse(source):
                     detected.add('messages.read')
                 if f.attr in ('edit_message', 'pin_message'):
                     detected.add('messages.edit')
-                if f.attr == 'delete_messages':
+                if f.attr in ('invoke_tl',):
+                    detected.add('tl.write')
+                if f.attr in ('forward_messages', 'react'):
+                    detected.add('messages.send')
+                if f.attr in ('get_participants', 'search_messages', 'get_history_remote', 'input_peer', 'get_user'):
+                    detected.add('messages.read')
+                if f.attr in ('delete_messages', 'delete_message'):
                     detected.add('messages.delete')
                 if f.attr == 'clipboard_get':
                     detected.add('clipboard')
@@ -436,6 +442,13 @@ def _moka_event(name, payload_json):
         payload = json.loads(payload_json)
     except Exception:
         return ''
+    if name == '__cb':
+        # итог асинхронного вызова клиента: {pid, token, payload}
+        try:
+            _moka_invoke(payload['pid'], payload['token'], json.dumps(payload.get('payload') or {}))
+        except Exception:
+            pass
+        return ''
     hook = 'on_' + name
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')
@@ -557,12 +570,23 @@ def _moka_load_file(name):
     return pid
 
 
-def _moka_init(folder, sdk_source, api_source):
+def _moka_install_tl(source, schema):
+    mod = types.ModuleType('mokagram_sdk.tl')
+    exec(compile(source, 'mokagram_sdk/tl.py', 'exec'), mod.__dict__)
+    mod._SRC = schema
+    sys.modules['mokagram_sdk.tl'] = mod
+    sys.modules['mokagram_sdk'].tl = mod
+    return mod
+
+
+def _moka_init(folder, sdk_source, api_source, tl_source='', tl_schema=''):
     global _folder
     _folder = folder
     _install_sdk = _moka_install_sdk
     _install_sdk(sdk_source)
     _moka_install_api(api_source)
+    if tl_source:
+        sys.modules['mokagram_sdk.api']._h['tl'] = _moka_install_tl(tl_source, tl_schema)
     _load_state()
     _load_grants()
     if os.path.isdir(folder):

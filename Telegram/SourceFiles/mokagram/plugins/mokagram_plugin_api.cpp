@@ -45,6 +45,8 @@
 #include "base/unixtime.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
+#include "mtproto/details/mtproto_serialized_request.h"
+#include "mtproto/mtp_instance.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
@@ -1055,6 +1057,135 @@ std::string DeleteMessages(const QJsonObject &args) {
 	});
 }
 
+// ---- универсальный вызов TL ----
+
+[[nodiscard]] std::string HexOfPrimes(const mtpPrime *data, size_t ints) {
+	return QByteArray(
+		reinterpret_cast<const char*>(data),
+		int(ints * sizeof(mtpPrime))).toHex().toStdString();
+}
+
+template <typename T>
+[[nodiscard]] std::string SerializeHex(const T &value) {
+	auto buffer = mtpBuffer();
+	value.template write<mtpBuffer>(buffer);
+	return HexOfPrimes(buffer.constData(), size_t(buffer.size()));
+}
+
+// kind: peer | user | channel. Возвращает сериализованный InputPeer/InputUser/InputChannel,
+// чтобы Python собрал запрос с верным access_hash.
+std::string TlInput(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto kind = args.value("kind").toString();
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto peer = (session && peerId)
+			? session->data().peerLoaded(peerId)
+			: nullptr;
+		if (!peer) {
+			return Reply(false, U("чата нет среди загруженных"));
+		}
+		const auto user = peer->asUser();
+		const auto channel = peer->asChannel();
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("kind", user ? "user" : channel ? "channel" : "chat");
+		result.insert("bare", QString::number(user
+			? peerToUser(peer->id).bare
+			: channel
+			? peerToChannel(peer->id).bare
+			: peerToChat(peer->id).bare));
+		if (kind == u"peer"_q) {
+			result.insert("hex", QString::fromStdString(
+				SerializeHex(peer->input())));
+		} else if (kind == u"user"_q && user) {
+			result.insert("hex", QString::fromStdString(
+				SerializeHex(user->inputUser())));
+		} else if (kind == u"channel"_q && channel) {
+			result.insert("hex", QString::fromStdString(
+				SerializeHex(channel->inputChannel())));
+		} else {
+			return Reply(false, U("нет такого вида ввода для этого чата"));
+		}
+		return Json(result);
+	});
+}
+
+// Отправляет готовое тело запроса. Ответ уходит плагину как событие __cb
+// (pid, token, payload) в его рабочем потоке. Ответы с обновлениями применяются в клиенте.
+std::string InvokeRaw(const QJsonObject &args) {
+	const auto pid = args.value("pid").toString().toStdString();
+	const auto token = args.value("token").toString().toStdString();
+	const auto bytes = QByteArray::fromHex(
+		args.value("hex").toString().toLatin1());
+	if (bytes.size() < 4 || (bytes.size() & 3) || bytes.size() > (1 << 20)) {
+		return Reply(false, U("плохой запрос"));
+	}
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		if (!session) {
+			return Reply(false, U("нет открытой сессии"));
+		}
+		const auto ints = uint32(bytes.size() / 4);
+		auto request = MTP::details::SerializedRequest::Prepare(ints);
+		const auto old = request->size();
+		request->resize(old + int(ints));
+		memcpy(request->data() + old, bytes.constData(), size_t(bytes.size()));
+
+		const auto weak = base::make_weak(session);
+		const auto deliver = [=](QJsonObject payload) {
+			auto wrapper = QJsonObject();
+			wrapper.insert("pid", QString::fromStdString(pid));
+			wrapper.insert("token", QString::fromStdString(token));
+			wrapper.insert("payload", payload);
+			QueueEvent("__cb", Json(wrapper));
+		};
+		const auto id = MTP::details::GetNextRequestId();
+		session->mtp().sendSerialized(id, std::move(request), MTP::ResponseHandler{
+			.done = [=](const MTP::Response &response) -> bool {
+				const auto &reply = response.reply;
+				if (!reply.isEmpty()) {
+					switch (mtpTypeId(reply.front())) {
+					case mtpc_updatesTooLong:
+					case mtpc_updateShortMessage:
+					case mtpc_updateShortChatMessage:
+					case mtpc_updateShort:
+					case mtpc_updatesCombined:
+					case mtpc_updates:
+					case mtpc_updateShortSentMessage: {
+						auto from = reply.constData();
+						const auto end = from + reply.size();
+						auto updates = MTPUpdates();
+						if (updates.read(from, end)) {
+							if (const auto strong = weak.get()) {
+								strong->api().applyUpdates(updates);
+							}
+						}
+					} break;
+					}
+				}
+				auto payload = QJsonObject();
+				payload.insert("ok", true);
+				payload.insert("hex", QString::fromStdString(HexOfPrimes(
+					reply.constData(),
+					size_t(reply.size()))));
+				deliver(payload);
+				return true;
+			},
+			.fail = [=](const MTP::Error &error, const MTP::Response &) -> bool {
+				auto payload = QJsonObject();
+				payload.insert("ok", false);
+				payload.insert("code", int(error.code()));
+				payload.insert("type", error.type());
+				payload.insert("description", error.description());
+				deliver(payload);
+				return true;
+			},
+		}, 0, 0, 0);
+		return Reply(true);
+	});
+}
+
 // ---- фильтр скрытия сообщений ----
 
 std::atomic<int> FilterCount = 0;
@@ -1121,6 +1252,10 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return GetUserInfo(args);
 	} else if (op == "get_me") {
 		return GetMe(args);
+	} else if (op == "tl_input") {
+		return TlInput(args);
+	} else if (op == "invoke_raw") {
+		return InvokeRaw(args);
 	} else if (op == "clipboard_get") {
 		return ClipboardGet(args);
 	} else if (op == "pin_message") {

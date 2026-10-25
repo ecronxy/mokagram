@@ -470,6 +470,256 @@ def delete_messages(peer, msg_ids, revoke=False):
     return True if res.get('ok') else None
 
 
+# ---- универсальный вызов TL и обёртки над ним ----
+# Ответы приходят в колбэк callback(result, error) в рабочем потоке плагина. result это dict/список
+# с ключом '_' (имя конструктора), error это {'code', 'type', 'description'}.
+
+_TL_DENY = {
+    'channels.deleteChannel', 'channels.editCreator', 'messages.deleteChat', 'users.setSecureValueErrors',
+    'contacts.resetSaved', 'messages.deletePhoneCallHistory',
+}
+_TL_DENY_HEAD = {'auth', 'bots', 'smsjobs', 'langpack', 'phone'}
+_TL_SENSITIVE = ('Password', 'Secure', 'Authorization', 'Takeout', 'Passkey', 'Phone', 'Email', 'Passport')
+
+
+def _tl_perm(method):
+    """Какое право нужно методу или None, если метод закрыт совсем (захват и потеря аккаунта, платежи)."""
+    if not isinstance(method, str) or not method or method in _TL_DENY:
+        return None
+    if method.startswith(('invoke', 'initConnection')):
+        return None
+    head, _, tail = method.rpartition('.')
+    readonly = tail.startswith(('get', 'search', 'resolve', 'check'))
+    if head in _TL_DENY_HEAD:
+        return None
+    if head in ('account', 'payments'):
+        if not readonly or any(w in tail for w in _TL_SENSITIVE):
+            return None
+    return 'tl.read' if readonly else 'tl.write'
+
+
+def _invoke(entry, method, params, callback):
+    tl = _h.get('tl')
+    if tl is None or not _limit(entry, 'tl', 60, 60):
+        _h['say']('[%s] invoke_tl %s: не готово или больше 60 вызовов в минуту' % (entry['id'], method))
+        return None
+    try:
+        raw = tl.encode_request(method, params or {})
+    except Exception as e:
+        _h['say']('[%s] invoke_tl %s: %s' % (entry['id'], method, e))
+        return None
+
+    def done(payload):
+        result = error = None
+        if payload.get('ok'):
+            try:
+                result = tl.decode_result(method, bytes.fromhex(payload['hex']))
+            except Exception as e:
+                error = {'code': 0, 'type': 'DECODE', 'description': str(e)}
+        else:
+            error = {'code': payload.get('code', 0), 'type': payload.get('type', ''),
+                     'description': payload.get('description', '')}
+        if callable(callback):
+            callback(result, error)
+
+    token = _h['register_cb'](entry, done, True)
+    res = _native('invoke_raw', {'pid': entry['id'], 'token': token, 'hex': raw.hex()})
+    _h['audit'](entry, 'invoke_tl', method, 'allowed' if res.get('ok') else 'failed', len(raw))
+    return True if res.get('ok') else None
+
+
+def invoke_tl(method, params=None, callback=None):
+    """Любой метод Telegram API: invoke_tl('messages.getHistory', {...}, cb). Нужно право tl.read или tl.write
+    (смотря на метод). Методы входа, платежей, паролей и сеансов закрыты."""
+    perm = _tl_perm(method)
+    if perm is None:
+        entry = _h['caller']()
+        if entry is not None:
+            _h['audit'](entry, 'invoke_tl', str(method), 'denied')
+            _h['say']('[%s] invoke_tl %s закрыт' % (entry['id'], method))
+        return None
+    entry = _gate('invoke_tl', perm, method)
+    if entry is None:
+        return None
+    return _invoke(entry, method, params, callback)
+
+
+def _tl_input(entry, kind, peer):
+    res = _native('tl_input', {'kind': kind, 'peer': peer})
+    tl = _h.get('tl')
+    if not res.get('ok') or tl is None:
+        return None, res
+    return tl.decode_object(bytes.fromhex(res['hex'])), res
+
+
+def input_peer(peer):
+    """InputPeer чата (dict TL) для своих запросов через invoke_tl."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('input_peer', 'messages.read', peer)
+    if entry is None or not ok:
+        return None
+    return _tl_input(entry, 'peer', peer)[0]
+
+
+def _user_brief(u):
+    if not isinstance(u, dict):
+        return None
+    return {'id': u.get('id'), 'first_name': u.get('first_name', ''), 'last_name': u.get('last_name', ''),
+            'username': u.get('username', ''), 'bot': bool(u.get('bot')), 'premium': bool(u.get('premium')),
+            'deleted': bool(u.get('deleted'))}
+
+
+def _peer_id(p):
+    if not isinstance(p, dict):
+        return None
+    return p.get('user_id') or p.get('chat_id') or p.get('channel_id')
+
+
+def _msg_brief(m):
+    if not isinstance(m, dict) or m.get('_') == 'messageEmpty':
+        return None
+    return {'id': m.get('id'), 'text': m.get('message', ''), 'date': m.get('date'), 'out': bool(m.get('out')),
+            'from': _peer_id(m.get('from_id')), 'has_media': m.get('media') is not None,
+            'reply_to': (m.get('reply_to') or {}).get('reply_to_msg_id')}
+
+
+def _random_id():
+    import random
+    return random.getrandbits(62)
+
+
+def forward_messages(from_peer, msg_ids, to_peer, callback=None, drop_author=False, silent=False):
+    """Переслать сообщения (до 100). Нужно право messages.send."""
+    from_peer, _, ok1 = _ids(from_peer)
+    to_peer, _, ok2 = _ids(to_peer)
+    entry = _gate('forward_messages', 'messages.send', to_peer)
+    if entry is None or not (ok1 and ok2) or not isinstance(msg_ids, (list, tuple)) or not 0 < len(msg_ids) <= 100:
+        return None
+    if not _limit(entry, 'forward', 10, 60):
+        _h['say']('[%s] forward_messages: больше 10 пересылок в минуту, отказ' % entry['id'])
+        return None
+    src = _tl_input(entry, 'peer', from_peer)[0]
+    dst = _tl_input(entry, 'peer', to_peer)[0]
+    if src is None or dst is None:
+        return None
+    ids = [int(i) for i in msg_ids]
+    return _invoke(entry, 'messages.forwardMessages', {
+        'from_peer': src, 'id': ids, 'random_id': [_random_id() for _ in ids], 'to_peer': dst,
+        'drop_author': True if drop_author else None, 'silent': True if silent else None,
+    }, callback)
+
+
+def react(peer, msg_id, emoji, callback=None):
+    """Поставить реакцию: emoji строкой, а для премиум-эмодзи число document_id. Нужно право messages.send."""
+    peer, msg, ok = _ids(peer, msg_id)
+    entry = _gate('react', 'messages.send', peer)
+    if entry is None or not ok:
+        return None
+    if not _limit(entry, 'react', 30, 60):
+        _h['say']('[%s] react: больше 30 реакций в минуту, отказ' % entry['id'])
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    reaction = ({'_': 'reactionCustomEmoji', 'document_id': int(emoji)} if isinstance(emoji, int)
+                else {'_': 'reactionEmoji', 'emoticon': str(emoji)})
+    return _invoke(entry, 'messages.sendReaction', {
+        'peer': ip, 'msg_id': int(msg), 'reaction': [reaction],
+    }, callback)
+
+
+def get_participants(peer, callback, limit=200, offset=0):
+    """Участники группы или канала: callback([{user: {...}, role}], error). Нужно право messages.read."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('get_participants', 'messages.read', peer)
+    if entry is None or not ok or not callable(callback) or not _limit(entry, 'read', 120, 60):
+        return None
+    kind = _native('tl_input', {'kind': 'peer', 'peer': peer})
+    if not kind.get('ok'):
+        return None
+
+    def simplify(result, error):
+        if error or result is None:
+            return callback(None, error)
+        users = {u.get('id'): _user_brief(u) for u in result.get('users', [])}
+        out = []
+        if result.get('_') == 'channels.channelParticipants':
+            for p in result.get('participants', []):
+                uid = _peer_id(p.get('peer')) or p.get('user_id')
+                out.append({'user': users.get(uid) or {'id': uid},
+                            'role': p['_'].replace('channelParticipant', '').lower() or 'member'})
+        elif result.get('_') == 'messages.chatFull':
+            full = (result.get('full_chat') or {}).get('participants') or {}
+            for p in full.get('participants', []) or []:
+                uid = p.get('user_id')
+                out.append({'user': users.get(uid) or {'id': uid},
+                            'role': p['_'].replace('chatParticipant', '').lower() or 'member'})
+        callback(out, None)
+
+    if kind.get('kind') == 'channel':
+        ip = _tl_input(entry, 'channel', peer)[0]
+        if ip is None:
+            return None
+        return _invoke(entry, 'channels.getParticipants', {
+            'channel': ip, 'filter': {'_': 'channelParticipantsRecent'},
+            'offset': int(offset), 'limit': min(int(limit), 200), 'hash': 0,
+        }, simplify)
+    if kind.get('kind') == 'chat':
+        return _invoke(entry, 'messages.getFullChat', {'chat_id': int(kind['bare'])}, simplify)
+    return None
+
+
+def _messages_call(entry, method, params, callback):
+    def simplify(result, error):
+        if error or result is None:
+            return callback(None, error)
+        callback([m for m in (_msg_brief(x) for x in result.get('messages', [])) if m], None)
+    return _invoke(entry, method, params, simplify)
+
+
+def search_messages(peer, query, callback, limit=20, offset_id=0):
+    """Поиск по чату на сервере: callback([{id, text, date, out, from}], error). Нужно право messages.read."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('search_messages', 'messages.read', peer)
+    if entry is None or not ok or not callable(callback) or not isinstance(query, str) or len(query) > 256:
+        return None
+    if not _limit(entry, 'read', 120, 60):
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    return _messages_call(entry, 'messages.search', {
+        'peer': ip, 'q': query, 'filter': {'_': 'inputMessagesFilterEmpty'}, 'min_date': 0, 'max_date': 0,
+        'offset_id': int(offset_id), 'add_offset': 0, 'limit': min(int(limit), 100), 'max_id': 0, 'min_id': 0,
+        'hash': 0,
+    }, callback)
+
+
+def get_history_remote(peer, callback, limit=30, offset_id=0):
+    """История чата с сервера, не только загруженное: callback([{id, text, date, out, from}], error)."""
+    peer, _, ok = _ids(peer)
+    entry = _gate('get_history_remote', 'messages.read', peer)
+    if entry is None or not ok or not callable(callback) or not _limit(entry, 'read', 120, 60):
+        return None
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    return _messages_call(entry, 'messages.getHistory', {
+        'peer': ip, 'offset_id': int(offset_id), 'offset_date': 0, 'add_offset': 0,
+        'limit': min(int(limit), 100), 'max_id': 0, 'min_id': 0, 'hash': 0,
+    }, callback)
+
+
+def get_user(user_id):
+    """Сведения о человеке из загруженных (то же, что get_user_info)."""
+    return get_user_info(user_id)
+
+
+def delete_message(peer, msg_id, revoke=False):
+    """Одно сообщение (см. delete_messages)."""
+    return delete_messages(peer, [msg_id], revoke)
+
+
 def register_command(name, handler, description=''):
     """Команда в композере: пользователь пишет /name аргументы, сообщение не уходит, зовётся
     handler(ctx) с ctx = {'args': 'аргументы', 'peer': id чата, 'text': весь текст}."""

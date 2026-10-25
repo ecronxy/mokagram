@@ -734,4 +734,6 @@
 	{ "Сколько стикеров играет одновременно", "How many stickers play at once" },
 	{ "Остальные анимированные стикеры замирают на кадре. 0 значит без ограничения.", "The rest of the animated stickers freeze on a frame. 0 means no limit." },
 	{ "чтение буфера обмена", "reading the clipboard" },
+	{ "чтение данных через API Telegram", "reading data through the Telegram API" },
+	{ "действия через API Telegram", "actions through the Telegram API" },
 	{ "Яндекс Музыка", "Yandex Music" },

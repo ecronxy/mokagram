@@ -29,6 +29,8 @@ namespace {
 #include "mokagram/plugins/py/host.inc"
 #include "mokagram/plugins/py/base_plugin.inc"
 #include "mokagram/plugins/py/sdk_api.inc"
+#include "mokagram/plugins/py/tl.inc"
+#include "mokagram/plugins/py/tl_schema.inc"
 
 constexpr auto kQueueLimit = size_t(256);
 constexpr auto kMaxHookBytes = size_t(1024 * 1024);
@@ -384,6 +386,8 @@ int Start(LogFn log) {
 		PluginsDir(),
 		std::string(kSdkScript),
 		std::string(kApiScript),
+		std::string(kTlScript),
+		std::string(kTlSchema),
 	});
 	Drain(log);
 	if (log) log("plugins loaded: " + count);
