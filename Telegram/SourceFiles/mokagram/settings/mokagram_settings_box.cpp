@@ -3,6 +3,9 @@
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/stars/mokagram_stars_stats.h"
+#include "mokagram/effects/mokagram_effects.h"
+#include "history/history_inner_widget.h"
+#include "history/history_widget.h"
 
 #include <QtWidgets/QApplication>
 
@@ -2064,6 +2067,20 @@ void StartDebugCommands() {
 					history->session().data().histories().deleteMessages({ item->fullId() }, true);
 					history->session().data().histories().sendPendingReadInbox(history);
 				}
+			}
+		} else if (cmd.startsWith(u"fxtest"_q)) {
+			// Проигрывает эффект на нижних сообщениях, ничего не удаляя.
+			if (cmd.size() > 7) {
+				Settings::SetInt(u"fx.delete.style"_q, cmd.mid(7).toInt());
+			}
+			QWidget *inner = nullptr, *widget = nullptr;
+			for (const auto child : controller->widget()->findChildren<QWidget*>()) {
+				if (dynamic_cast<HistoryInner*>(child)) inner = child;
+				if (dynamic_cast<HistoryWidget*>(child)) widget = child;
+			}
+			if (inner && widget) {
+				const auto top = inner->height() - 110;
+				Effects::PlayDelete(widget, inner, QRect(0, top, inner->width(), 100), true);
 			}
 		} else if (cmd == u"starsstats"_q) {
 			Stars::ShowSpendingStatsBox();

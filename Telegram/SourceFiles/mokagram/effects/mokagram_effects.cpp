@@ -677,6 +677,21 @@ void PlayDelete(
 	auto image = pixmap.toImage().convertToFormat(
 		QImage::Format_ARGB32_Premultiplied);
 	const auto dpr = image.devicePixelRatio();
+	// grab() заливает фон плоским цветом: считаем его прозрачным по углу.
+	{
+		const auto bg = image.pixel(0, 0);
+		const auto near = [](int a, int b) { return std::abs(a - b) <= 2; };
+		for (auto y = 0; y != image.height(); ++y) {
+			const auto line = reinterpret_cast<QRgb*>(image.scanLine(y));
+			for (auto x = 0; x != image.width(); ++x) {
+				if (near(qRed(line[x]), qRed(bg))
+					&& near(qGreen(line[x]), qGreen(bg))
+					&& near(qBlue(line[x]), qBlue(bg))) {
+					line[x] = 0;
+				}
+			}
+		}
+	}
 	// Обрезаем прозрачные поля, чтобы рассыпался только пузырь.
 	auto minX = image.width(), minY = image.height(), maxX = -1, maxY = -1;
 	for (auto y = 0; y != image.height(); ++y) {
