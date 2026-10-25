@@ -109,6 +109,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item.h"
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/saveinator/mokagram_saveinator.h"
 #include "history/history_item_helpers.h" // GetErrorForSending.
 #include "history/history_drag_area.h"
 #include "history/history_inner_widget.h"
@@ -5832,6 +5833,16 @@ void HistoryWidget::send(Api::SendOptions options) {
 		return;
 	} else if (const auto page = shownRichMessage()) {
 		sendRichDraft(page, options);
+		return;
+	}
+	if (!options.scheduled
+		&& !_voiceRecordBar->isListenState()
+		&& Mokagram::Saveinator::OfferSendDownload(
+			controller(),
+			prepareSendAction(options),
+			_field->getLastText(),
+			crl::guard(this, [=] { send(options); }),
+			crl::guard(this, [=] { clearFieldText(); }))) {
 		return;
 	}
 	if (!options.scheduled) {
