@@ -38,6 +38,7 @@ constexpr auto kMonths = 12;
 
 struct Stats {
 	std::vector<Data::CreditsHistoryEntry> list;
+	std::vector<Data::CreditsHistoryEntry> refunds;
 	bool done = false;
 	bool failed = false;
 };
@@ -82,27 +83,30 @@ struct Stats {
 	return std::abs(qint64(e.credits.whole()));
 }
 
-void Load(
+void LoadDirection(
 		not_null<Main::Session*> session,
+		bool incoming,
 		std::shared_ptr<Stats> stats,
-		Fn<void()> changed) {
+		Fn<void()> changed,
+		Fn<void()> finished) {
 	const auto api = std::shared_ptr<Api::CreditsHistory>(
-		new Api::CreditsHistory(session->user(), false, true));
+		new Api::CreditsHistory(session->user(), incoming, !incoming));
 	const auto requests = std::make_shared<int>(0);
 	const auto step = std::make_shared<Fn<void(QString)>>();
 	*step = [=](QString token) {
 		api->request(token, [=](Data::CreditsStatusSlice slice) {
+			auto &target = incoming ? stats->refunds : stats->list;
 			for (auto &entry : slice.list) {
-				stats->list.push_back(std::move(entry));
+				if (!incoming || entry.refunded) {
+					target.push_back(std::move(entry));
+				}
 			}
 			++*requests;
 			if (slice.allLoaded
 				|| slice.token.isEmpty()
 				|| *requests >= kMaxRequests
-				|| int(stats->list.size()) >= kMaxEntries) {
-				stats->done = true;
-				changed();
-				(void)api;
+				|| int(target.size()) >= kMaxEntries) {
+				finished();
 				return;
 			}
 			changed();
@@ -110,6 +114,20 @@ void Load(
 		}, 100);
 	};
 	(*step)(QString());
+}
+
+// Сначала траты, потом возвраты: вернувшиеся звёзды (отклонённый оффер,
+// проигранная ставка) тратой не считаем.
+void Load(
+		not_null<Main::Session*> session,
+		std::shared_ptr<Stats> stats,
+		Fn<void()> changed) {
+	LoadDirection(session, false, stats, changed, [=] {
+		LoadDirection(session, true, stats, changed, [=] {
+			stats->done = true;
+			changed();
+		});
+	});
 }
 
 class Chart final : public Ui::RpWidget {
@@ -179,11 +197,29 @@ void Fill(
 	const auto now = QDate::currentDate();
 	const auto key = [](QDate d) { return d.year() * 12 + d.month() - 1; };
 	const auto nowKey = key(now);
+	auto refundCount = std::map<std::pair<uint64, qint64>, int>();
+	for (const auto &r : stats.refunds) {
+		++refundCount[{ r.barePeerId, Spent(r) }];
+	}
+	auto ordered = std::vector<const Data::CreditsHistoryEntry*>();
 	for (const auto &e : stats.list) {
+		ordered.push_back(&e);
+	}
+	// Возврат гасит ближайшую по времени трату той же суммы тому же получателю.
+	std::sort(ordered.begin(), ordered.end(), [](auto a, auto b) {
+		return a->date > b->date;
+	});
+	for (const auto entry : ordered) {
+		const auto &e = *entry;
 		if (!Counts(e)) {
 			continue;
 		}
 		const auto amount = Spent(e);
+		auto i = refundCount.find({ e.barePeerId, amount });
+		if (i != refundCount.end() && i->second > 0) {
+			--i->second;
+			continue;
+		}
 		total += amount;
 		byCategory[Category(e)] += amount;
 		if (e.barePeerId == session->userId().bare) {
