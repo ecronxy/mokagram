@@ -2572,12 +2572,18 @@ for (const auto item : items) {
 			p.setRenderHint(QPainter::SmoothPixmapTransform);
 			auto userpic = item->from()->createUserpicView();
 			const auto size = 40;
-			item->from()->paintUserpic(
-				p,
-				userpic,
-				8,
-				std::max(0, view->height() - size - 4),
-				size);
+			const auto ay = std::max(0, view->height() - size - 4);
+			const auto cloud = item->from()->userpicCloudImage(userpic);
+			if (cloud && !cloud->isNull()) {
+				// Берём исходную картинку, а не кеш аватарки размером с экран.
+				auto path = QPainterPath();
+				path.addEllipse(QRectF(8, ay, size, size));
+				p.setClipPath(path);
+				p.drawImage(QRectF(8, ay, size, size), *cloud);
+				p.setClipping(false);
+			} else {
+				item->from()->paintUserpic(p, userpic, 8, ay, size);
+			}
 		}
 	}
 	rows.push_back(std::move(image));
