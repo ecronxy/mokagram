@@ -1,6 +1,11 @@
 #include "mokagram/scam/mokagram_scam.h"
 
 #include "core/application.h"
+#include "core/click_handler_types.h"
+#include "data/data_session.h"
+#include "data/data_user.h"
+#include "main/main_session.h"
+#include "window/window_session_controller.h"
 #include "data/data_peer.h"
 #include "history/history_item.h"
 #include "history/history_item_components.h"
@@ -12,6 +17,9 @@
 #include "ui/painter.h"
 #include "ui/layers/generic_box.h"
 #include "window/window_controller.h"
+
+#include <QtCore/QRegularExpression>
+#include <QtCore/QUrl>
 
 namespace Mokagram::Scam {
 namespace {
@@ -53,6 +61,8 @@ void RegisterSettings() {
 
 namespace {
 
+bool BypassLinkGuard = false;
+
 [[nodiscard]] bool OfferText(const QString &text) {
 	return ContainsAny(text, {
 		"предложение действует", "offer is valid",
@@ -61,6 +71,118 @@ namespace {
 			"за подарок", "за коллекционный", "for your gift",
 			"for your collectible", " gram",
 		}));
+}
+
+// «Do you sell @name»: покупатель юзернейма или подарка, который потом
+// пришлёт ссылку на поддельный Fragment.
+[[nodiscard]] bool BuyerBait(const QString &text) {
+	static const auto phrase = QRegularExpression(
+		u"(do you (still )?sell|are you (still )?selling|selling your|"
+		"want to buy your|wanna buy your|interested in (buying|your)|"
+		"buy your|продаёшь|продаешь|продаете|продаёте|куплю (твой|ваш)|"
+		"выкуплю|интересует (твой|ваш))"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	static const auto subject = QRegularExpression(
+		u"(@\\w{4,}|username|nft|gift|юзернейм|юзер|подарок|нфт)"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	return phrase.match(text).hasMatch() && subject.match(text).hasMatch();
+}
+
+// Гарант-боты: настоящие площадки не торгуют через гарантов в Telegram.
+[[nodiscard]] bool GarantMention(const QString &text) {
+	static const auto re = QRegularExpression(
+		u"(@\\w*(garant|гарант|escrow|guarant)\\w*|"
+		"t\\.me/\\w*(garant|escrow|guarant)\\w*|"
+		"(playerok|funpay|plati|fanpay|player0k)\\W{0,3}(гарант|garant|escrow))"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	return re.match(text).hasMatch();
+}
+
+[[nodiscard]] QString HostOf(const QString &url) {
+	auto host = QUrl::fromUserInput(url).host().toLower();
+	if (host.startsWith(u"www."_q)) {
+		host = host.mid(4);
+	}
+	return host;
+}
+
+[[nodiscard]] bool IsTelegramHost(const QString &host) {
+	return host == u"t.me"_q
+		|| host == u"telegram.me"_q
+		|| host == u"telegram.dog"_q;
+}
+
+[[nodiscard]] bool IsMiniAppLink(const QString &url) {
+	if (url.startsWith(u"tg://"_q, Qt::CaseInsensitive)) {
+		return url.contains(u"startapp"_q, Qt::CaseInsensitive)
+			|| url.contains(u"appname"_q, Qt::CaseInsensitive)
+			|| url.contains(u"startattach"_q, Qt::CaseInsensitive);
+	}
+	const auto parsed = QUrl::fromUserInput(url);
+	if (!IsTelegramHost(parsed.host().toLower())) {
+		return false;
+	}
+	const auto path = parsed.path().split('/', Qt::SkipEmptyParts);
+	return (path.size() >= 2 && path[0] != u"c"_q && path[0] != u"s"_q
+		&& path[0] != u"addstickers"_q && path[0] != u"addemoji"_q
+		&& path[0] != u"joinchat"_q && path[0] != u"nft"_q
+		&& path[0] != u"m"_q && path[0] != u"addlist"_q
+		&& !path[1].at(0).isDigit())
+		|| parsed.query().contains(u"startapp"_q, Qt::CaseInsensitive);
+}
+
+// Причина, почему ссылка с таким текстом подозрительна. Пусто, если всё ок.
+[[nodiscard]] QString LinkReason(const QString &shown, const QString &url) {
+	const auto host = HostOf(url);
+	const auto text = shown.trimmed();
+	// Текст ссылки выдаёт себя за другой сайт.
+	static const auto looksLikeUrl = QRegularExpression(
+		u"^(https?://)?([\\w-]+\\.)+[a-z]{2,}(/\\S*)?$"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	if (!text.isEmpty() && looksLikeUrl.match(text).hasMatch()) {
+		const auto shownHost = HostOf(text);
+		if (!shownHost.isEmpty()
+			&& host != shownHost
+			&& !host.endsWith(u"."_q + shownHost)
+			&& !shownHost.endsWith(u"."_q + host)) {
+			return U("Текст ссылки показывает ") + shownHost
+				+ U(", а ведёт она на ")
+				+ (host.isEmpty() ? url : host) + U(".");
+		}
+	}
+	if (ContainsAny(text, { "fragment", "getgems", "portals", "tonkeeper",
+			"playerok", "funpay" })
+		&& !text.isEmpty()
+		&& !(host.endsWith(u"fragment.com"_q)
+			|| host.endsWith(u"getgems.io"_q)
+			|| host.endsWith(u"tonkeeper.com"_q)
+			|| host.endsWith(u"playerok.com"_q)
+			|| host.endsWith(u"funpay.com"_q))) {
+		return U("Ссылка выдаёт себя за известный сервис, но ведёт на ")
+			+ (host.isEmpty() ? url : host) + U(".");
+	}
+	if (IsMiniAppLink(url) && !text.isEmpty() && text != url) {
+		return U("Ссылка спрятана за текстом и открывает мини-апп. "
+			"Так фальшивые «Fragment» и «гаранты» просят номер телефона.");
+	}
+	if (GarantMention(url)) {
+		return U("Это гарант-бот. Настоящие площадки не проводят сделки "
+			"через гарантов в Telegram, такие боты забирают деньги и подарки.");
+	}
+	return QString();
+}
+
+[[nodiscard]] bool HasBadLink(const TextWithEntities &text) {
+	for (const auto &entity : text.entities) {
+		if (entity.type() != EntityType::CustomUrl) {
+			continue;
+		}
+		const auto shown = text.text.mid(entity.offset(), entity.length());
+		if (!LinkReason(shown, entity.data()).isEmpty()) {
+			return true;
+		}
+	}
+	return false;
 }
 
 } // namespace
@@ -72,15 +194,79 @@ void MarkText(
 	if (!S::Bool(u"scam.enabled"_q)
 		|| item->isService()
 		|| (item->out() && !testing)
-		|| item->isPost()
-		|| !OfferText(text.text)) {
+		|| item->isPost()) {
 		return;
 	}
 	const auto from = item->from();
-	if (from->isVerified() || from->id.value == kTelegramServiceId) {
+	if (from->isVerified()
+		|| from->id.value == kTelegramServiceId
+		|| (from->isUser() && from->asUser()->isBot())) {
+		return;
+	}
+	const auto user = from->asUser();
+	const auto stranger = testing || !user || !user->isContact();
+	const auto suspicious = OfferText(text.text)
+		|| HasBadLink(text)
+		|| (stranger && (BuyerBait(text.text) || GarantMention(text.text)));
+	if (!suspicious) {
 		return;
 	}
 	text = TextWithEntities{ QString(kMarkChar) + u"\n"_q }.append(std::move(text));
+}
+
+bool GuardLink(
+		const QString &url,
+		const QVariant &context,
+		Fn<void()> again) {
+	if (!S::Bool(u"scam.enabled"_q) || BypassLinkGuard) {
+		return false;
+	}
+	auto shown = QString();
+	const auto my = context.value<ClickHandlerContext>();
+	if (const auto window = my.sessionWindow.get()) {
+		if (const auto item = window->session().data().message(my.itemId)) {
+			const auto from = item->from();
+			if (item->out()
+				|| from->isVerified()
+				|| (from->isUser() && from->asUser()->isBot())) {
+				return false;
+			}
+			const auto &text = item->originalText();
+			const auto offset = HasMark(text.text) ? 2 : 0;
+			Q_UNUSED(offset);
+			for (const auto &entity : text.entities) {
+				if (entity.type() == EntityType::CustomUrl
+					&& entity.data() == url) {
+					shown = text.text.mid(entity.offset(), entity.length());
+					break;
+				}
+			}
+		}
+	}
+	const auto reason = LinkReason(shown, url);
+	if (reason.isEmpty()) {
+		return false;
+	}
+	const auto window = Core::App().activeWindow();
+	if (!window) {
+		return false;
+	}
+	window->show(Ui::MakeConfirmBox({
+		.text = TextWithEntities{ reason + U("\n\nНе вводи номер телефона и "
+			"не подтверждай ничего на открывшейся странице. Сделки с "
+			"юзернеймами и подарками идут через Fragment, адрес которого "
+			"ты вводишь сам.") },
+		.confirmed = [=](Fn<void()> close) {
+			close();
+			BypassLinkGuard = true;
+			again();
+			BypassLinkGuard = false;
+		},
+		.confirmText = U("Всё равно открыть"),
+		.cancelText = U("Не открывать"),
+		.title = rpl::single(U("Подозрительная ссылка")),
+	}));
+	return true;
 }
 
 bool IsFakeOffer(not_null<const HistoryItem*> item) {

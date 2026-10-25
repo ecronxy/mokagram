@@ -5,6 +5,7 @@
 #include "ui/text/text_entity.h"
 
 #include <QtGui/QPainter>
+#include <QtCore/QVariant>
 
 class HistoryItem;
 
@@ -19,6 +20,13 @@ void RegisterSettings();
 void MarkText(
 	not_null<const HistoryItem*> item,
 	TextWithEntities &text);
+
+// Перехватывает открытие подозрительной ссылки (спрятанной за текстом,
+// мини-апп, гарант-бот). true: показано предупреждение, ссылку не открывать.
+[[nodiscard]] bool GuardLink(
+	const QString &url,
+	const QVariant &context,
+	Fn<void()> again);
 
 // Помечен ли текст (в начале стоит невидимый маркер и две пустые строки).
 [[nodiscard]] bool HasMark(const QString &text);
