@@ -18,6 +18,7 @@
 #include "styles/style_widgets.h"
 
 #include <QtCore/QCryptographicHash>
+#include <QtCore/QDateTime>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -34,6 +35,8 @@ constexpr auto kBaseUrl
 constexpr auto kMaxIndexBytes = qint64(256 * 1024);
 constexpr auto kMaxPluginBytes = qint64(2 * 1024 * 1024);
 constexpr auto kTimeout = 20 * 1000;
+constexpr auto kAvatar = 48;
+constexpr auto kCardPad = 16;
 
 struct Entry {
 	QString id;
@@ -41,6 +44,7 @@ struct Entry {
 	QString description;
 	QString author;
 	QString version;
+	QString icon;
 	QString file;
 	QString permissions;
 	QByteArray sha256;
@@ -58,7 +62,9 @@ struct Entry {
 
 // Сервер не может прислать больше обещанного и увести на небезопасный адрес.
 [[nodiscard]] QNetworkReply *Get(const QString &path, qint64 limit) {
-	auto request = QNetworkRequest(QUrl(QString::fromLatin1(kBaseUrl) + path));
+	auto request = QNetworkRequest(QUrl(QString::fromLatin1(kBaseUrl) + path
+			// Уникальная приписка: иначе CDN отдаёт старый каталог со свежей подписью.
+			+ u"?t="_q + QString::number(QDateTime::currentSecsSinceEpoch())));
 	request.setAttribute(
 		QNetworkRequest::CacheLoadControlAttribute,
 		QNetworkRequest::AlwaysNetwork);
@@ -99,6 +105,7 @@ struct Entry {
 			.description = object.value("description").toString(),
 			.author = object.value("author").toString(),
 			.version = object.value("version").toString(),
+			.icon = object.value("icon").toString(),
 			.file = object.value("file").toString(),
 			.sha256 = QByteArray::fromHex(
 				object.value("sha256").toString().toLatin1()),
@@ -190,50 +197,96 @@ void StoreBox(
 		status->hide();
 		for (const auto &entry : entries) {
 			const auto installed = InstalledVersion(entry.id);
-			Ui::AddDivider(list);
-			list->add(
-				object_ptr<Ui::FlatLabel>(
-					list,
-					entry.name + u"  "_q + entry.version,
-					st::boxTitle),
-				QMargins(24, 12, 24, 0));
-			if (!entry.description.isEmpty()) {
-				list->add(
-					object_ptr<Ui::FlatLabel>(
-						list,
-						entry.description,
-						st::boxDividerLabel),
-					QMargins(24, 4, 24, 0));
-			}
-			auto meta = QStringList();
+			const auto current = (installed == entry.version);
+			const auto wrap = list->add(
+				object_ptr<Ui::RpWidget>(list),
+				QMargins(14, 10, 14, 0));
+			const auto avatar = Ui::CreateChild<Ui::RpWidget>(wrap);
+			avatar->resize(kAvatar, kAvatar);
+			const auto letter = entry.icon.isEmpty()
+				? entry.name.left(1).toUpper()
+				: entry.icon.left(8);
+			avatar->paintOn([=](QPainter &p) {
+				auto hq = PainterHighQualityEnabler(p);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBgRipple);
+				p.drawRoundedRect(avatar->rect(), 14, 14);
+				p.setPen(st::windowFg);
+				p.setFont(style::font(24, 0, 0));
+				p.drawText(avatar->rect(), Qt::AlignCenter, letter);
+			});
+			const auto title = Ui::CreateChild<Ui::FlatLabel>(
+				wrap,
+				entry.name,
+				st::boxTitle);
+			auto subtitleText = U("v") + entry.version;
 			if (!entry.author.isEmpty()) {
-				meta.push_back(entry.author);
+				subtitleText += U("  •  ") + entry.author;
 			}
-			if (!entry.permissions.isEmpty()) {
-				meta.push_back(U("Доступ: ") + entry.permissions);
-			}
-			if (!meta.isEmpty()) {
-				list->add(
-					object_ptr<Ui::FlatLabel>(
-						list,
-						meta.join(u" · "_q),
-						st::boxDividerLabel),
-					QMargins(24, 2, 24, 0));
-			}
-			const auto label = installed.isEmpty()
-				? U("Установить")
-				: (installed == entry.version
-					? U("Установлен")
-					: U("Обновить"));
-			const auto button = list->add(
-				object_ptr<Ui::RoundButton>(
-					list,
-					rpl::single(label),
-					installed == entry.version
-						? st::defaultLightButton
-						: st::defaultActiveButton),
-				QMargins(24, 8, 24, 12));
-			if (installed == entry.version) {
+			const auto subtitle = Ui::CreateChild<Ui::FlatLabel>(
+				wrap,
+				subtitleText,
+				st::boxDividerLabel);
+			const auto text = Ui::CreateChild<Ui::FlatLabel>(
+				wrap,
+				entry.description,
+				st::boxLabel);
+			const auto access = entry.permissions.isEmpty()
+				? nullptr
+				: Ui::CreateChild<Ui::FlatLabel>(
+					wrap,
+					U("Доступ: ") + entry.permissions,
+					st::boxDividerLabel);
+			static const auto stInstall = [] {
+				auto result = st::defaultActiveButton;
+				result.height = 34;
+				result.textTop = 7;
+				result.radius = 17;
+				result.fullRadius = true;
+				return result;
+			}();
+			static const auto stDone = [] {
+				auto result = st::defaultLightButton;
+				result.height = 34;
+				result.textTop = 7;
+				result.radius = 17;
+				result.fullRadius = true;
+				return result;
+			}();
+			const auto button = Ui::CreateChild<Ui::RoundButton>(
+				wrap,
+				rpl::single(installed.isEmpty()
+					? U("Установить")
+					: (current ? U("Установлен") : U("Обновить"))),
+				current ? stDone : stInstall);
+			wrap->paintOn([=](QPainter &p) {
+				auto hq = PainterHighQualityEnabler(p);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBg);
+				p.drawRoundedRect(wrap->rect(), 22, 22);
+			});
+			wrap->widthValue() | rpl::on_next([=](int width) {
+				const auto textLeft = kCardPad + kAvatar + 12;
+				avatar->move(kCardPad, kCardPad);
+				title->resizeToNaturalWidth(width - kCardPad - textLeft);
+				const auto block = title->height() + 2 + subtitle->height();
+				const auto top = kCardPad + (kAvatar - block) / 2;
+				title->move(textLeft, top);
+				subtitle->move(textLeft, top + title->height() + 2);
+				auto bottom = kCardPad + kAvatar;
+				text->resizeToWidth(width - 2 * kCardPad);
+				text->move(kCardPad, bottom + 12);
+				bottom += 12 + text->height();
+				if (access) {
+					access->resizeToWidth(width - 2 * kCardPad);
+					access->move(kCardPad, bottom + 6);
+					bottom += 6 + access->height();
+				}
+				button->move(width - kCardPad - button->width(), bottom + 12);
+				wrap->resize(width, bottom + 12 + button->height() + kCardPad);
+			}, wrap->lifetime());
+			wrap->showChildren();
+			if (current) {
 				button->setAttribute(Qt::WA_TransparentForMouseEvents);
 				continue;
 			}
@@ -264,6 +317,7 @@ void StoreBox(
 				});
 			});
 		}
+		Ui::AddSkip(list, 14);
 		box->verticalLayout()->resizeToWidth(box->width());
 	};
 

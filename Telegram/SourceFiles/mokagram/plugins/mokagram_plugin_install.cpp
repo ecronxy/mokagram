@@ -778,7 +778,7 @@ struct IconState {
 // Круглая кнопка шапки: стрелка назад или лупа, рисуются вручную.
 [[nodiscard]] not_null<Ui::AbstractButton*> MakeRoundButton(
 		not_null<QWidget*> parent,
-		bool back,
+		int kind,
 		Fn<void()> callback) {
 	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
 	button->resize(36, 36);
@@ -796,9 +796,18 @@ struct IconState {
 		pen.setJoinStyle(Qt::RoundJoin);
 		p.setPen(pen);
 		p.setBrush(Qt::NoBrush);
-		if (back) {
+		if (kind == 1) {
 			p.drawLine(QPointF(17, 17), QPointF(31, 31));
 			p.drawLine(QPointF(31, 17), QPointF(17, 31));
+		} else if (kind == 2) {
+			p.drawLine(QPointF(24, 15), QPointF(24, 33));
+			p.drawLine(QPointF(15, 24), QPointF(33, 24));
+		} else if (kind == 3) {
+			// Каталог: четыре плитки.
+			p.drawRoundedRect(QRectF(15, 15, 7.5, 7.5), 2, 2);
+			p.drawRoundedRect(QRectF(25.5, 15, 7.5, 7.5), 2, 2);
+			p.drawRoundedRect(QRectF(15, 25.5, 7.5, 7.5), 2, 2);
+			p.drawRoundedRect(QRectF(25.5, 25.5, 7.5, 7.5), 2, 2);
 		} else {
 			p.drawEllipse(QPointF(22.5, 22.5), 7.5, 7.5);
 			p.drawLine(QPointF(28, 28), QPointF(34, 34));
@@ -1036,7 +1045,9 @@ void PluginsBox(
 		header,
 		true,
 		[=] { box->closeBox(); });
-	const auto searchButton = MakeRoundButton(header, false, nullptr);
+	const auto searchButton = MakeRoundButton(header, 0, nullptr);
+	const auto addButton = MakeRoundButton(header, 2, nullptr);
+	const auto storeButton = MakeRoundButton(header, 3, nullptr);
 	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
 		header,
 		U("Плагины"),
@@ -1074,6 +1085,12 @@ void PluginsBox(
 		searchButton->move(
 			width - searchButton->width(),
 			(header->height() - searchButton->height()) / 2);
+		addButton->move(
+			searchButton->x() - 8 - addButton->width(),
+			searchButton->y());
+		storeButton->move(
+			addButton->x() - 8 - storeButton->width(),
+			searchButton->y());
 		headerTitle->move(
 			(width - headerTitle->width()) / 2,
 			(header->height() - headerTitle->height()) / 2);
@@ -1146,29 +1163,8 @@ void PluginsBox(
 		}, reopen, log));
 	}
 
-	// Кнопка выбора файла .plugin с диска.
-	static const auto stAdd = [] {
-		auto result = st::defaultActiveButton;
-		result.height = 44;
-		result.textTop = 12;
-		result.radius = 22;
-		result.fullRadius = true;
-		return result;
-	}();
-	const auto addRow = content->add(
-		object_ptr<Ui::RpWidget>(content),
-		QMargins(14, 8, 14, 0));
-	addRow->resize(addRow->width(), stAdd.height);
-	const auto add = Ui::CreateChild<Ui::RoundButton>(
-		addRow,
-		rpl::single(U("Добавить плагин")),
-		stAdd);
-	addRow->widthValue() | rpl::on_next([=](int width) {
-		add->setFullWidth(width);
-		add->moveToLeft(0, 0);
-	}, addRow->lifetime());
 	const auto weakBox = base::make_weak(box);
-	add->setClickedCallback([=] {
+	addButton->setClickedCallback([=] {
 		FileDialog::GetOpenPath(
 			box.get(),
 			U("Выберите плагин"),
@@ -1198,25 +1194,11 @@ void PluginsBox(
 				});
 			}));
 	});
-	{
-		const auto storeRow = content->add(
-			object_ptr<Ui::RpWidget>(content),
-			QMargins(14, 8, 14, 0));
-		storeRow->resize(storeRow->width(), stAdd.height);
-		const auto store = Ui::CreateChild<Ui::RoundButton>(
-			storeRow,
-			rpl::single(U("Магазин плагинов")),
-			stAdd);
-		storeRow->widthValue() | rpl::on_next([=](int width) {
-			store->setFullWidth(width);
-			store->moveToLeft(0, 0);
-		}, storeRow->lifetime());
-		store->setClickedCallback([=] {
-			if (const auto strong = weak.get()) {
-				strong->show(Box(StoreBox, strong, reopen));
-			}
-		});
-	}
+	storeButton->setClickedCallback([=] {
+		if (const auto strong = weak.get()) {
+			strong->show(Box(StoreBox, strong, reopen));
+		}
+	});
 	Ui::AddSkip(content, 14);
 
 	// Поиск: показывает поле вместо заголовка и скрывает неподходящие карточки.
@@ -1235,6 +1217,8 @@ void PluginsBox(
 	searchButton->setClickedCallback([=] {
 		*searching = !*searching;
 		headerTitle->setVisible(!*searching);
+		addButton->setVisible(!*searching);
+		storeButton->setVisible(!*searching);
 		pill->setVisible(*searching);
 		field->setVisible(*searching);
 		field->raise();
