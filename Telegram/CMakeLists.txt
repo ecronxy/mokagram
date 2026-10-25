@@ -133,6 +133,8 @@ PRIVATE
     mokagram/ghost/mokagram_ghost.h
     mokagram/misc/mokagram_misc.cpp
     mokagram/misc/mokagram_misc.h
+    mokagram/saveinator/mokagram_saveinator.cpp
+    mokagram/saveinator/mokagram_saveinator.h
     mokagram/ui/mokagram_box_parts.cpp
     mokagram/ui/mokagram_box_parts.h
     mokagram/ui/mokagram_report_box.cpp

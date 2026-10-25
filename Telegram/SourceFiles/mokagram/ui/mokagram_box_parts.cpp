@@ -113,6 +113,16 @@ const style::RoundButton &PillLight() {
 	return result;
 }
 
+const style::RoundButton &PillAttention() {
+	static const auto result = [] {
+		auto result = Pill(st::attentionBoxButton);
+		result.textBg = st::attentionButtonBgOver;
+		result.textBgOver = st::attentionButtonBgRipple;
+		return result;
+	}();
+	return result;
+}
+
 const style::InputField &CardField(const style::InputField &base) {
 	static auto cache = std::map<
 		const style::InputField*,

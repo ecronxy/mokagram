@@ -36,6 +36,7 @@ void PaintCard(QPainter &p, QRect rect);
 [[nodiscard]] const style::Box &PillButtonsBox();
 [[nodiscard]] const style::RoundButton &PillActive();
 [[nodiscard]] const style::RoundButton &PillLight();
+[[nodiscard]] const style::RoundButton &PillAttention();
 [[nodiscard]] const style::InputField &CardField(
 	const style::InputField &base);
 
