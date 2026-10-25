@@ -48,6 +48,7 @@ protected:
 	void prepare() override;
 
 	void resizeEvent(QResizeEvent *e) override;
+	void paintEvent(QPaintEvent *e) override;
 	void keyPressEvent(QKeyEvent *e) override;
 
 private:
