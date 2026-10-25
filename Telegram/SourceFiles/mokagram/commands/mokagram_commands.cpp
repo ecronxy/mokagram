@@ -1,6 +1,14 @@
 #include "mokagram/commands/mokagram_commands.h"
 
 #include "api/api_blocked_peers.h"
+#include "api/api_text_entities.h"
+#include "data/data_document.h"
+#include "data/data_file_click_handler.h"
+#include "data/data_media_types.h"
+#include "data/data_photo.h"
+#include "data/data_photo_media.h"
+#include "core/application.h"
+#include "ui/image/image.h"
 #include "api/api_common.h"
 #include "api/api_chat_participants.h"
 #include "apiwrap.h"
@@ -37,6 +45,12 @@
 #include "window/window_session_controller.h"
 
 #include <QtCore/QRegularExpression>
+#include <QtCore/QStandardPaths>
+#include <QtCore/QTimer>
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
+
+#include <cmath>
 
 namespace Mokagram::Commands {
 namespace {
@@ -78,6 +92,7 @@ namespace S = Mokagram::Settings;
 	static const auto result = QStringList{
 		u"mute"_q, u"unmute"_q, u"ban"_q, u"unban"_q, u"kick"_q,
 		u"del"_q, u"pin"_q, u"unpin"_q, u"id"_q, u"save"_q,
+		u"tr"_q, u"calc"_q, u"archive"_q, u"unarchive"_q, u"dl"_q,
 	};
 	return result;
 }
@@ -144,6 +159,152 @@ namespace S = Mokagram::Settings;
 	return lines.join('\n');
 }
 
+// Мини-калькулятор: + - * / ^ ( ), проценты, функции и константы.
+class Calc final {
+public:
+	explicit Calc(QString text) : _s(std::move(text)) {
+		_s.replace(',', '.').replace(QChar(0xD7), '*').replace(QChar(0xF7), '/');
+		_s.remove(' ');
+	}
+	[[nodiscard]] bool run(double &out) {
+		_ok = true;
+		out = expr();
+		return _ok && _i == _s.size() && std::isfinite(out);
+	}
+
+private:
+	[[nodiscard]] QChar peek() const {
+		return (_i < _s.size()) ? _s[_i] : QChar();
+	}
+	double expr() {
+		auto v = term();
+		while (peek() == '+' || peek() == '-') {
+			const auto op = _s[_i++];
+			const auto r = term();
+			v = (op == '+') ? (v + r) : (v - r);
+		}
+		return v;
+	}
+	double term() {
+		auto v = power();
+		while (true) {
+			if (peek() == '*' && _i + 1 < _s.size() && _s[_i + 1] == '*') {
+				break;
+			} else if (peek() == '*') {
+				++_i;
+				v *= power();
+			} else if (peek() == '/') {
+				++_i;
+				const auto r = power();
+				if (r == 0) {
+					_ok = false;
+				}
+				v = (r == 0) ? 0 : (v / r);
+			} else {
+				break;
+			}
+		}
+		return v;
+	}
+	double power() {
+		auto v = unary();
+		if (peek() == '^' || (peek() == '*' && _i + 1 < _s.size() && _s[_i + 1] == '*')) {
+			_i += (peek() == '^') ? 1 : 2;
+			v = std::pow(v, power());
+		}
+		return v;
+	}
+	double unary() {
+		if (peek() == '-') {
+			++_i;
+			return -unary();
+		} else if (peek() == '+') {
+			++_i;
+			return unary();
+		}
+		return postfix();
+	}
+	double postfix() {
+		auto v = atom();
+		while (peek() == '%') {
+			++_i;
+			v /= 100.;
+		}
+		return v;
+	}
+	double atom() {
+		if (peek() == '(') {
+			++_i;
+			const auto v = expr();
+			if (peek() != ')') {
+				_ok = false;
+			} else {
+				++_i;
+			}
+			return v;
+		}
+		if (peek().isDigit() || peek() == '.') {
+			const auto start = _i;
+			while (peek().isDigit() || peek() == '.') {
+				++_i;
+			}
+			auto good = false;
+			const auto v = _s.mid(start, _i - start).toDouble(&good);
+			_ok = _ok && good;
+			return v;
+		}
+		if (peek().isLetter()) {
+			const auto start = _i;
+			while (peek().isLetter()) {
+				++_i;
+			}
+			const auto name = _s.mid(start, _i - start).toLower();
+			if (name == u"pi"_q) {
+				return M_PI;
+			} else if (name == u"e"_q) {
+				return M_E;
+			}
+			if (peek() != '(') {
+				_ok = false;
+				return 0;
+			}
+			++_i;
+			const auto v = expr();
+			if (peek() != ')') {
+				_ok = false;
+			} else {
+				++_i;
+			}
+			if (name == u"sqrt"_q) return std::sqrt(v);
+			if (name == u"abs"_q) return std::abs(v);
+			if (name == u"sin"_q) return std::sin(v);
+			if (name == u"cos"_q) return std::cos(v);
+			if (name == u"tan"_q) return std::tan(v);
+			if (name == u"ln"_q) return std::log(v);
+			if (name == u"log"_q) return std::log10(v);
+			if (name == u"floor"_q) return std::floor(v);
+			if (name == u"ceil"_q) return std::ceil(v);
+			if (name == u"round"_q) return std::round(v);
+			_ok = false;
+			return 0;
+		}
+		_ok = false;
+		return 0;
+	}
+
+	QString _s;
+	int _i = 0;
+	bool _ok = true;
+
+};
+
+[[nodiscard]] QString FormatNumber(double v) {
+	if (std::abs(v - std::round(v)) < 1e-9 && std::abs(v) < 1e15) {
+		return QString::number(qint64(std::llround(v)));
+	}
+	return QString::number(v, 'g', 12);
+}
+
 [[nodiscard]] QString MessageLink(not_null<HistoryItem*> item) {
 	const auto peer = item->history()->peer;
 	const auto channel = peer->asChannel();
@@ -186,17 +347,11 @@ void ShowInfo(
 		}
 	}
 	const auto text = lines.join('\n');
-	controller->show(Ui::MakeConfirmBox({
-		.text = TextWithEntities{ text },
-		.confirmed = [=](Fn<void()> close) {
-			TextUtilities::SetClipboardText(TextForMimeData::Simple(text));
-			close();
-			controller->showToast(U("Скопировано"));
-		},
-		.confirmText = U("Копировать"),
-		.cancelText = U("Закрыть"),
-		.title = rpl::single(U("ID")),
-	}));
+	QGuiApplication::clipboard()->setText(text);
+	controller->showToast(U("Скопировано. ID автора: ")
+		+ (author
+			? QString::number(author->id.value & PeerId::kChatTypeMask)
+			: U("неизвестен")));
 }
 
 } // namespace
@@ -227,13 +382,15 @@ bool Handle(
 		not_null<Window::SessionController*> controller,
 		not_null< ::History*> history,
 		const TextWithTags &text,
-		FullReplyTo replyTo) {
+		FullReplyTo replyTo,
+		TextWithTags *replacement) {
 	if (!S::Bool(u"commands.enabled"_q)) {
 		return false;
 	}
 	static const auto re = QRegularExpression(
-		u"^\\.([\\p{L}\\d_]+)(?:\\s+(all|\\d+)\\s*([mhdwмчдн]?))?$"_q,
-		QRegularExpression::CaseInsensitiveOption);
+		u"^\\.([\\p{L}\\d_]+)(?:\\s+(.+))?$"_q,
+		QRegularExpression::CaseInsensitiveOption
+			| QRegularExpression::DotMatchesEverythingOption);
 	const auto match = re.match(text.text.trimmed());
 	if (!match.hasMatch()) {
 		return false;
@@ -242,12 +399,23 @@ bool Handle(
 	if (!KnownCommands().contains(command)) {
 		return false;
 	}
-	const auto all = (match.captured(2).toLower() == u"all"_q);
+	const auto arg = match.captured(2).trimmed();
+	static const auto numberRe = QRegularExpression(
+		u"^(\\d+)\\s*([mhdwмчдн]?)$"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	const auto number = numberRe.match(arg);
+	const auto all = (arg.toLower() == u"all"_q);
+	const auto freeText = (command == u"tr"_q) || (command == u"calc"_q);
+	if (!freeText && !arg.isEmpty() && !all && !number.hasMatch()) {
+		// Обычная фраза, которая случайно начинается с команды.
+		return false;
+	}
+	const auto hasNumber = number.hasMatch();
+	const auto numberValue = hasNumber ? number.captured(1).toInt() : 0;
 	auto seconds = 0;
-	if (!all && !match.captured(2).isEmpty()) {
-		const auto count = match.captured(2).toInt();
-		const auto unit = match.captured(3).toLower();
-		seconds = count * ((unit == u"h"_q || unit == u"ч"_q) ? 3600
+	if (hasNumber) {
+		const auto unit = number.captured(2).toLower();
+		seconds = numberValue * ((unit == u"h"_q || unit == u"ч"_q) ? 3600
 			: (unit == u"d"_q || unit == u"д"_q) ? 86400
 			: (unit == u"w"_q || unit == u"н"_q) ? 7 * 86400
 			: 60);
@@ -273,6 +441,129 @@ bool Handle(
 		replied = history->owner().message(replyTo.messageId);
 	}
 
+	if (command == u"calc"_q) {
+		auto value = 0.;
+		if (arg.isEmpty() || !Calc(arg).run(value)) {
+			toast(U("Не получилось посчитать"));
+			if (replacement) {
+				*replacement = text;
+			}
+			return true;
+		}
+		if (replacement) {
+			*replacement = TextWithTags{ arg + u" = "_q + FormatNumber(value) };
+		}
+		return true;
+	}
+	if (command == u"archive"_q || command == u"unarchive"_q) {
+		Window::ToggleHistoryArchived(
+			controller->uiShow(),
+			history,
+			(command == u"archive"_q));
+		return true;
+	}
+	if (command == u"dl"_q) {
+		if (!replied || !replied->media()) {
+			toast(U("Ответь командой на сообщение с файлом или фото"));
+			return true;
+		}
+		const auto media = replied->media();
+		if (const auto document = media->document()) {
+			DocumentSaveClickHandler::SaveAndTrack(
+				replied->fullId(),
+				document,
+				DocumentSaveClickHandler::Mode::ToFile);
+			toast(U("Сохраняю в загрузки"));
+		} else if (const auto photo = media->photo()) {
+			const auto itemId = replied->fullId();
+			const auto view = photo->createMediaView();
+			photo->load(itemId);
+			const auto folder = QStandardPaths::writableLocation(
+				QStandardPaths::DownloadLocation);
+			const auto attempt = std::make_shared<Fn<void(int)>>();
+			*attempt = [=](int left) {
+				const auto image = view->image(Data::PhotoSize::Large);
+				if (image && !image->isNull()) {
+					const auto path = folder + u"/photo_"_q
+						+ QString::number(photo->id) + u".jpg"_q;
+					toast(image->original().save(path, "JPG", 95)
+						? (U("Сохранено: ") + path)
+						: U("Не получилось сохранить"));
+				} else if (left > 0) {
+					QTimer::singleShot(700, [=] { (*attempt)(left - 1); });
+				} else {
+					toast(U("Не получилось скачать фото"));
+				}
+			};
+			(*attempt)(8);
+		} else {
+			toast(U("В этом сообщении нечего сохранять"));
+		}
+		return true;
+	}
+	if (command == u"tr"_q) {
+		const auto space = arg.indexOf(QRegularExpression(u"\\s"_q));
+		const auto lang = (space < 0 ? arg : arg.left(space)).toLower();
+		auto source = (space < 0) ? QString() : arg.mid(space + 1).trimmed();
+		static const auto langRe = QRegularExpression(
+			u"^[a-z]{2,3}(-[a-z]{2,4})?$"_q);
+		if (!langRe.match(lang).hasMatch()) {
+			toast(U("Укажи язык: .tr en"));
+			if (replacement) {
+				*replacement = text;
+			}
+			return true;
+		}
+		auto entities = EntitiesInText();
+		if (source.isEmpty() && replied) {
+			source = replied->originalText().text;
+			entities = replied->originalText().entities;
+		}
+		if (source.isEmpty()) {
+			toast(U("Напиши текст после языка или ответь на сообщение"));
+			if (replacement) {
+				*replacement = text;
+			}
+			return true;
+		}
+		const auto session = &peer->session();
+		auto list = QVector<MTPTextWithEntities>();
+		list.push_back(MTP_textWithEntities(
+			MTP_string(source),
+			Api::EntitiesToMTP(
+				session,
+				entities,
+				Api::ConvertOption::SkipLocal)));
+		toast(U("Перевожу…"));
+		session->api().request(MTPmessages_TranslateText(
+			MTP_flags(MTPmessages_TranslateText::Flag::f_text),
+			MTP_inputPeerEmpty(),
+			MTPVector<MTPint>(),
+			MTP_vector<MTPTextWithEntities>(list),
+			MTP_string(lang),
+			MTPstring()
+		)).done([=](const MTPmessages_TranslatedText &result) {
+			const auto &v = result.data().vresult().v;
+			if (v.isEmpty()) {
+				toast(U("Перевод не получился"));
+				return;
+			}
+			const auto translated = Api::ParseTextWithEntities(
+				session,
+				v.front());
+			auto action = Api::SendAction(history, Api::SendOptions());
+			action.replyTo = replyTo;
+			auto message = Api::MessageToSend(std::move(action));
+			message.textWithTags = TextWithTags{
+				translated.text,
+				TextUtilities::ConvertEntitiesToTextTags(translated.entities),
+			};
+			session->api().sendMessage(std::move(message));
+		}).fail([=](const MTP::Error &error) {
+			toast(U("Не получилось перевести: ") + error.type());
+		}).send();
+		return true;
+	}
 	if (command == u"id"_q) {
 		ShowInfo(controller, history, replied);
 		return true;
@@ -311,7 +602,7 @@ bool Handle(
 		const auto limit = all
 			? 1000000
 			: std::clamp(
-				match.captured(2).isEmpty() ? 1 : match.captured(2).toInt(),
+				hasNumber ? numberValue : 1,
 				1,
 				100);
 		const auto byUser = replied ? replied->from().get() : nullptr;
@@ -332,7 +623,7 @@ bool Handle(
 			}));
 			return true;
 		}
-		if (replied && match.captured(2).isEmpty() && !all) {
+		if (replied && !hasNumber && !all) {
 			if (replied->canDelete()) {
 				ids.push_back(replied->fullId());
 			}

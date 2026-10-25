@@ -18,12 +18,14 @@ namespace Mokagram::Commands {
 
 void RegisterSettings();
 
-// true: сообщение было командой, отправлять его не нужно.
+// true: сообщение было командой, отправлять его не нужно. Если команда
+// хочет оставить в поле другой текст (.calc), он кладётся в replacement.
 [[nodiscard]] bool Handle(
 	not_null<Window::SessionController*> controller,
 	not_null< ::History*> history,
 	const TextWithTags &text,
-	FullReplyTo replyTo);
+	FullReplyTo replyTo,
+	TextWithTags *replacement = nullptr);
 
 // Алиасы: пары (имя, команда) без точки.
 [[nodiscard]] std::vector<std::pair<QString, QString>> Aliases();

@@ -2094,7 +2094,11 @@ void CommandsPage(
 			{ ".del all", "Ответом: удалить все сообщения человека. Без ответа: все твои загруженные", &st::menuIconDelete, red, "🗑" },
 			{ ".pin", "Закрепить сообщение (ответом)", &st::menuIconPin, blue, "📌" },
 			{ ".unpin", "Открепить сообщение (ответом)", &st::menuIconUnpin, blue, "📍" },
-			{ ".id", "Показать ID автора, чата и сообщения, ссылку на сообщение", &st::menuIconInfo, purple, "ℹ️" },
+			{ ".id", "Скопировать ID автора, чата и сообщения и ссылку на сообщение", &st::menuIconInfo, purple, "ℹ️" },
+			{ ".tr en", "Перевести и сразу отправить. Ответом на сообщение или .tr en текст", &st::menuIconTranslate, blue, "🗣" },
+			{ ".calc 2+2*3", "Посчитать: в поле останется «2+2*3 = 8»", &st::menuIconEdit, orange, "#️⃣" },
+			{ ".archive", "Отправить чат в архив (.unarchive вернёт)", &st::menuIconShowInFolder, gray, "📁" },
+			{ ".dl", "Скачать файл или фото из сообщения (ответом) в загрузки", &st::menuIconDownload, green, "🔽" },
 			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple, "📁" },
 		};
 		{

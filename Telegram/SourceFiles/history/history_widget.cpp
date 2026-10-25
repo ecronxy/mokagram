@@ -5908,13 +5908,19 @@ void HistoryWidget::send(Api::SendOptions options) {
 		return;
 	}
 
+	auto mokaReplacement = TextWithTags();
 	if (!options.scheduled
 		&& Mokagram::Commands::Handle(
 			controller(),
 			_history,
 			_field->getTextWithAppliedMarkdown(),
-			replyTo())) {
-		clearFieldText();
+			replyTo(),
+			&mokaReplacement)) {
+		if (!mokaReplacement.text.isEmpty()) {
+			setFieldText(mokaReplacement);
+		} else {
+			clearFieldText();
+		}
 		return;
 	}
 	sendTextWithTags(
