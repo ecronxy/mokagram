@@ -838,7 +838,7 @@ void ReplyMarkupClickHandler::onClick(ClickContext context) const {
 	}
 	auto my = context.other.value<ClickHandlerContext>();
 	my.itemId = _itemId;
-	if (getUrlButton()) {
+	if (getButton()) {
 		if (const auto item = _owner->message(_itemId)) {
 			if (Mokagram::Scam::IsFakeOffer(item)) {
 				Mokagram::Scam::ShowWarning(item, [=] {
@@ -915,7 +915,7 @@ ReplyKeyboard::ReplyKeyboard(
 						RegExp,
 						QChar(0x2B50))
 					: ((mokaFlagged
-						&& (type == Type::Url || type == Type::Auth))
+						&& type != Type::Buy)
 						? (QString::fromUtf8("\xE2\x9A\xA0 ") + row[j].text)
 						: row[j].text);
 				const auto withEmoji = [&](const style::IconEmoji &icon) {

@@ -54,6 +54,23 @@ bool IsFakeOffer(not_null<const HistoryItem*> item) {
 		|| item->isPost()) {
 		return false;
 	}
+	const auto from = item->from();
+	if (from->isVerified() || from->id.value == kTelegramServiceId) {
+		return false;
+	}
+	const auto text = item->originalText().text;
+	// Живой оффер Telegram показывает служебная плашка. Обычное сообщение
+	// с такой же фразой и таймером это подделка.
+	const auto offerText = ContainsAny(text, {
+		"предложение действует", "offer is valid",
+	}) || (ContainsAny(text, { "предлагает вам", "offers you" })
+		&& ContainsAny(text, {
+			"за подарок", "за коллекционный", "for your gift",
+			"for your collectible", " gram",
+		}));
+	if (offerText) {
+		return true;
+	}
 	const auto markup = item->inlineReplyMarkup();
 	if (!markup) {
 		return false;
@@ -76,23 +93,10 @@ bool IsFakeOffer(not_null<const HistoryItem*> item) {
 			}
 		}
 	}
-	if (!hasLink) {
-		return false;
-	}
-	const auto from = item->from();
-	if (from->isVerified() || from->id.value == kTelegramServiceId) {
-		return false;
-	}
-	const auto text = item->originalText().text;
-	const auto offerText = ContainsAny(text, {
-		"предлагает вам", "предложение действует", "коллекционный предмет",
-		"за коллекционный", "offers you", "offer is valid", "for your collectible",
-		"gift offer", "предложил вам", "оффер",
-	});
 	const auto impersonates = ContainsAny(from->name(), {
 		"telegram", "телеграм", "gift", "подарк",
-	}) && from->id.value != kTelegramServiceId;
-	return offerText || (actionLabel && impersonates);
+	});
+	return hasLink && actionLabel && impersonates;
 }
 
 void ShowWarning(not_null<const HistoryItem*> item, Fn<void()> proceed) {
