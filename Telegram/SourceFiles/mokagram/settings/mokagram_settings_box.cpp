@@ -715,7 +715,8 @@ void PaintPlate(
 		const QString &name,
 		const QString &alt,
 		PackIcon &pack,
-		not_null<Ui::RpWidget*> widget) {
+		not_null<Ui::RpWidget*> widget,
+		bool plate = true) {
 	if (!pack.emoji && !pack.tried) {
 		pack.emoji = !alt.isEmpty()
 			? PackIcons::Instance().makeAlt(
@@ -796,6 +797,9 @@ void PaintPlate(
 				rect.x() + (rect.width() - kPackEmojiSize) / 2,
 				rect.y() + (rect.height() - kPackEmojiSize) / 2),
 		});
+		return;
+	}
+	if (!plate) {
 		return;
 	}
 	p.setPen(Qt::NoPen);
@@ -2986,6 +2990,20 @@ std::unique_ptr<Ui::Text::CustomEmoji> AltIconEmoji(
 
 rpl::producer<> RowIconsUpdated() {
 	return PackIcons::Instance().updated();
+}
+
+bool PaintPackIcon(
+		QPainter &p,
+		const QRect &rect,
+		const QString &alt,
+		std::shared_ptr<void> &state,
+		not_null<Ui::RpWidget*> widget) {
+	if (!state) {
+		state = std::make_shared<PackIcon>();
+	}
+	const auto pack = static_cast<PackIcon*>(state.get());
+	PaintPlate(p, rect, QColor(), st::menuIconSettings, QString(), alt, *pack, widget, false);
+	return pack->emoji || !pack->normalized.isNull();
 }
 
 } // namespace Mokagram::Settings

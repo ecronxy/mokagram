@@ -1429,6 +1429,21 @@ void AddMessageActions(
 			menu,
 			request.item,
 			request.selectedText.rich.text);
+	} else {
+		auto items = std::vector<not_null<HistoryItem*>>();
+		auto &data = list->controller()->session().data();
+		for (const auto &one : request.selectedItems) {
+			if (const auto found = data.message(one.msgId)) {
+				items.push_back(found);
+			}
+		}
+		if (!items.empty()) {
+			Mokagram::Plugins::AddMessageMenuItems(
+				menu,
+				items.front(),
+				QString(),
+				items);
+		}
 	}
 }
 

@@ -1338,7 +1338,8 @@ void RestoreFromBackupDocument(
 void AddMessageMenuItems(
 		not_null<Ui::PopupMenu*> menu,
 		HistoryItem *item,
-		const QString &selected) {
+		const QString &selected,
+		const std::vector<not_null<HistoryItem*>> &selectedItems) {
 	if (!item) {
 		return;
 	}
@@ -1348,6 +1349,17 @@ void AddMessageMenuItems(
 	ctx.insert("text", item->originalText().text);
 	ctx.insert("out", item->out());
 	ctx.insert("selected", selected);
+	if (!selectedItems.empty()) {
+		// Выделено несколько сообщений: плагины получают их id и могут обработать пачкой.
+		auto ids = QJsonArray();
+		auto allOut = true;
+		for (const auto &one : selectedItems) {
+			ids.push_back(QString::number(one->id.bare));
+			allOut = allOut && one->out();
+		}
+		ctx.insert("selected_ids", ids);
+		ctx.insert("selected_all_out", allOut);
+	}
 	ctx.insert("has_media", item->media() != nullptr);
 	ctx.insert("date", double(item->date()));
 	const auto ctxJson = QJsonDocument(ctx).toJson(

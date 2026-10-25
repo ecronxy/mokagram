@@ -15,6 +15,7 @@
 #include "ui/rp_widget.h"
 #include "window/window_session_controller.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/settings/mokagram_settings_box.h"
 #include "window/window_controller.h"
 #include "core/application.h"
 #include "styles/style_boxes.h"
@@ -214,11 +215,31 @@ void StoreBox(
 			const auto letter = entry.icon.isEmpty()
 				? entry.name.left(1).toUpper()
 				: entry.icon.left(8);
+			// Эмодзи значка берём из набора iOSTelegram (анимированные), пока он не загрузился или эмодзи там нет, рисуем обычный.
+			auto packState = std::make_shared<std::shared_ptr<void>>();
+			if (controller) {
+				Settings::PreloadRowIcons(&controller->session());
+				Settings::RowIconsUpdated(
+				) | rpl::on_next([=] {
+					avatar->update();
+				}, avatar->lifetime());
+			}
+			const auto iconAlt = entry.icon;
 			avatar->paintOn([=](QPainter &p) {
-				auto hq = PainterHighQualityEnabler(p);
-				p.setPen(Qt::NoPen);
-				p.setBrush(st::windowBgRipple);
-				p.drawRoundedRect(avatar->rect(), 14, 14);
+				{
+					auto hq = PainterHighQualityEnabler(p);
+					p.setPen(Qt::NoPen);
+					p.setBrush(st::windowBgRipple);
+					p.drawRoundedRect(avatar->rect(), 14, 14);
+				}
+				if (!iconAlt.isEmpty() && Settings::PaintPackIcon(
+						p,
+						avatar->rect(),
+						iconAlt,
+						*packState,
+						avatar)) {
+					return;
+				}
 				p.setPen(st::windowFg);
 				p.setFont(style::font(24, 0, 0));
 				p.drawText(avatar->rect(), Qt::AlignCenter, letter);
