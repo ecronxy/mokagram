@@ -724,6 +724,86 @@ def get_history_remote(peer, callback, limit=30, offset_id=0):
     }, callback)
 
 
+# ---- файлы и медиа ----
+
+def _path_ok(entry, path):
+    """Путь можно трогать плагину: своя папка данных, временные файлы или выданное право files."""
+    import tempfile
+    real = os.path.realpath(path)
+    roots = [os.path.realpath(_h['data_dir'](entry['id'])), os.path.realpath(tempfile.gettempdir())]
+    if any(real == r or real.startswith(r + os.sep) for r in roots):
+        return True
+    return bool(_h['granted'](entry['id'], 'files'))
+
+
+def send_album(peer, paths, caption='', as_photo=True, silent=False):
+    """Альбом из 2-10 файлов (фото или документы). Право messages.send; пути как у download_media."""
+    target = str(peer)
+    entry = _gate('send_album', 'messages.send', target)
+    if entry is None:
+        return None
+    if (not target.isdigit() or not isinstance(paths, (list, tuple)) or not 2 <= len(paths) <= 10
+            or len(str(caption)) > 1024):
+        _h['say']('[%s] send_album: неверные параметры' % entry['id'])
+        return None
+    paths = [os.path.abspath(str(p)) for p in paths]
+    if not all(os.path.isfile(p) and _path_ok(entry, p) for p in paths):
+        _h['say']('[%s] send_album: файла нет или путь вне папки плагина (нужно право files)' % entry['id'])
+        _h['audit'](entry, 'send_album', target, 'denied')
+        return None
+    if not _limit(entry, 'send_file', 5, 60):
+        _h['audit'](entry, 'send_album', target, 'rate_limit')
+        return None
+    res = _native('send_album', {'peer': target, 'paths': paths, 'caption': str(caption),
+                                 'kind': 'photo' if as_photo else 'file', 'silent': bool(silent)})
+    _h['audit'](entry, 'send_album', target, 'allowed' if res.get('ok') else 'failed', len(paths))
+    if not res.get('ok'):
+        _h['say']('[%s] send_album: %s' % (entry['id'], res.get('error', 'отказ')))
+    return True if res.get('ok') else None
+
+
+def download_media(peer, msg_id, path, callback=None):
+    """Сохранить фото или файл из сообщения: callback({'ok': True, 'path': ...} или {'ok': False, 'error': ...}).
+    Путь внутри папки плагина или во временной, иначе нужно право files. Право messages.read."""
+    peer, msg, ok = _ids(peer, msg_id)
+    entry = _gate('download_media', 'messages.read', peer)
+    if entry is None or not ok or not isinstance(path, str) or not path:
+        return None
+    path = os.path.abspath(path)
+    if not _path_ok(entry, path):
+        _h['say']('[%s] download_media: путь вне папки плагина (нужно право files)' % entry['id'])
+        _h['audit'](entry, 'download_media', peer, 'denied')
+        return None
+    if not _limit(entry, 'download', 10, 60):
+        _h['say']('[%s] download_media: больше 10 загрузок в минуту, отказ' % entry['id'])
+        return None
+    token = _h['register_cb'](entry, lambda p: callback(p) if callable(callback) else None, True)
+    res = _native('download_media', {'pid': entry['id'], 'token': token, 'peer': peer, 'id': msg, 'path': path})
+    _h['audit'](entry, 'download_media', peer, 'allowed' if res.get('ok') else 'failed')
+    if not res.get('ok') and callable(callback):
+        callback({'ok': False, 'error': res.get('error', 'отказ')})
+    return True if res.get('ok') else None
+
+
+def press_button(peer, msg_id, button, callback=None):
+    """Нажать инлайн-кнопку бота из message['buttons']: callback(ответ, ошибка). Право tl.write (это действие от вашего имени)."""
+    peer, msg, ok = _ids(peer, msg_id)
+    entry = _gate('press_button', 'tl.write', peer)
+    if entry is None or not ok or not isinstance(button, dict):
+        return None
+    if button.get('kind') == 'url' and button.get('url'):
+        return open_url(button['url'])
+    if button.get('kind') != 'callback':
+        _h['say']('[%s] press_button: этот вид кнопки не поддерживается' % entry['id'])
+        return None
+    import base64
+    ip = _tl_input(entry, 'peer', peer)[0]
+    if ip is None:
+        return None
+    return _invoke(entry, 'messages.getBotCallbackAnswer', {
+        'peer': ip, 'msg_id': int(msg), 'data': base64.b64decode(button.get('data', ''))}, callback)
+
+
 def get_user(user_id):
     """Сведения о человеке из загруженных (то же, что get_user_info)."""
     return get_user_info(user_id)

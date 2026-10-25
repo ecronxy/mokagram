@@ -56,11 +56,11 @@ def _moka_parse(source):
                     detected.add('messages.read')
                 if f.attr in ('edit_message', 'pin_message'):
                     detected.add('messages.edit')
-                if f.attr in ('invoke_tl',):
+                if f.attr in ('invoke_tl', 'press_button'):
                     detected.add('tl.write')
-                if f.attr in ('forward_messages', 'react'):
+                if f.attr in ('forward_messages', 'react', 'send_album'):
                     detected.add('messages.send')
-                if f.attr in ('get_participants', 'search_messages', 'get_history_remote', 'input_peer', 'get_user'):
+                if f.attr in ('get_participants', 'search_messages', 'get_history_remote', 'input_peer', 'get_user', 'download_media'):
                     detected.add('messages.read')
                 if f.attr in ('delete_messages', 'delete_message'):
                     detected.add('messages.delete')
@@ -351,7 +351,7 @@ def _activate(entry, source):
 # ---- события клиента (новое, изменённое, удалённое сообщение) ----
 
 _EVENTS = ('new_message', 'message_edited', 'message_deleted', 'new_reaction',
-           'chat_opened', 'peer_updated', 'user_status')
+           'chat_opened', 'peer_updated', 'user_status', 'typing')
 
 
 def _register_events(entry):
@@ -457,6 +457,20 @@ def _moka_text_hook(message_json):
     return 'T' + message['text']
 
 
+def _moka_app_event(kind):
+    """START, STOP, PAUSE, RESUME всем включённым плагинам (права не нужны)."""
+    enum = getattr(sys.modules['mokagram_sdk.base_plugin'], 'AppEvent', None)
+    ev = getattr(enum, kind, kind) if enum else kind
+    for entry in list(_plugins.values()):
+        inst = entry.get('plugin')
+        if inst is None or 'on_app_event' in entry.get('hooks_off', ()):
+            continue
+        try:
+            inst.on_app_event(ev)
+        except BaseException as e:
+            _hook_error(entry, 'on_app_event', e)
+
+
 def _moka_event(name, payload_json):
     """Рабочий поток C++: доставка события плагинам, результат игнорируется."""
     try:
@@ -469,6 +483,9 @@ def _moka_event(name, payload_json):
             _moka_invoke(payload['pid'], payload['token'], json.dumps(payload.get('payload') or {}))
         except Exception:
             pass
+        return ''
+    if name == 'app_event':
+        _moka_app_event(payload.get('event', ''))
         return ''
     hook = 'on_' + name
     for entry in list(_plugins.values()):
@@ -699,6 +716,10 @@ def _moka_remove(pid):
 
 
 def _moka_shutdown():
+    try:
+        _moka_app_event('STOP')
+    except BaseException:
+        pass
     for entry in list(_plugins.values()):
         _deactivate(entry)
     return ''

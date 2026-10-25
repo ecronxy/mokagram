@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "data/data_send_action.h"
 
 #include "data/data_user.h"
@@ -53,6 +54,7 @@ void SendActionManager::registerFor(
 	if (history->peer->isSelf()) {
 		return;
 	}
+	Mokagram::Plugins::EmitTyping(history->peer, user, action.type());
 	const auto sendAction = lookupPainter(history, rootId);
 	if (!sendAction) {
 		return;

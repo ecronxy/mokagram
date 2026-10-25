@@ -390,6 +390,7 @@ int Start(LogFn log) {
 		std::string(kTlSchema),
 	});
 	Drain(log);
+	QueueEvent("app_event", R"({"event":"START"})");
 	if (log) log("plugins loaded: " + count);
 	return count.empty() ? -1 : std::atoi(count.c_str());
 }

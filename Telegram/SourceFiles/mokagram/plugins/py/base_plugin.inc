@@ -46,7 +46,7 @@ class BasePlugin:
     # жизненный цикл
     def on_plugin_load(self) -> None: ...
     def on_plugin_unload(self) -> None: ...
-    def on_app_event(self, event: str) -> None: ...   # app_start, app_stop, app_pause, app_resume
+    def on_app_event(self, event) -> None: ...   # AppEvent.START | STOP | PAUSE | RESUME (права не нужны)
     def create_settings(self) -> list: return []   # Header, Divider, Text, Switch, Selector, Input
     def on_settings_changed(self, key: str, value: Any) -> None: ...
 
@@ -77,6 +77,7 @@ class BasePlugin:
     def on_chat_opened(self, peer: dict) -> None: ...        # {peer, title, username, kind}
     def on_peer_updated(self, peer: dict) -> None: ...       # + changed: name|username|photo|about|blocked|emoji_status
     def on_user_status(self, peer: dict) -> None: ...        # + online: bool
+    def on_typing(self, info: dict) -> None: ...             # {peer, from, from_title, action: typing|record_voice|upload_photo|...|cancel}
 
     # интерфейс
     def add_menu_item(self, item: MenuItem) -> None:

@@ -31,6 +31,14 @@
 #include "data/data_chat.h"
 #include "data/data_drafts.h"
 #include "data/data_user.h"
+#include "data/data_file_origin.h"
+#include "history/history_item_components.h"
+#include "ui/image/image.h"
+#include "history/history_item_reply_markup.h"
+#include "data/data_media_types.h"
+#include "data/data_photo_media.h"
+#include "data/data_photo.h"
+#include "data/data_document.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "history/history_item.h"
 #include "ui/text/text_utilities.h"
@@ -54,6 +62,7 @@
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDir>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -192,6 +201,36 @@ std::string ShowToast(const QJsonObject &args) {
 		result.push_back(EntityInText(kind, offset, length, data));
 		if (result.size() >= 200) {
 			break;
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] QJsonArray ButtonsJson(not_null<const HistoryItem*> item) {
+	auto result = QJsonArray();
+	const auto markup = item->inlineReplyMarkup();
+	if (!markup) {
+		return result;
+	}
+	using Type = HistoryMessageMarkupButton::Type;
+	for (const auto &row : markup->data.rows) {
+		auto line = QJsonArray();
+		for (const auto &button : row) {
+			auto o = QJsonObject();
+			o.insert("text", button.text);
+			if (button.type == Type::Callback) {
+				o.insert("kind", "callback");
+				o.insert("data", QString::fromLatin1(button.data.toBase64()));
+			} else if (button.type == Type::Url) {
+				o.insert("kind", "url");
+				o.insert("url", QString::fromUtf8(button.data));
+			} else {
+				o.insert("kind", "other");
+			}
+			line.push_back(o);
+		}
+		if (!line.isEmpty()) {
+			result.push_back(line);
 		}
 	}
 	return result;
@@ -784,7 +823,7 @@ rpl::lifetime SessionLifetime;
 [[nodiscard]] const std::set<std::string> &KnownEvents() {
 	static const auto result = std::set<std::string>{
 		"new_message", "message_edited", "message_deleted",
-		"peer_updated", "user_status", "new_reaction", "chat_opened",
+		"peer_updated", "user_status", "new_reaction", "chat_opened", "typing",
 	};
 	return result;
 }
@@ -834,6 +873,9 @@ void EmitMessageEvent(
 	payload.insert("has_media", item->media() != nullptr);
 	payload.insert("reply_to", QString::number(item->replyToId().bare));
 	payload.insert("entities", EntitiesToJson(item->originalText().entities));
+	if (const auto buttons = ButtonsJson(item); !buttons.isEmpty()) {
+		payload.insert("buttons", buttons);
+	}
 	QueueEvent(name, Json(payload));
 }
 
@@ -974,6 +1016,9 @@ std::string SendFile(const QJsonObject &args) {
 	result.insert("date", double(item->date()));
 	result.insert("has_media", item->media() != nullptr);
 	result.insert("entities", EntitiesToJson(item->originalText().entities));
+	if (const auto buttons = ButtonsJson(item); !buttons.isEmpty()) {
+		result.insert("buttons", buttons);
+	}
 	return result;
 }
 
@@ -1159,6 +1204,120 @@ std::string DeleteMessages(const QJsonObject &args) {
 		}
 		session->data().histories().deleteMessages(ids, revoke);
 		session->data().sendHistoryChangeNotifications();
+		return Reply(true);
+	});
+}
+
+std::string SendAlbum(const QJsonObject &args) {
+	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto caption = args.value("caption").toString();
+	const auto asPhoto = args.value("kind").toString() == u"photo"_q;
+	const auto silent = args.value("silent").toBool();
+	auto paths = QStringList();
+	for (const auto &value : args.value("paths").toArray()) {
+		const auto info = QFileInfo(value.toString());
+		if (!info.isFile() || info.size() <= 0 || info.size() > (qint64(2000) << 20)) {
+			return Reply(false, U("файл не найден или слишком большой"));
+		}
+		paths.push_back(info.absoluteFilePath());
+	}
+	if (!peerId || paths.size() < 2 || paths.size() > 10) {
+		return Reply(false, U("в альбоме от 2 до 10 файлов"));
+	}
+	return OnMain([=]() -> std::string {
+		const auto session = ActiveSession();
+		const auto history = session ? session->data().historyLoaded(peerId) : nullptr;
+		if (!history) {
+			return Reply(false, U("чата нет среди загруженных диалогов"));
+		}
+		auto list = Storage::PrepareMediaList(
+			paths,
+			st::sendMediaPreviewSize,
+			session->user()->isPremium());
+		if (list.files.size() < 2 || !list.filesToProcess.empty()) {
+			return Reply(false, U("файлы нельзя отправить альбомом"));
+		}
+		list.files.front().caption = TextWithTags{ caption };
+		auto action = Api::SendAction(history);
+		action.options.silent = silent;
+		action.clearDraft = false;
+		const auto weak = base::make_weak(session);
+		crl::on_main([=, list = std::move(list)]() mutable {
+			if (const auto strong = weak.get()) {
+				MarkFromPlugin(true);
+				strong->api().sendFiles(
+					std::move(list),
+					asPhoto ? SendMediaType::Photo : SendMediaType::File,
+					std::make_shared<SendingAlbum>(),
+					action);
+				MarkFromPlugin(false);
+			}
+		});
+		return Reply(true);
+	});
+}
+
+// Сохраняет медиа сообщения в файл. Итог приходит плагину событием __cb: {ok, path} или {ok:false, error}.
+std::string DownloadMedia(const QJsonObject &args) {
+	const auto pid = args.value("pid").toString();
+	const auto token = args.value("token").toString();
+	const auto path = args.value("path").toString();
+	if (path.isEmpty()) {
+		return Reply(false, U("нет пути"));
+	}
+	return OnMain([=]() -> std::string {
+		const auto item = FindItem(args);
+		const auto media = item ? item->media() : nullptr;
+		if (!media) {
+			return Reply(false, U("в сообщении нет медиа"));
+		}
+		const auto deliver = [=](bool ok, const QString &error) {
+			auto payload = QJsonObject();
+			payload.insert("ok", ok);
+			if (ok) {
+				payload.insert("path", path);
+			} else {
+				payload.insert("error", error);
+			}
+			auto wrapper = QJsonObject();
+			wrapper.insert("pid", pid);
+			wrapper.insert("token", token);
+			wrapper.insert("payload", payload);
+			QueueEvent("__cb", Json(wrapper));
+		};
+		QDir().mkpath(QFileInfo(path).absolutePath());
+		auto check = Fn<bool()>();
+		if (const auto document = media->document()) {
+			document->save(item->fullId(), path, LoadFromCloudOrLocal, false);
+			check = [=] {
+				const auto info = QFileInfo(path);
+				return !document->loading()
+					&& info.exists()
+					&& info.size() > 0
+					&& (document->size <= 0 || info.size() >= document->size);
+			};
+		} else if (const auto photo = media->photo()) {
+			const auto view = photo->createMediaView();
+			view->wanted(Data::PhotoSize::Large, item->fullId());
+			check = [=] {
+				const auto image = view->image(Data::PhotoSize::Large);
+				return image && image->original().save(path, "JPG", 95);
+			};
+		} else {
+			return Reply(false, U("это медиа нельзя сохранить"));
+		}
+		const auto timer = new QTimer(QCoreApplication::instance());
+		const auto started = crl::now();
+		QObject::connect(timer, &QTimer::timeout, [=] {
+			if (check()) {
+				timer->deleteLater();
+				deliver(true, QString());
+			} else if (crl::now() - started > 300 * crl::time(1000)) {
+				timer->deleteLater();
+				deliver(false, u"timeout"_q);
+			}
+		});
+		timer->start(300);
 		return Reply(true);
 	});
 }
@@ -1358,6 +1517,10 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return GetUserInfo(args);
 	} else if (op == "get_me") {
 		return GetMe(args);
+	} else if (op == "send_album") {
+		return SendAlbum(args);
+	} else if (op == "download_media") {
+		return DownloadMedia(args);
 	} else if (op == "tl_input") {
 		return TlInput(args);
 	} else if (op == "invoke_raw") {
@@ -1415,8 +1578,42 @@ void EmitChatOpened(PeerData *peer) {
 	QueueEvent("chat_opened", Json(PeerBrief(peer)));
 }
 
+void EmitTyping(PeerData *peer, UserData *user, mtpTypeId type) {
+	if (!peer || !user || !WantEvent("typing")) {
+		return;
+	}
+	auto action = "other";
+	switch (type) {
+	case mtpc_sendMessageTypingAction: action = "typing"; break;
+	case mtpc_sendMessageCancelAction: action = "cancel"; break;
+	case mtpc_sendMessageRecordAudioAction: action = "record_voice"; break;
+	case mtpc_sendMessageRecordVideoAction: action = "record_video"; break;
+	case mtpc_sendMessageUploadAudioAction: action = "upload_voice"; break;
+	case mtpc_sendMessageUploadVideoAction: action = "upload_video"; break;
+	case mtpc_sendMessageUploadPhotoAction: action = "upload_photo"; break;
+	case mtpc_sendMessageUploadDocumentAction: action = "upload_file"; break;
+	case mtpc_sendMessageChooseStickerAction: action = "choose_sticker"; break;
+	}
+	auto payload = PeerBrief(peer);
+	payload.insert("from", QString::number(user->id.value));
+	payload.insert("from_title", user->name());
+	payload.insert("action", QString::fromLatin1(action));
+	QueueEvent("typing", Json(payload));
+}
+
 void InstallBridge() {
 	SetBridge(Bridge);
+	QObject::connect(qGuiApp, &QGuiApplication::applicationStateChanged, qGuiApp, [](Qt::ApplicationState state) {
+		static auto active = true;
+		const auto now = (state == Qt::ApplicationActive);
+		if (now == active) {
+			return;
+		}
+		active = now;
+		auto payload = QJsonObject();
+		payload.insert("event", now ? "RESUME" : "PAUSE");
+		QueueEvent("app_event", Json(payload));
+	});
 	Core::App().domain().activeSessionValue(
 	) | rpl::on_next(SubscribeSession, BridgeLifetime);
 	// Изменения настроек plugin.<id>.<key> доходят до плагина как on_settings_changed.
