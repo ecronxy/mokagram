@@ -937,12 +937,19 @@ inlineThumbSkip: 10px;
 inlineTitleFg: windowFg;
 inlineDescriptionFg: windowSubTextFg;
 inlineRowMargin: 6px;
-inlineRowBorder: 1px;
+// Mokagram: без разделителей между строками, как в меню.
+inlineRowBorder: 0px;
 inlineRowBorderFg: shadowFg;
 inlineRowFileNameTop: 2px;
 inlineRowFileDescriptionTop: 23px;
 inlineResultsMinWidth: 48px;
 inlineDurationMargin: 3px;
+// Mokagram: панель inline-результатов в виде выпадающих меню.
+inlineResultsRadius: innerDropdownRadius;
+inlineResultsPanelSkip: 10px;
+inlineResultsRowRadius: 16px;
+inlineResultsRowOverSkip: 6px;
+inlineThumbRadius: 10px;
 
 stickersPremiumLock: icon{{ "emoji/premium_lock", premiumButtonFg }};
 emojiPremiumLock: icon{{ "chat/mini_lock", premiumButtonFg }};

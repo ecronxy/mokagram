@@ -97,12 +97,20 @@ PRIVATE
     mokagram/ghost/mokagram_ghost.h
     mokagram/misc/mokagram_misc.cpp
     mokagram/misc/mokagram_misc.h
+    mokagram/ui/mokagram_box_parts.cpp
+    mokagram/ui/mokagram_box_parts.h
+    mokagram/ui/mokagram_report_box.cpp
+    mokagram/ui/mokagram_report_box.h
+    mokagram/update/mokagram_update.cpp
+    mokagram/update/mokagram_update.h
 )
 # путь к Python.h только для одного файла, иначе пересоберётся весь клиент
 set_source_files_properties(
     ${src_loc}/mokagram/plugins/mokagram_plugins.cpp
     PROPERTIES INCLUDE_DIRECTORIES "${Python3_INCLUDE_DIRS}")
 target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES} sqlite3)
+find_package(LibLZMA REQUIRED)
+target_link_libraries(Telegram PRIVATE LibLZMA::LibLZMA)
 
 target_link_libraries(Telegram
 PRIVATE

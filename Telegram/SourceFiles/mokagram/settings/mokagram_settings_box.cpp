@@ -164,6 +164,7 @@ struct Category {
 	if (name == u"palette"_q) return st::menuIconPalette;
 	if (name == u"plugin"_q) return st::menuIconExperimental;
 	if (name == u"bot"_q) return st::menuIconBot;
+	if (name == u"update"_q) return st::menuIconDownload;
 	return st::menuIconSettings;
 }
 
@@ -1211,6 +1212,12 @@ void CustomizeBox(
 		Ui::SlideWrap<Ui::FlatLabel> *empty = nullptr;
 		Ui::Animations::Simple scroll;
 		Ui::Animations::Simple fade;
+		// WHY: нажатый чип держим активным до ручной прокрутки:
+		// нижние разделы не доезжают до верха, и по позиции выбрался бы другой.
+		int forcedChip = -1;
+		int forcedTop = 0;
+		bool chipScrolling = false;
+		Fn<void()> syncChips;
 	};
 	const auto state = box->lifetime().make_state<State>();
 
@@ -1510,6 +1517,7 @@ void CustomizeBox(
 		}
 		seen.push_back(category);
 		const auto text = U(Categories()[CategoryIndex(category)].title);
+		const auto index = int(state->chips.size());
 		const auto button = Ui::CreateChild<Ui::AbstractButton>(chips);
 		const auto chip = button->lifetime().make_state<ChipState>();
 		button->setPointerCursor(true);
@@ -1536,8 +1544,14 @@ void CustomizeBox(
 			const auto top = std::max(
 				state->sections[s].wrap->y() + 4,
 				0);
+			state->forcedChip = index;
+			state->forcedTop = box->scrollTop();
+			state->syncChips();
 			state->scroll.start([=](float64 value) {
+				state->chipScrolling = true;
 				box->scrollToY(int(base::SafeRound(value)));
+				state->chipScrolling = false;
+				state->forcedTop = box->scrollTop();
 			}, box->scrollTop(), top, 340, anim::easeOutCubic);
 		});
 		state->chips.push_back({
@@ -1565,9 +1579,14 @@ void CustomizeBox(
 			x += w + 6;
 		}
 	}, chips->lifetime());
-	const auto syncChips = [=] {
+	state->syncChips = [=] {
 		if (state->chips.empty()) {
 			return;
+		}
+		if (state->forcedChip >= 0
+			&& !state->chipScrolling
+			&& box->scrollTop() != state->forcedTop) {
+			state->forcedChip = -1;
 		}
 		const auto top = box->scrollTop() + 24;
 		auto current = 0;
@@ -1579,6 +1598,9 @@ void CustomizeBox(
 		if (box->scrollTop() + box->scrollHeight()
 			>= content->height() - 2) {
 			current = int(state->chips.size()) - 1;
+		}
+		if (state->forcedChip >= 0) {
+			current = state->forcedChip;
 		}
 		for (auto i = 0; i != int(state->chips.size()); ++i) {
 			const auto chip = state->chips[i].state;
@@ -1596,8 +1618,12 @@ void CustomizeBox(
 	if (!state->chips.empty()) {
 		state->chips.front().state->active = true;
 	}
-	box->scrolls() | rpl::on_next(syncChips, box->lifetime());
-	content->heightValue() | rpl::on_next(syncChips, box->lifetime());
+	box->scrolls() | rpl::on_next([=] {
+		state->syncChips();
+	}, box->lifetime());
+	content->heightValue() | rpl::on_next([=] {
+		state->syncChips();
+	}, box->lifetime());
 
 	// Поиск: поле вместо заголовка, чипы прячутся.
 	const auto searching = std::make_shared<bool>(false);

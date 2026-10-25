@@ -16,7 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/shadow.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/image/image_prepare.h"
-#include "ui/cached_round_corners.h"
+#include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "styles/style_chat_helpers.h"
 
@@ -38,17 +38,14 @@ Widget::Widget(
 , _contentHeight(_contentMaxHeight)
 , _shadow(st::emojiPanAnimation.shadow)
 , _scroll(this, st::inlineBotsScroll)
-, _innerRounding(Ui::PrepareCornerPixmaps(
-	ImageRoundRadius::Small,
-	st::emojiPanBg))
 , _inlineRequestTimer([=] { onInlineRequest(); }) {
-	resize(QRect(0, 0, st::emojiPanWidth, _contentHeight).marginsAdded(innerPadding()).size());
+	resize(QRect(0, 0, st::emojiPanWidth, _contentHeight + 2 * st::inlineResultsPanelSkip).marginsAdded(innerPadding()).size());
 	_width = width();
 	_height = height();
 
 	_scroll->resize(st::emojiPanWidth - st::roundRadiusSmall, _contentHeight);
 
-	_scroll->move(verticalRect().topLeft());
+	_scroll->move(scrollRect().topLeft() + QPoint(st::roundRadiusSmall, 0));
 	_inner = _scroll->setOwnedWidget(object_ptr<Inner>(this, controller));
 
 	_inner->moveToLeft(0, 0, _scroll->width());
@@ -64,13 +61,6 @@ Widget::Widget(
 		_inner->clearInlineRowsPanel();
 	}, lifetime());
 
-	style::PaletteChanged(
-	) | rpl::on_next([=] {
-		_innerRounding = Ui::PrepareCornerPixmaps(
-			ImageRoundRadius::Small,
-			st::emojiPanBg);
-	}, lifetime());
-
 	macWindowDeactivateEvents(
 	) | rpl::filter([=] {
 		return !isHidden();
@@ -82,7 +72,7 @@ Widget::Widget(
 	// But we should force it to repaint so that GIFs will continue to animate without update() calls.
 	// We do that by creating a transparent widget above our _inner.
 	auto forceRepaintOnScroll = object_ptr<RpWidget>(this);
-	forceRepaintOnScroll->setGeometry(innerRect().x() + st::roundRadiusSmall, innerRect().y() + st::roundRadiusSmall, st::roundRadiusSmall, st::roundRadiusSmall);
+	forceRepaintOnScroll->setGeometry(_scroll->x(), _scroll->y() + st::roundRadiusSmall, st::roundRadiusSmall, st::roundRadiusSmall);
 	forceRepaintOnScroll->setAttribute(Qt::WA_TransparentForMouseEvents);
 	forceRepaintOnScroll->show();
 
@@ -96,7 +86,9 @@ void Widget::moveBottom(int bottom) {
 }
 
 void Widget::updateContentHeight() {
-	auto addedHeight = innerPadding().top() + innerPadding().bottom();
+	auto addedHeight = innerPadding().top()
+		+ innerPadding().bottom()
+		+ 2 * st::inlineResultsPanelSkip;
 	const auto wanted
 		= int(base::SafeRound(st::emojiPanHeightRatio * _bottom));
 	auto wantedContentHeight = wanted - addedHeight;
@@ -115,7 +107,7 @@ void Widget::updateContentHeight() {
 	auto was = _contentHeight;
 	_contentHeight = contentHeight;
 
-	resize(QRect(0, 0, innerRect().width(), _contentHeight).marginsAdded(innerPadding()).size());
+	resize(QRect(0, 0, innerRect().width(), _contentHeight + 2 * st::inlineResultsPanelSkip).marginsAdded(innerPadding()).size());
 	_height = height();
 	moveToLeft(0, resultTop);
 
@@ -157,30 +149,18 @@ void Widget::paintEvent(QPaintEvent *e) {
 		hideFinished();
 	} else {
 		if (!_cache.isNull()) _cache = QPixmap();
-		if (!_inPanelGrab) _shadow.paint(p, innerRect(), st::roundRadiusSmall);
+		if (!_inPanelGrab) _shadow.paint(p, innerRect(), st::inlineResultsRadius);
 		paintContent(p);
 	}
 }
 
 void Widget::paintContent(QPainter &p) {
-	auto inner = innerRect();
-	const auto radius = st::roundRadiusSmall;
+	const auto radius = st::inlineResultsRadius;
 
-	const auto top = Ui::CornersPixmaps{
-		.p = { _innerRounding.p[0], _innerRounding.p[1], QPixmap(), QPixmap() },
-	};
-	Ui::FillRoundRect(p, inner.x(), inner.y(), inner.width(), radius, st::emojiPanBg, top);
-
-	const auto bottom = Ui::CornersPixmaps{
-		.p = { QPixmap(), QPixmap(), _innerRounding.p[2], _innerRounding.p[3] },
-	};
-	Ui::FillRoundRect(p, inner.x(), inner.y() + inner.height() - radius, inner.width(), radius, st::emojiPanBg, bottom);
-
-	auto horizontal = horizontalRect();
-	auto sidesTop = horizontal.y();
-	auto sidesHeight = horizontal.height();
-	p.fillRect(myrtlrect(inner.x() + inner.width() - st::emojiScroll.width, sidesTop, st::emojiScroll.width, sidesHeight), st::emojiPanBg);
-	p.fillRect(myrtlrect(inner.x(), sidesTop, st::roundRadiusSmall, sidesHeight), st::emojiPanBg);
+	PainterHighQualityEnabler hq(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::emojiPanBg);
+	p.drawRoundedRect(innerRect(), radius, radius);
 }
 
 void Widget::moveByBottom() {
@@ -245,8 +225,9 @@ void Widget::startShowAnimation() {
 			QRect(
 				inner.topLeft() * style::DevicePixelRatio(),
 				inner.size() * style::DevicePixelRatio()),
-			st::emojiPanRadius);
-		_showAnimation->setCornerMasks(Images::CornersMask(ImageRoundRadius::Small));
+			st::inlineResultsRadius);
+		_showAnimation->setCornerMasks(
+			Images::CornersMask(st::inlineResultsRadius));
 		_showAnimation->start();
 	}
 	hideChildren();
@@ -330,12 +311,9 @@ QRect Widget::innerRect() const {
 	return rect().marginsRemoved(innerPadding());
 }
 
-QRect Widget::horizontalRect() const {
-	return innerRect().marginsRemoved(style::margins(0, st::roundRadiusSmall, 0, st::roundRadiusSmall));
-}
-
-QRect Widget::verticalRect() const {
-	return innerRect().marginsRemoved(style::margins(st::roundRadiusSmall, 0, st::roundRadiusSmall, 0));
+QRect Widget::scrollRect() const {
+	const auto skip = st::inlineResultsPanelSkip;
+	return innerRect().marginsRemoved(style::margins(0, skip, 0, skip));
 }
 
 void Widget::clearInlineBot() {
@@ -347,8 +325,9 @@ bool Widget::overlaps(const QRect &globalRect) const {
 
 	auto testRect = QRect(mapFromGlobal(globalRect.topLeft()), globalRect.size());
 	auto inner = rect().marginsRemoved(st::emojiPanMargins);
-	return inner.marginsRemoved(QMargins(st::roundRadiusSmall, 0, st::roundRadiusSmall, 0)).contains(testRect)
-		|| inner.marginsRemoved(QMargins(0, st::roundRadiusSmall, 0, st::roundRadiusSmall)).contains(testRect);
+	const auto radius = st::inlineResultsRadius;
+	return inner.marginsRemoved(QMargins(radius, 0, radius, 0)).contains(testRect)
+		|| inner.marginsRemoved(QMargins(0, radius, 0, radius)).contains(testRect);
 }
 
 void Widget::inlineBotChanged() {

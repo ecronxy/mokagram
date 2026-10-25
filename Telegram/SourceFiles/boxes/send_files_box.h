@@ -271,6 +271,7 @@ private:
 	void refreshTitleText();
 	void updateBoxSize();
 	void updateControlsGeometry();
+	int layoutMokaOptions(int bottom, bool apply);
 	void updateCaptionVisibility();
 
 	bool addFiles(
@@ -318,6 +319,8 @@ private:
 
 	const std::shared_ptr<ChatHelpers::Show> _show;
 	const style::ComposeControls &_st;
+	const bool _moka = false;
+	const style::InputField &_captionSt;
 	const Api::SendType _sendType = Api::SendType();
 
 	QString _titleText;
@@ -378,6 +381,10 @@ private:
 
 	QPointer<Ui::RoundButton> _send;
 	QPointer<Ui::RoundButton> _addFile;
+	base::unique_qptr<Ui::AbstractButton> _mokaClose;
+	base::unique_qptr<Ui::AbstractButton> _mokaMenu;
+	QRect _mokaOptionsCard;
+	std::vector<int> _mokaDividers;
 
 	rpl::event_stream<TextWithTags> _textWithTagsRequests;
 

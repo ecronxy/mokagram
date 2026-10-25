@@ -1,0 +1,14 @@
+diff --git i/webview/platform/linux/webview_linux_webkitgtk.cpp w/webview/platform/linux/webview_linux_webkitgtk.cpp
+index 81824ca..a7c3a64 100644
+--- i/webview/platform/linux/webview_linux_webkitgtk.cpp
++++ w/webview/platform/linux/webview_linux_webkitgtk.cpp
+@@ -2608,6 +2608,9 @@ void Instance::startProcess() {
+ 	auto serviceLauncher = Gio::SubprocessLauncher::new_(
+ 		Gio::SubprocessFlags::NONE_);
+ 
++	// mokaGram: the DMA-BUF renderer breaks mini apps on many drivers.
++	serviceLauncher.setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", false);
++
+ 	if (_platform == Platform::Wayland
+ 			&& _mode == WindowMode::Embedded
+ 			&& _glBackend == Ui::GL::Backend::Raster) {

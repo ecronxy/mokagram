@@ -27,9 +27,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/media/history_view_document.h" // DrawThumbnailAsSongCover
 #include "history/view/media/history_view_media_common.h"
 #include "ui/image/image.h"
+#include "ui/image/image_prepare.h"
 #include "ui/text/format_values.h"
 #include "ui/cached_round_corners.h"
 #include "ui/painter.h"
+#include "ui/ui_utility.h"
 #include "main/main_session.h"
 #include "lang/lang_keys.h"
 #include "styles/style_chat_style.h"
@@ -47,6 +49,30 @@ using TextState = HistoryView::TextState;
 constexpr auto kMaxInlineArea = 1280 * 720;
 
 using ::Media::ValidFrameSize;
+
+// Mokagram: превью в строках списка со скруглёнными углами.
+void FillThumbPlaceholder(QPainter &p, QRect rect, const style::color &bg) {
+	const auto radius = st::inlineThumbRadius;
+	PainterHighQualityEnabler hq(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(bg);
+	p.drawRoundedRect(rect, radius, radius);
+}
+
+void PaintRoundedThumb(
+		QPainter &p,
+		QRect rect,
+		const QPixmap &thumb,
+		QPixmap &cache,
+		qint64 &cacheKey) {
+	if (cacheKey != thumb.cacheKey()) {
+		cache = Ui::PixmapFromImage(Images::Round(
+			thumb.toImage(),
+			Images::CornersMask(st::inlineThumbRadius)));
+		cacheKey = thumb.cacheKey();
+	}
+	p.drawPixmap(rect.topLeft(), cache);
+}
 
 [[nodiscard]] QSize ScaleDown(int w, int h, int maxW, int maxH) {
 	if (w * maxH > h * maxW) {
@@ -861,17 +887,23 @@ void Video::initDimensions() {
 
 void Video::paint(Painter &p, const QRect &clip, const PaintContext *context) const {
 	int left = st::inlineThumbSize + st::inlineThumbSkip;
+	const auto rthumb = style::rtlrect(0, st::inlineRowMargin, st::inlineThumbSize, st::inlineThumbSize, _width);
 
 	const auto withThumb = withThumbnail();
 	if (withThumb) {
 		prepareThumbnail({ st::inlineThumbSize, st::inlineThumbSize });
 		if (_thumb.isNull()) {
-			p.fillRect(style::rtlrect(0, st::inlineRowMargin, st::inlineThumbSize, st::inlineThumbSize, _width), st::overviewPhotoBg);
+			FillThumbPlaceholder(p, rthumb, st::overviewPhotoBg);
 		} else {
-			p.drawPixmapLeft(0, st::inlineRowMargin, _width, _thumb);
+			PaintRoundedThumb(
+				p,
+				rthumb,
+				_thumb,
+				_thumbRounded,
+				_thumbRoundedKey);
 		}
 	} else {
-		p.fillRect(style::rtlrect(0, st::inlineRowMargin, st::inlineThumbSize, st::inlineThumbSize, _width), st::overviewVideoBg);
+		FillThumbPlaceholder(p, rthumb, st::overviewVideoBg);
 	}
 
 	if (!_duration.isEmpty()) {
@@ -1536,17 +1568,22 @@ void Article::paint(Painter &p, const QRect &clip, const PaintContext *context) 
 					st::msgFile1Bg
 				};
 
-				p.fillRect(rthumb, colors[index]);
+				FillThumbPlaceholder(p, rthumb, colors[index]);
 				if (!_thumbLetter.isEmpty()) {
 					p.setFont(st::linksLetterFont);
 					p.setPen(st::linksLetterFg);
 					p.drawText(rthumb, _thumbLetter, style::al_center);
 				}
 			} else {
-				p.fillRect(rthumb, st::overviewPhotoBg);
+				FillThumbPlaceholder(p, rthumb, st::overviewPhotoBg);
 			}
 		} else {
-			p.drawPixmapLeft(rthumb.topLeft(), _width, _thumb);
+			PaintRoundedThumb(
+				p,
+				rthumb,
+				_thumb,
+				_thumbRounded,
+				_thumbRoundedKey);
 		}
 	}
 
