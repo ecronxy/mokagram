@@ -91,6 +91,36 @@ void RegisterSettings() {
 		.sectionNote = QString::fromUtf8(
 			Mokagram::Lang::Tr("Переключаться между аккаунтами можно в меню слева вверху. Здесь настраивается только их предельное число.")),
 	});
+	Settings::Register({
+		.key = u"chats.font"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Шрифт сообщений")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Каким шрифтом отправлять")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Всё, что вы пишете, уходит выбранным начертанием: напишете «привет», уйдёт жирным.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Mokagram::Lang::Tr("Обычный")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Жирный")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Курсив")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Жирный курсив")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Подчёркнутый")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Зачёркнутый")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Моноширинный")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Скрытый (спойлер)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Цитата")),
+			QString::fromUtf8("𝐁𝐨𝐥𝐝 (жирный)"),
+			QString::fromUtf8("𝓢𝓬𝓻𝓲𝓹𝓽 (рукописный)"),
+			QString::fromUtf8("𝔊𝔬𝔱𝔥𝔦𝔠 (готический)"),
+			QString::fromUtf8("Ⓒⓘⓡⓒⓛⓔⓢ (в кружках)"),
+			QString::fromUtf8("Ｗｉｄｅ (широкий)"),
+			QString::fromUtf8("ꜱᴍᴀʟʟ ᴄᴀᴘꜱ (малые заглавные)"),
+		},
+		.category = u"chats"_q,
+		.sectionIcon = u"edit"_q,
+		.sectionNote = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Начертания с 𝐁𝐨𝐥𝐝 и ниже меняют только латиницу, кириллица остаётся обычной. Команды плагинов, ссылки, @имена и текст, где вы сами выделили жирный или курсив, не меняются.")),
+	});
 	const auto look = QString::fromUtf8(Mokagram::Lang::Tr("Размеры в чате"));
 	const auto size = [&](const char *key, const char *title, int def, int lo, int hi) {
 		Settings::Register({

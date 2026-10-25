@@ -3,6 +3,8 @@
 
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "mokagram/settings/mokagram_settings.h"
+#include "ui/widgets/fields/input_field.h"
 
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
@@ -205,6 +207,104 @@ void Expand(TextWithTags &text) {
 	moveTags(text.text.size());
 	result.text += text.text.mid(from);
 	text = std::move(result);
+}
+
+namespace {
+
+// Буквы и цифры латиницы в другом начертании. Кириллицы там нет, она остаётся как есть.
+[[nodiscard]] QString MapLatin(const QString &text, int kind) {
+	const auto pick = [&](QChar c) -> QString {
+		const auto upper = (c >= 'A' && c <= 'Z');
+		const auto lower = (c >= 'a' && c <= 'z');
+		const auto digit = (c >= '0' && c <= '9');
+		if (!upper && !lower && !digit) {
+			return QString(c);
+		}
+		const auto n = upper ? (c.unicode() - 'A') : lower ? (c.unicode() - 'a') : (c.unicode() - '0');
+		const auto ucs = [](uint code) {
+			const auto value = char32_t(code);
+			return QString::fromUcs4(&value, 1);
+		};
+		switch (kind) {
+		case 0: // 𝐁𝐨𝐥𝐝
+			return upper ? ucs(0x1D400 + n) : lower ? ucs(0x1D41A + n) : ucs(0x1D7CE + n);
+		case 1: // 𝓢𝓬𝓻𝓲𝓹𝓽
+			return digit ? QString(c) : upper ? ucs(0x1D4D0 + n) : ucs(0x1D4EA + n);
+		case 2: // 𝔊𝔬𝔱𝔥𝔦𝔠
+			return digit ? QString(c) : upper ? ucs(0x1D56C + n) : ucs(0x1D586 + n);
+		case 3: // Ⓒⓘⓡⓒⓛⓔⓢ
+			return digit
+				? (n == 0 ? ucs(0x24EA) : ucs(0x2460 + n - 1))
+				: upper ? ucs(0x24B6 + n) : ucs(0x24D0 + n);
+		case 4: // Ｗｉｄｅ
+			return upper ? ucs(0xFF21 + n) : lower ? ucs(0xFF41 + n) : ucs(0xFF10 + n);
+		default: { // ꜱᴍᴀʟʟ ᴄᴀᴘꜱ
+			static const char16_t small[] = u"ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ";
+			return (upper || lower) ? QString(QChar(small[n])) : QString(c);
+		}
+		}
+	};
+	auto result = QString();
+	for (const auto c : text) {
+		result += pick(c);
+	}
+	return result;
+}
+
+// Ссылки, @имена, #теги и команды трогать нельзя: от замены букв они перестанут работать.
+[[nodiscard]] bool IsProtectedWord(const QString &word) {
+	static const auto domain = QRegularExpression(u"\\w\\.\\w{2,}"_q);
+	return word.contains('/') || word.contains('@') || word.contains('#')
+		|| word.contains(':') || word.contains(domain);
+}
+
+} // namespace
+
+void ApplyFont(TextWithTags &text) {
+	const auto kind = Mokagram::Settings::Int(u"chats.font"_q);
+	if (kind <= 0 || text.text.trimmed().isEmpty()) {
+		return;
+	}
+	const auto first = text.text.trimmed().at(0);
+	if (first == '.' || first == '/' || first == '!' || first == ';') {
+		return;
+	}
+	const auto whole = [&](const QString &id) {
+		text.tags.push_back({ 0, int(text.text.size()), id });
+	};
+	if (kind < 9) {
+		// Если у человека уже есть своё форматирование, не накладываем поверх.
+		if (!text.tags.isEmpty()) {
+			return;
+		}
+		switch (kind) {
+		case 1: whole(Ui::InputField::kTagBold); break;
+		case 2: whole(Ui::InputField::kTagItalic); break;
+		case 3: whole(Ui::InputField::kTagBold + '|' + Ui::InputField::kTagItalic); break;
+		case 4: whole(Ui::InputField::kTagUnderline); break;
+		case 5: whole(Ui::InputField::kTagStrikeOut); break;
+		case 6: whole(Ui::InputField::kTagCode); break;
+		case 7: whole(Ui::InputField::kTagSpoiler); break;
+		case 8: whole(Ui::InputField::kTagBlockquote); break;
+		}
+		return;
+	}
+	if (!text.tags.isEmpty()) {
+		return;
+	}
+	static const auto word = QRegularExpression(u"\\S+"_q);
+	auto result = QString();
+	auto last = 0;
+	auto found = word.globalMatch(text.text);
+	while (found.hasNext()) {
+		const auto match = found.next();
+		result += text.text.mid(last, match.capturedStart() - last);
+		const auto part = match.captured();
+		result += IsProtectedWord(part) ? part : MapLatin(part, kind - 9);
+		last = match.capturedEnd();
+	}
+	result += text.text.mid(last);
+	text.text = result;
 }
 
 } // namespace Mokagram::Snippets

@@ -2578,6 +2578,11 @@ void StartDebugCommands() {
 					Quote::ShowQuoteBox(controller, std::move(ids));
 				}
 			}
+		} else if (cmd.startsWith(u"setint:"_q)) {
+			const auto parts = cmd.mid(7).split('=');
+			if (parts.size() == 2) {
+				Mokagram::Settings::SetInt(parts[0], parts[1].toInt());
+			}
 		} else if (cmd.startsWith(u"wheel:"_q)) {
 			const auto parts = cmd.mid(6).split(',');
 			auto w = (QWidget*)controller->widget();
