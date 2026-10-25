@@ -1260,7 +1260,8 @@ void AddActionRow(
 		const style::icon &icon,
 		QColor color,
 		bool first,
-		Fn<void()> callback) {
+		Fn<void()> callback,
+		const QString &alt = QString()) {
 	const auto row = card->add(object_ptr<Ui::RippleButton>(
 		card,
 		st::defaultRippleAnimation));
@@ -1320,7 +1321,7 @@ void AddActionRow(
 			color,
 			icon,
 			iconName,
-			QString(),
+			alt,
 			*pack,
 			row);
 	}, row->lifetime());
@@ -1893,6 +1894,7 @@ struct CommandInfo {
 	const char *note;
 	const style::icon *icon;
 	QColor color;
+	const char *alt;
 };
 
 void CommandsPage(
@@ -1981,23 +1983,24 @@ void CommandsPage(
 				[=] {
 					Settings::SetBool(u"commands.enabled"_q, !enabled);
 					(*build)();
-				});
+				},
+				enabled ? QString::fromUtf8("✅") : QString::fromUtf8("🚫"));
 		}
 
 		addHead(U("Команды"));
 		const auto commands = std::vector<CommandInfo>{
-			{ ".mute [30m|2h|1d]", "Заглушить чат. Ответом в группе: запретить человеку писать", &st::menuIconMute, orange },
-			{ ".unmute", "Включить звук чата или снять запрет писать", &st::menuIconUnmute, orange },
-			{ ".ban", "Исключить человека (ответом в группе) или заблокировать в личке", &st::menuIconBlock, red },
-			{ ".unban", "Снять бан или разблокировать человека", &st::menuIconBlock, green },
-			{ ".kick", "Исключить без вечного бана, можно вернуться (ответом)", &st::menuIconRemove, red },
-			{ ".del", "Удалить сообщение, на которое ответил", &st::menuIconDelete, red },
-			{ ".del N", "Удалить свои последние N сообщений (ответом: N сообщений человека)", &st::menuIconDelete, red },
-			{ ".del all", "Ответом: удалить все сообщения человека. Без ответа: все твои загруженные", &st::menuIconDelete, red },
-			{ ".pin", "Закрепить сообщение (ответом)", &st::menuIconPin, blue },
-			{ ".unpin", "Открепить сообщение (ответом)", &st::menuIconUnpin, blue },
-			{ ".id", "Показать ID автора, чата и сообщения, ссылку на сообщение", &st::menuIconInfo, purple },
-			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple },
+			{ ".mute [30m|2h|1d]", "Заглушить чат. Ответом в группе: запретить человеку писать", &st::menuIconMute, orange, "🔕" },
+			{ ".unmute", "Включить звук чата или снять запрет писать", &st::menuIconUnmute, orange, "🔔" },
+			{ ".ban", "Исключить человека (ответом в группе) или заблокировать в личке", &st::menuIconBlock, red, "🚫" },
+			{ ".unban", "Снять бан или разблокировать человека", &st::menuIconBlock, green, "✅" },
+			{ ".kick", "Исключить без вечного бана, можно вернуться (ответом)", &st::menuIconRemove, red, "⬅️" },
+			{ ".del", "Удалить сообщение, на которое ответил", &st::menuIconDelete, red, "🗑" },
+			{ ".del N", "Удалить свои последние N сообщений (ответом: N сообщений человека)", &st::menuIconDelete, red, "🗑" },
+			{ ".del all", "Ответом: удалить все сообщения человека. Без ответа: все твои загруженные", &st::menuIconDelete, red, "🗑" },
+			{ ".pin", "Закрепить сообщение (ответом)", &st::menuIconPin, blue, "📌" },
+			{ ".unpin", "Открепить сообщение (ответом)", &st::menuIconUnpin, blue, "📍" },
+			{ ".id", "Показать ID автора, чата и сообщения, ссылку на сообщение", &st::menuIconInfo, purple, "ℹ️" },
+			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple, "📁" },
 		};
 		{
 			const auto card = addCard();
@@ -2015,7 +2018,8 @@ void CommandsPage(
 						QGuiApplication::clipboard()->setText(
 							name.section(' ', 0, 0));
 						toast(U("Скопировано: ") + name.section(' ', 0, 0));
-					});
+					},
+					QString::fromUtf8(c.alt));
 			}
 		}
 		note(U("Нажми на команду, чтобы скопировать её."));
@@ -2045,7 +2049,8 @@ void CommandsPage(
 							list.end());
 						Mokagram::Commands::SetAliases(list);
 						(*build)();
-					});
+					},
+					QString::fromUtf8("🗑"));
 				first = false;
 			}
 			AddActionRow(
@@ -2103,7 +2108,8 @@ void CommandsPage(
 							inner->closeBox();
 						});
 					}));
-				});
+				},
+				QString::fromUtf8("➕"));
 		}
 		Ui::AddSkip(body, 16);
 	};
