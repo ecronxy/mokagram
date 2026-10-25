@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer_rpl.h"
 #include "base/unixtime.h"
 #include "mokagram/misc/mokagram_datereg.h"
+#include "mokagram/notes/mokagram_notes.h"
 #include "mokagram/streamer/mokagram_streamer.h"
 #include "boxes/choose_filter_box.h"
 #include "boxes/peer_list_box.h"
@@ -1970,6 +1971,12 @@ Section DetailsFiller::makeInfo() {
 			AboutWithAdvancedValue(user));
 		setupAboutContextMenu(about.text, AboutWithAdvancedValue(user));
 		SetupAboutPeerIdDrag(about.text, user);
+		// Mokagram: личная заметка о человеке, видна только тебе.
+		addInfoLine(
+			QString::fromUtf8("Заметка (видна только тебе)"),
+			Mokagram::Notes::NoteValue(user->id) | rpl::map([](QString note) {
+				return TextWithEntities{ note };
+			}));
 
 		const auto usernameLine = addInfoOneLine(
 			UsernamesSubtext(_peer, tr::lng_info_username_label()),

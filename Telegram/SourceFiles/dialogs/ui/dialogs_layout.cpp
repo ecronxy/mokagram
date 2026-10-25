@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/ui/dialogs_layout.h"
+#include "mokagram/notes/mokagram_notes.h"
 
 #include "base/options.h"
 #include "base/unixtime.h"
@@ -987,6 +988,33 @@ void PaintRow(
 			const auto muteTop = rectForName.top()
 				+ (st::semiboldFont->height - muteIcon.height()) / 2;
 			muteIcon.paint(p, muteLeft, muteTop, context.width);
+		}
+		// Mokagram: личный тег стоит плашкой справа от имени.
+		if (const auto tag = Mokagram::Notes::Tag(from->id); !tag.isEmpty()) {
+			const auto nameW = std::min(
+				rowName.maxWidth(),
+				rectForName.width());
+			const auto tagLeft = rectForName.left()
+				+ nameW
+				+ badgeWidth
+				+ (drawMuteIcon
+					? DialogsMuteIcon.value()
+						? ThreeStateIcon(
+							st::dialogsMuteIcon,
+							context.active,
+							context.selected).width() + st::dialogsMuteIconSkip
+						: 0
+					: 0)
+				+ 6;
+			Mokagram::Notes::PaintTag(
+				p,
+				tag,
+				tagLeft,
+				rectForName.top(),
+				context.width - context.st->padding.right(),
+				(context.active
+					? st::dialogsNameFgActive
+					: st::windowActiveTextFg)->c);
 		}
 	} else if (hiddenSenderInfo) {
 		p.setPen(context.active

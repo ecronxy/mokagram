@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_top_bar_widget.h"
+#include "mokagram/notes/mokagram_notes.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include <deque>
 
@@ -206,6 +207,12 @@ TopBarWidget::TopBarWidget(
 			update();
 		}, lifetime());
 	}
+
+	Mokagram::Notes::Changed() | rpl::on_next([=](PeerId id) {
+		if (_activeChat.key.peer() && _activeChat.key.peer()->id == id) {
+			updateOnlineDisplay();
+		}
+	}, lifetime());
 
 	using UpdateFlag = Data::PeerUpdate::Flag;
 	session().changes().peerUpdates(
@@ -2056,6 +2063,10 @@ void TopBarWidget::updateOnlineDisplay() {
 		} else {
 			text = channel->isMegagroup() ? tr::lng_group_status(tr::now) : tr::lng_channel_status(tr::now);
 		}
+	}
+	// Mokagram: личный тег собеседника виден под именем.
+	if (const auto tag = Mokagram::Notes::Tag(peer->id); !tag.isEmpty()) {
+		text = tag + (text.isEmpty() ? QString() : u" \u00b7 "_q + text);
 	}
 	if (_titlePeerText.toString() != text) {
 		_titlePeerText.setText(st::dialogsTextStyle, text);

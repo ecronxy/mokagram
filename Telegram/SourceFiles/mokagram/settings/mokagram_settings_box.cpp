@@ -2185,6 +2185,8 @@ void CommandsPage(
 			{ ".calc 2+2*3", "Посчитать: в поле останется «2+2*3 = 8»", &st::menuIconEdit, orange, "#️⃣" },
 			{ ".archive", "Отправить чат в архив (.unarchive вернёт)", &st::menuIconShowInFolder, gray, "📁" },
 			{ ".dl", "Скачать файл или фото из сообщения (ответом) в загрузки", &st::menuIconDownload, green, "🔽" },
+			{ ".tag", "Тег у собеседника: виден в списке чатов и под именем (.tag клиент, пусто = убрать)", &st::menuIconTagFilter, blue, "🔖" },
+			{ ".note", "Личная заметка о человеке: видна только тебе в его профиле", &st::menuIconEdit, blue, "📝" },
 			{ ".save", "Переслать сообщение (ответом) в «Избранное»", &st::menuIconSavedMessages, purple, "📁" },
 		};
 		{
