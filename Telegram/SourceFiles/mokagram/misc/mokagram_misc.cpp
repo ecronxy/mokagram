@@ -308,7 +308,7 @@ namespace {
 struct State {
 	base::flat_set<quint64> users;
 	base::flat_set<quint64> remote;
-	DocumentId icon = 5400163321582236772ULL;
+	DocumentId icon = 5400231989519363256ULL;
 	bool loaded = false;
 };
 
