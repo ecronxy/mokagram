@@ -454,7 +454,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/history"_q,
-			.title = rpl::single(QString::fromUtf8("История")),
+			.title = rpl::single(QString::fromUtf8("Удалёнки")),
 			.icon = { &st::menuIconDeleteAttention },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"history"_q);

@@ -1371,7 +1371,7 @@ void PaintGroupBg(not_null<Ui::RpWidget*> card) {
 [[nodiscard]] QString PageTitle(const QString &page) {
 	if (page == u"privacy"_q) return U("Приватность");
 	if (page == u"security"_q) return U("Безопасность");
-	if (page == u"history"_q) return U("История");
+	if (page == u"history"_q) return U("Удалёнки");
 	if (page == u"music"_q) return U("Музыка");
 	if (page == u"system"_q) return U("Система");
 	if (page == u"tools"_q) return U("Инструменты");
@@ -1635,7 +1635,8 @@ void CustomizeBox(
 							toast(U("Не удалось записать файл"));
 						}
 					});
-			});
+			},
+			QString::fromUtf8("📤"));
 		AddActionRow(
 			actions,
 			U("Загрузить настройки из файла"),
@@ -1699,7 +1700,8 @@ void CustomizeBox(
 							});
 						}));
 					});
-			});
+			},
+			QString::fromUtf8("📥"));
 		AddActionRow(
 			actions,
 			U("Вернуть всё как было"),
@@ -1724,7 +1726,8 @@ void CustomizeBox(
 						.confirmText = U("Сбросить"),
 					});
 				}));
-			});
+			},
+			QString::fromUtf8("↩️"));
 	}
 	Ui::AddSkip(content, 22);
 
