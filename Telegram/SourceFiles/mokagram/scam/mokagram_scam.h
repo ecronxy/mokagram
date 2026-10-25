@@ -4,6 +4,8 @@
 
 #include "ui/text/text_entity.h"
 
+#include <QtGui/QPainter>
+
 class HistoryItem;
 
 namespace Mokagram::Scam {
@@ -17,6 +19,12 @@ void RegisterSettings();
 void MarkText(
 	not_null<const HistoryItem*> item,
 	TextWithEntities &text);
+
+// Помечен ли текст (в начале стоит невидимый маркер и две пустые строки).
+[[nodiscard]] bool HasMark(const QString &text);
+
+// Рисует красную плашку клиента на месте пустых строк маркера.
+void PaintBanner(QPainter &p, QRect rect);
 
 // Показывает предупреждение; proceed вызывается, если человек всё равно
 // хочет открыть ссылку.

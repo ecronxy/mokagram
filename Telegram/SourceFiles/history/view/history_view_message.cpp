@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_message.h"
 
+#include "mokagram/scam/mokagram_scam.h"
+
 #include "api/api_suggest_post.h"
 #include "api/api_transcribes.h"
 #include "base/options.h"
@@ -3069,6 +3071,11 @@ void Message::paintText(
 			trect.width(),
 			width());
 		trect.setY(trect.y() + botTop->height);
+	}
+	if (Mokagram::Scam::HasMark(data()->originalText().text)) {
+		Mokagram::Scam::PaintBanner(
+			p,
+			QRect(trect.x(), trect.y(), trect.width(), st::msgFont->height));
 	}
 	if (const auto rich = const_cast<Message*>(this)->richpage()) {
 	    paintRichText(p, rich, richPageRect(trect), context);

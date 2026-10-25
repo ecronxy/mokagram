@@ -6,7 +6,10 @@
 #include "history/history_item_components.h"
 #include "history/history_item_reply_markup.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "styles/style_basic.h"
+#include "styles/style_chat.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/painter.h"
 #include "ui/layers/generic_box.h"
 #include "window/window_controller.h"
 
@@ -16,6 +19,7 @@ namespace {
 namespace S = Mokagram::Settings;
 
 constexpr auto kTelegramServiceId = 777000;
+constexpr auto kMarkChar = QChar(0x2063);
 
 [[nodiscard]] QString U(const char *text) {
 	return QString::fromUtf8(text);
@@ -52,6 +56,7 @@ namespace {
 [[nodiscard]] bool OfferText(const QString &text) {
 	return ContainsAny(text, {
 		"предложение действует", "offer is valid",
+		"передайте подарок покупателю", "tg://send_gift",
 	}) || (ContainsAny(text, { "предлагает вам", "offers you" })
 		&& ContainsAny(text, {
 			"за подарок", "за коллекционный", "for your gift",
@@ -76,11 +81,7 @@ void MarkText(
 	if (from->isVerified() || from->id.value == kTelegramServiceId) {
 		return;
 	}
-	const auto mark = U("\xE2\x9A\xA0 Возможный фейк-оффер. Настоящий приходит карточкой подарка по центру чата.");
-	auto result = TextWithEntities{ mark + u"\n\n"_q };
-	result.entities.push_back(EntityInText(EntityType::Bold, 0, mark.size()));
-	result.append(std::move(text));
-	text = std::move(result);
+	text = TextWithEntities{ QString(kMarkChar) + u"\n\n"_q }.append(std::move(text));
 }
 
 bool IsFakeOffer(not_null<const HistoryItem*> item) {
@@ -99,6 +100,7 @@ bool IsFakeOffer(not_null<const HistoryItem*> item) {
 	// с такой же фразой и таймером это подделка.
 	const auto offerText = ContainsAny(text, {
 		"предложение действует", "offer is valid",
+		"передайте подарок покупателю", "tg://send_gift",
 	}) || (ContainsAny(text, { "предлагает вам", "offers you" })
 		&& ContainsAny(text, {
 			"за подарок", "за коллекционный", "for your gift",
@@ -133,6 +135,25 @@ bool IsFakeOffer(not_null<const HistoryItem*> item) {
 		"telegram", "телеграм", "gift", "подарк",
 	});
 	return hasLink && actionLabel && impersonates;
+}
+
+bool HasMark(const QString &text) {
+	return !text.isEmpty() && text[0] == kMarkChar;
+}
+
+void PaintBanner(QPainter &p, QRect rect) {
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(QColor(0xE0, 0x3E, 0x3E));
+	p.drawRoundedRect(rect, 6, 6);
+	p.setPen(Qt::white);
+	p.setFont(st::semiboldFont);
+	p.drawText(
+		rect.adjusted(8, 0, -8, 0),
+		Qt::AlignVCenter | Qt::AlignLeft,
+		st::semiboldFont->elided(
+			QString::fromUtf8("\xE2\x9A\xA0 Возможный фейк-оффер"),
+			rect.width() - 16));
 }
 
 void ShowWarning(not_null<const HistoryItem*> item, Fn<void()> proceed) {
