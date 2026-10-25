@@ -143,7 +143,9 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 		+ QByteArray::number(manifest.size) + '\n';
 }
 
-[[nodiscard]] bool SignatureValid(const Manifest &manifest) {
+[[nodiscard]] bool Verify(
+		const QByteArray &message,
+		const QByteArray &signature) {
 	const auto key = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>(
 		EVP_PKEY_new_raw_public_key(
 			EVP_PKEY_ED25519,
@@ -164,13 +166,16 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 			key.get()) != 1) {
 		return false;
 	}
-	const auto message = SignedMessage(manifest);
 	return EVP_DigestVerify(
 		context.get(),
-		reinterpret_cast<const uchar*>(manifest.signature.constData()),
-		size_t(manifest.signature.size()),
+		reinterpret_cast<const uchar*>(signature.constData()),
+		size_t(signature.size()),
 		reinterpret_cast<const uchar*>(message.constData()),
 		size_t(message.size())) == 1;
+}
+
+[[nodiscard]] bool SignatureValid(const Manifest &manifest) {
+	return Verify(SignedMessage(manifest), manifest.signature);
 }
 
 [[nodiscard]] std::optional<Manifest> ParseManifest(const QByteArray &data) {
@@ -453,6 +458,12 @@ void AutoCheck() {
 }
 
 } // namespace
+
+bool VerifyDetached(
+		const QByteArray &message,
+		const QByteArray &signature) {
+	return Verify(message, signature);
+}
 
 void RegisterSettings() {
 	const auto section = QString::fromUtf8("Обновления");

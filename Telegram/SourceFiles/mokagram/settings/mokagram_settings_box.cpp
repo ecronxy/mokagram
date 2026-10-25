@@ -685,6 +685,9 @@ private:
 // Значок строки: эмодзи из набора, пока не загрузился, обычная плашка.
 struct PackIcon {
 	std::unique_ptr<Ui::Text::CustomEmoji> emoji;
+	// Готовая картинка: у эмодзи из пака разные поля вокруг фигуры, поэтому
+	// их обрезаем по видимой части и растягиваем до одного размера.
+	QImage normalized;
 	bool tried = false;
 };
 
@@ -712,6 +715,58 @@ void PaintPlate(
 		pack.tried = (pack.emoji != nullptr);
 	}
 	auto hq = PainterHighQualityEnabler(p);
+	if (pack.emoji && pack.normalized.isNull() && pack.emoji->ready()) {
+		const auto ratio = style::DevicePixelRatio();
+		auto image = QImage(
+			QSize(kPackEmojiSize, kPackEmojiSize) * ratio,
+			QImage::Format_ARGB32_Premultiplied);
+		image.setDevicePixelRatio(ratio);
+		image.fill(Qt::transparent);
+		{
+			auto q = QPainter(&image);
+			pack.emoji->paint(q, {
+				.textColor = QColor(Qt::white),
+				.now = crl::now(),
+				.position = QPoint(0, 0),
+			});
+		}
+		auto bounds = QRect();
+		for (auto y = 0; y != image.height(); ++y) {
+			const auto line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+			for (auto x = 0; x != image.width(); ++x) {
+				if (qAlpha(line[x]) > 24) {
+					bounds = bounds.united(QRect(x, y, 1, 1));
+				}
+			}
+		}
+		if (bounds.width() > 4 && bounds.height() > 4) {
+			const auto side = std::max(bounds.width(), bounds.height());
+			const auto square = QRect(
+				bounds.center().x() - side / 2,
+				bounds.center().y() - side / 2,
+				side,
+				side);
+			auto fitted = QImage(image.size(), image.format());
+			fitted.setDevicePixelRatio(ratio);
+			fitted.fill(Qt::transparent);
+			auto q = QPainter(&fitted);
+			q.setRenderHint(QPainter::SmoothPixmapTransform);
+			q.drawImage(
+				QRect(0, 0, kPackEmojiSize, kPackEmojiSize),
+				image,
+				square);
+			q.end();
+			pack.normalized = std::move(fitted);
+		}
+	}
+	if (!pack.normalized.isNull()) {
+		p.drawImage(
+			QPoint(
+				rect.x() + (rect.width() - kPackEmojiSize) / 2,
+				rect.y() + (rect.height() - kPackEmojiSize) / 2),
+			pack.normalized);
+		return;
+	}
 	if (pack.emoji) {
 		pack.emoji->paint(p, {
 			.textColor = QColor(Qt::white),

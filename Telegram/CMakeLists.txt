@@ -104,6 +104,8 @@ PRIVATE
     mokagram/plugins/mokagram_plugin_api.h
     mokagram/plugins/mokagram_plugin_install.cpp
     mokagram/plugins/mokagram_plugin_install.h
+    mokagram/plugins/mokagram_plugin_store.cpp
+    mokagram/plugins/mokagram_plugin_store.h
     mokagram/plugins/mokagram_plugins.cpp
     mokagram/plugins/mokagram_plugins.h
     mokagram/settings/mokagram_settings.cpp

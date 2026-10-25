@@ -3,6 +3,7 @@
 #include "base/call_delayed.h"
 
 #include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/plugins/mokagram_plugin_store.h"
 
 #include "core/application.h"
 #include "data/data_document.h"
@@ -490,6 +491,13 @@ void ShowInstallBox(
 }
 
 } // namespace
+
+void InstallFromBytes(
+		Window::SessionController *controller,
+		const QByteArray &bytes,
+		Fn<void()> installed) {
+	ShowInstallBox(controller, bytes, std::move(installed));
+}
 
 bool IsPluginDocument(not_null<DocumentData*> document) {
 	return document->filename().endsWith(
@@ -1190,6 +1198,25 @@ void PluginsBox(
 				});
 			}));
 	});
+	{
+		const auto storeRow = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(14, 8, 14, 0));
+		storeRow->resize(storeRow->width(), stAdd.height);
+		const auto store = Ui::CreateChild<Ui::RoundButton>(
+			storeRow,
+			rpl::single(U("Магазин плагинов")),
+			stAdd);
+		storeRow->widthValue() | rpl::on_next([=](int width) {
+			store->setFullWidth(width);
+			store->moveToLeft(0, 0);
+		}, storeRow->lifetime());
+		store->setClickedCallback([=] {
+			if (const auto strong = weak.get()) {
+				strong->show(Box(StoreBox, strong, reopen));
+			}
+		});
+	}
 	Ui::AddSkip(content, 14);
 
 	// Поиск: показывает поле вместо заголовка и скрывает неподходящие карточки.

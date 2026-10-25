@@ -30,6 +30,12 @@ class PeerData;
 
 namespace Mokagram::Plugins {
 
+// Разбирает файл плагина и показывает окно установки (права, версия).
+void InstallFromBytes(
+	Window::SessionController *controller,
+	const QByteArray &bytes,
+	Fn<void()> installed);
+
 [[nodiscard]] bool IsPluginDocument(not_null<DocumentData*> document);
 
 // Скачивает файл (если нужно), разбирает метаданные без запуска кода
