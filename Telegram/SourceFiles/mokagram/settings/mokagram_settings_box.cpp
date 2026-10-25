@@ -632,7 +632,8 @@ public:
 		return _session->data().customEmojiManager().create(
 			i->second,
 			std::move(repaint),
-			Data::CustomEmojiSizeTag::Normal,
+			// Isolated грузит кадры крупнее: значок остаётся чётким после обрезки.
+			Data::CustomEmojiSizeTag::Isolated,
 			size);
 	}
 
@@ -720,10 +721,12 @@ void PaintPlate(
 		// Холст с запасом: у некоторых эмодзи фигура выходит за свою клетку.
 		constexpr auto kMargin = 8;
 		const auto canvas = kPackEmojiSize + 2 * kMargin;
+		// Рисуем вдвое плотнее экрана, чтобы обрезка и сжатие не мылили картинку.
+		const auto scale = ratio * 2;
 		auto image = QImage(
-			QSize(canvas, canvas) * ratio,
+			QSize(canvas, canvas) * scale,
 			QImage::Format_ARGB32_Premultiplied);
-		image.setDevicePixelRatio(ratio);
+		image.setDevicePixelRatio(scale);
 		image.fill(Qt::transparent);
 		{
 			auto q = QPainter(&image);
