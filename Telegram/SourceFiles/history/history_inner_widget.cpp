@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_inner_widget.h"
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/quote/mokagram_quote.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/history/mokagram_history.h"
 
 #include "api/api_polls.h"
@@ -3755,7 +3756,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 									clearSelected();
 									repaint();
 								}
-								const auto dpr = std::max(2., devicePixelRatioF());
+								const auto dpr = std::max(2. + Mokagram::Settings::Int(u"quote.quality"_q), devicePixelRatioF());
 								for (const auto item : items) {
 									const auto view = viewByItem(item);
 									if (!view) {
@@ -3777,6 +3778,35 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 										QPoint(),
 										QRegion(QRect(0, top, width(), view->height())),
 										QWidget::DrawChildren);
+									// Аватарка рисуется у последнего сообщения серии; если её
+									// нет на снимке, подставляем свою в лучшем качестве.
+									if (!item->out()
+										&& item->from()
+										&& (_history->peer->isChat() || _history->peer->isMegagroup())) {
+										auto empty = true;
+										const auto probe = int(48 * dpr);
+										for (auto y = 0; y != image.height() && empty; ++y) {
+											const auto line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+											for (auto x = 0; x != std::min(probe, image.width()); ++x) {
+												if (qAlpha(line[x]) > 6) {
+													empty = false;
+													break;
+												}
+											}
+										}
+										if (empty) {
+											auto p = QPainter(&image);
+											p.setRenderHint(QPainter::Antialiasing);
+											auto userpic = item->from()->createUserpicView();
+											const auto size = 40;
+											item->from()->paintUserpic(
+												p,
+												userpic,
+												8,
+												std::max(0, view->height() - size - 4),
+												size);
+										}
+									}
 									rows.push_back(std::move(image));
 								}
 								Mokagram::Quote::ShowQuoteBox(_controller, std::move(rows), std::move(ids));

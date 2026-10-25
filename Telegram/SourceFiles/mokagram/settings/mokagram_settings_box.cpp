@@ -2089,7 +2089,7 @@ void StartDebugCommands() {
 				if (dynamic_cast<HistoryInner*>(child)) inner = child;
 			}
 			if (inner) {
-				const auto dpr = std::max(2., inner->devicePixelRatioF());
+				const auto dpr = std::max(3., inner->devicePixelRatioF());
 				auto image = QImage(QSize(inner->width(), 190) * dpr, QImage::Format_ARGB32_Premultiplied);
 				image.setDevicePixelRatio(dpr);
 				image.fill(Qt::transparent);

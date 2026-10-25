@@ -322,6 +322,63 @@ struct MaskRect {
 	Mask mask = Mask::Blur;
 };
 
+// Углы пузырей Telegram рисует из мелких картинок: при увеличении они дают
+// ступеньки. Сглаживаем только край (там, где размытие меняет прозрачность),
+// текст внутри пузыря не трогаем.
+[[nodiscard]] QImage BoxBlur(const QImage &src, int r) {
+	const auto w = src.width(), h = src.height();
+	auto tmp = QImage(src.size(), QImage::Format_ARGB32_Premultiplied);
+	auto out = QImage(src.size(), QImage::Format_ARGB32_Premultiplied);
+	const auto n = 2 * r + 1;
+	for (auto y = 0; y != h; ++y) {
+		const auto in = reinterpret_cast<const QRgb*>(src.constScanLine(y));
+		auto row = reinterpret_cast<QRgb*>(tmp.scanLine(y));
+		auto a = 0, rr = 0, g = 0, b = 0;
+		const auto add = [&](int x, int sign) {
+			const auto c = in[std::clamp(x, 0, w - 1)];
+			a += sign * qAlpha(c); rr += sign * qRed(c);
+			g += sign * qGreen(c); b += sign * qBlue(c);
+		};
+		for (auto x = -r; x <= r; ++x) add(x, 1);
+		for (auto x = 0; x != w; ++x) {
+			row[x] = qRgba(rr / n, g / n, b / n, a / n);
+			add(x + r + 1, 1);
+			add(x - r, -1);
+		}
+	}
+	for (auto x = 0; x != w; ++x) {
+		auto a = 0, rr = 0, g = 0, b = 0;
+		const auto add = [&](int y, int sign) {
+			const auto c = reinterpret_cast<const QRgb*>(tmp.constScanLine(std::clamp(y, 0, h - 1)))[x];
+			a += sign * qAlpha(c); rr += sign * qRed(c);
+			g += sign * qGreen(c); b += sign * qBlue(c);
+		};
+		for (auto y = -r; y <= r; ++y) add(y, 1);
+		for (auto y = 0; y != h; ++y) {
+			reinterpret_cast<QRgb*>(out.scanLine(y))[x] = qRgba(rr / n, g / n, b / n, a / n);
+			add(y + r + 1, 1);
+			add(y - r, -1);
+		}
+	}
+	return out;
+}
+
+void SmoothEdges(QImage &image, int radius) {
+	if (image.isNull() || radius < 1) {
+		return;
+	}
+	const auto blurred = BoxBlur(image, radius);
+	for (auto y = 0; y != image.height(); ++y) {
+		auto line = reinterpret_cast<QRgb*>(image.scanLine(y));
+		const auto soft = reinterpret_cast<const QRgb*>(blurred.constScanLine(y));
+		for (auto x = 0; x != image.width(); ++x) {
+			if (std::abs(qAlpha(soft[x]) - qAlpha(line[x])) > 3) {
+				line[x] = soft[x];
+			}
+		}
+	}
+}
+
 [[nodiscard]] QImage StackRows(const std::vector<QImage> &rows) {
 	if (rows.empty()) {
 		return QImage();
@@ -358,6 +415,8 @@ struct MaskRect {
 		p.drawImage(QPoint(0, y), row, QRect(left, 0, right - left + 1, row.height()));
 		y += row.height();
 	}
+	p.end();
+	SmoothEdges(result, std::max(1, int(std::round(dpr * 0.8))));
 	return result;
 }
 
@@ -625,6 +684,14 @@ void RegisterSettings() {
 		.choices = { U("Тёмная"), U("Светлая"), U("Без карточки") },
 	});
 	add({
+		.key = u"quote.quality"_q,
+		.title = U("Качество картинки"),
+		.description = U("Во сколько раз больше, чем на экране. Выше: чётче и тяжелее."),
+		.kind = S::Kind::Choice,
+		.defaultValue = 1,
+		.choices = { U("2×"), U("3×"), U("4×") },
+	});
+	add({
 		.key = u"quote.padding"_q,
 		.title = U("Отступ от края, px"),
 		.kind = S::Kind::Int,
@@ -667,6 +734,9 @@ void ShowQuoteBox(
 		if (content->isNull()) {
 			return;
 		}
+	}
+	if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
+		content->save(u"/tmp/moka_quote_content.png"_q, "PNG");
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(U("Скриншот сообщений")));
