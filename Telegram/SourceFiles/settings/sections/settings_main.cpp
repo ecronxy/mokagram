@@ -435,6 +435,60 @@ void MokagramSettings::setupContent() {
 			.keywords = { u"customize"_q, u"mokagram"_q },
 		});
 		builder.addButton({
+			.id = u"main/privacy"_q,
+			.title = rpl::single(QString::fromUtf8("Приватность")),
+			.icon = { &st::menuIconLock },
+			.onClick = [=] {
+				Mokagram::Settings::ShowSettingsPage(controller, u"privacy"_q);
+			},
+			.keywords = { u"privacy"_q, u"mokagram"_q },
+		});
+		builder.addButton({
+			.id = u"main/security"_q,
+			.title = rpl::single(QString::fromUtf8("Безопасность")),
+			.icon = { &st::menuIconPermissions },
+			.onClick = [=] {
+				Mokagram::Settings::ShowSettingsPage(controller, u"security"_q);
+			},
+			.keywords = { u"security"_q, u"mokagram"_q },
+		});
+		builder.addButton({
+			.id = u"main/history"_q,
+			.title = rpl::single(QString::fromUtf8("История")),
+			.icon = { &st::menuIconDeleteAttention },
+			.onClick = [=] {
+				Mokagram::Settings::ShowSettingsPage(controller, u"history"_q);
+			},
+			.keywords = { u"history"_q, u"mokagram"_q },
+		});
+		builder.addButton({
+			.id = u"main/music"_q,
+			.title = rpl::single(QString::fromUtf8("Музыка")),
+			.icon = { &st::menuIconUnmute },
+			.onClick = [=] {
+				Mokagram::Settings::ShowSettingsPage(controller, u"music"_q);
+			},
+			.keywords = { u"music"_q, u"mokagram"_q },
+		});
+		builder.addButton({
+			.id = u"main/system"_q,
+			.title = rpl::single(QString::fromUtf8("Система")),
+			.icon = { &st::menuIconPowerUsage },
+			.onClick = [=] {
+				Mokagram::Settings::ShowSettingsPage(controller, u"system"_q);
+			},
+			.keywords = { u"system"_q, u"mokagram"_q },
+		});
+		builder.addButton({
+			.id = u"main/tools"_q,
+			.title = rpl::single(QString::fromUtf8("Инструменты")),
+			.icon = { &st::menuIconManage },
+			.onClick = [=] {
+				Mokagram::Settings::ShowSettingsPage(controller, u"tools"_q);
+			},
+			.keywords = { u"tools"_q, u"mokagram"_q },
+		});
+		builder.addButton({
 			.id = u"main/commands"_q,
 			.title = rpl::single(QString::fromUtf8("Быстрые команды")),
 			.icon = { &st::menuIconChats },

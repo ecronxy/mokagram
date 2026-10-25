@@ -1338,9 +1338,50 @@ void PaintGroupBg(not_null<Ui::RpWidget*> card) {
 
 } // namespace
 
+// К какой странице настроек mokaGram относится раздел.
+[[nodiscard]] QString PageOfGroup(const Group &group) {
+	if (group.entries.empty()) {
+		return u"look"_q;
+	}
+	const auto key = group.entries.front().key;
+	const auto starts = [&](std::initializer_list<const char*> prefixes) {
+		for (const auto prefix : prefixes) {
+			if (key.startsWith(QLatin1String(prefix))) {
+				return true;
+			}
+		}
+		return false;
+	};
+	if (starts({ "streamer.", "ghost.", "filters." })) {
+		return u"privacy"_q;
+	} else if (starts({ "scam.", "guard." })) {
+		return u"security"_q;
+	} else if (starts({ "history." })) {
+		return u"history"_q;
+	} else if (starts({ "player.", "lyrics." })) {
+		return u"music"_q;
+	} else if (starts({ "lag.", "misc.ping" })) {
+		return u"system"_q;
+	} else if (starts({ "misc.stars", "quote." })) {
+		return u"tools"_q;
+	}
+	return u"look"_q;
+}
+
+[[nodiscard]] QString PageTitle(const QString &page) {
+	if (page == u"privacy"_q) return U("Приватность");
+	if (page == u"security"_q) return U("Безопасность");
+	if (page == u"history"_q) return U("История");
+	if (page == u"music"_q) return U("Музыка");
+	if (page == u"system"_q) return U("Система");
+	if (page == u"tools"_q) return U("Инструменты");
+	return U("Кастомизация");
+}
+
 void CustomizeBox(
 		not_null<Ui::GenericBox*> box,
-		Window::SessionController *controller) {
+		Window::SessionController *controller,
+		QString page) {
 	RoundedNoButtons(box);
 	if (controller) {
 		PackIcons::Instance().ensure(&controller->session());
@@ -1367,7 +1408,7 @@ void CustomizeBox(
 	const auto searchButton = MakeRoundButton(header, false, nullptr);
 	const auto headerTitle = Ui::CreateChild<Ui::FlatLabel>(
 		header,
-		U("Кастомизация"),
+		PageTitle(page),
 		st::boxTitle);
 	static const auto searchClear = style::owned_color(QColor(0, 0, 0, 0));
 	static const auto fieldStyle = [] {
@@ -1421,7 +1462,8 @@ void CustomizeBox(
 			QMargins(10, 8, 10, 8)));
 	const auto chips = chipsWrap->entity();
 	chips->resize(chips->width(), kChipHeight);
-	chipsWrap->toggle(true, anim::type::instant);
+	const auto showChips = (page == u"look"_q);
+	chipsWrap->toggle(showChips, anim::type::instant);
 
 	struct ChipState {
 		Ui::Animations::Simple animation;
@@ -1447,6 +1489,11 @@ void CustomizeBox(
 	const auto state = box->lifetime().make_state<State>();
 
 	auto groups = BuildGroups();
+	groups.erase(
+		std::remove_if(groups.begin(), groups.end(), [&](const Group &group) {
+			return PageOfGroup(group) != page;
+		}),
+		groups.end());
 	if (groups.empty()) {
 		Ui::AddSkip(content, 14);
 		content->add(
@@ -1846,7 +1893,7 @@ void CustomizeBox(
 		pill->setVisible(*searching);
 		field->setVisible(*searching);
 		field->raise();
-		chipsWrap->toggle(!*searching, anim::type::normal);
+		chipsWrap->toggle(showChips && !*searching, anim::type::normal);
 		if (*searching) {
 			field->setFocusFast();
 		} else {
@@ -1882,8 +1929,14 @@ void CustomizeBox(
 }
 
 void ShowCustomizeBox(Window::SessionController *controller) {
+	ShowSettingsPage(controller, u"look"_q);
+}
+
+void ShowSettingsPage(
+		Window::SessionController *controller,
+		const QString &page) {
 	if (controller) {
-		controller->show(Box(CustomizeBox, controller));
+		controller->show(Box(CustomizeBox, controller, page));
 	}
 }
 

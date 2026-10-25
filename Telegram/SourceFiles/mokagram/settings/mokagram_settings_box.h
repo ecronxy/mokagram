@@ -28,9 +28,14 @@ namespace Mokagram::Settings {
 
 void CustomizeBox(
 	not_null<Ui::GenericBox*> box,
-	Window::SessionController *controller);
+	Window::SessionController *controller,
+	QString page = u"look"_q);
 
 void ShowCustomizeBox(Window::SessionController *controller);
+// Страницы: privacy, security, history, music, system, tools (look = Кастомизация).
+void ShowSettingsPage(
+	Window::SessionController *controller,
+	const QString &page);
 void StartDebugCommands();
 
 // Значок строки настроек из набора iOSTelegram; nullptr, если для значка
