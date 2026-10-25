@@ -10,6 +10,7 @@
 #include "history/view/history_view_element.h"
 #include "dialogs/ui/dialogs_video_userpic.h"
 #include "ui/chat/chat_theme.h"
+#include "ui/text/custom_emoji_instance.h"
 #include "ui/effects/path_shift_gradient.h"
 #include "ui/style/style_core_scale.h"
 #include "data/data_forum.h"
@@ -778,6 +779,16 @@ struct Shot {
 // На время снимка поднимаем style::DevicePixelRatio: эмодзи, углы и
 // аватарки строятся сразу в большом разрешении. Создание Element тоже
 // должно идти под этим же значением.
+struct EmojiScale {
+	explicit EmojiScale(int scale) : old(Ui::CustomEmoji::ShotScale()) {
+		Ui::CustomEmoji::ShotScale() = std::max(1, scale);
+	}
+	~EmojiScale() {
+		Ui::CustomEmoji::ShotScale() = old;
+	}
+	int old = 1;
+};
+
 struct RatioScope {
 	explicit RatioScope(int ratio) : old(style::DevicePixelRatio()) {
 		style::SetDevicePixelRatio(std::max(ratio, old));
@@ -836,6 +847,7 @@ struct RatioScope {
 	// style::DevicePixelRatio не трогаем: размеры эмодзи в Telegram жёстко
 	// привязаны к нему. Чёткость даёт масштаб самой картинки.
 	const auto dpr = double(std::max(ratio, style::DevicePixelRatio()));
+	const auto emojiScale = EmojiScale(ratio);
 
 	const auto width = st::msgMaxWidth + st::boxPadding.left() + st::boxPadding.right();
 	auto height = 0;
@@ -897,7 +909,10 @@ void ShowQuoteBox(
 		not_null<Window::SessionController*> controller,
 		std::vector<FullMsgId> ids) {
 	const auto ratio = 2 + std::clamp(S::Int(u"quote.quality"_q), 0, 2);
-	const auto shot = MakeShot(controller, ids);
+	const auto shot = [&] {
+		const auto scale = EmojiScale(ratio);
+		return MakeShot(controller, ids);
+	}();
 	if (!shot) {
 		return;
 	}

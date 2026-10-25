@@ -93,10 +93,13 @@ private:
 	Unexpected("SizeTag value in CustomEmojiManager-SizeFromTag.");
 }
 
-[[nodiscard]] int FrameSizeFromTag(SizeTag tag, int sizeOverride) {
-	return sizeOverride
+[[nodiscard]] int FrameSizeFromTag(
+		SizeTag tag,
+		int sizeOverride,
+		int shot = Ui::CustomEmoji::ShotScale()) {
+	return (sizeOverride
 		? (sizeOverride * style::DevicePixelRatio())
-		: FrameSizeFromTag(tag);
+		: FrameSizeFromTag(tag)) * shot;
 }
 
 [[nodiscard]] QString UserpicEmojiPrefix() {
@@ -193,6 +196,7 @@ private:
 	std::variant<Resolve, Lookup, Load> _state;
 	ushort _sizeOverride = 0;
 	SizeTag _tag = SizeTag::Normal;
+	int _shot = Ui::CustomEmoji::ShotScale(); // Mokagram: масштаб снимка при создании
 
 };
 
@@ -296,9 +300,11 @@ Storage::Cache::Key CustomEmojiLoader::cacheKey(
 	if (!baseKey) {
 		return {};
 	}
+	// Mokagram: кадры для снимка сообщений (крупнее) кешируются отдельно.
+	const auto shot = uint64(_shot - 1) << 40;
 	return Storage::Cache::Key{
 		baseKey.high,
-		baseKey.low + ChatHelpers::LottieCacheKeyShift(
+		baseKey.low + shot + ChatHelpers::LottieCacheKeyShift(
 			0x0F,
 			LottieSizeFromTag(_tag)),
 	};
@@ -316,7 +322,7 @@ void CustomEmojiLoader::startCacheLookup(
 	lookup->process = std::make_unique<Process>(Process{
 		.loaded = std::move(loaded),
 	});
-	const auto size = FrameSizeFromTag(_tag, _sizeOverride);
+	const auto size = FrameSizeFromTag(_tag, _sizeOverride, _shot);
 	const auto weak = base::make_weak(&lookup->process->guard);
 	document->owner().cacheBigFile().get(key, [=](QByteArray value) {
 		auto cache = Ui::CustomEmoji::Cache::FromSerialized(value, size);
@@ -374,12 +380,18 @@ void CustomEmojiLoader::check() {
 
 	const auto tag = _tag;
 	const auto sizeOverride = int(_sizeOverride);
-	const auto size = FrameSizeFromTag(_tag, _sizeOverride);
+	const auto shotScale = _shot;
+	const auto size = FrameSizeFromTag(_tag, _sizeOverride, _shot);
 	auto loader = [=] {
-		return std::make_unique<CustomEmojiLoader>(
+		auto &scale = Ui::CustomEmoji::ShotScale();
+		const auto old = scale;
+		scale = shotScale;
+		auto result = std::make_unique<CustomEmojiLoader>(
 			document,
 			tag,
 			sizeOverride);
+		scale = old;
+		return result;
 	};
 	auto put = [=, key = cacheKey(document)](QByteArray value) {
 		const auto size = value.size();
@@ -443,7 +455,7 @@ Ui::CustomEmoji::Preview CustomEmojiLoader::preview() {
 			|| dimensions.isEmpty()) {
 			return {};
 		}
-		const auto scale = (FrameSizeFromTag(_tag, _sizeOverride) * 1.)
+		const auto scale = (FrameSizeFromTag(_tag, _sizeOverride, _shot) * 1.)
 			/ (style::DevicePixelRatio() * dimensions.width());
 		return { document->createMediaView()->thumbnailPath(), scale };
 	};
@@ -481,7 +493,12 @@ std::unique_ptr<Ui::Text::CustomEmoji> CustomEmojiManager::create(
 		SizeTag tag,
 		int sizeOverride,
 		LoaderFactory factory) {
-	auto &instances = _instances[SizeIndex(tag)];
+	// Mokagram: у снимка сообщений свои крупные экземпляры, чтобы не мешать
+	// обычным (у них другой размер кадра).
+	static auto shotInstances = decltype(_instances)();
+	auto &instances = (Ui::CustomEmoji::ShotScale() > 1)
+		? shotInstances[SizeIndex(tag)]
+		: _instances[SizeIndex(tag)];
 	auto i = instances.find(documentId);
 	if (i == end(instances)) {
 		using Loading = Ui::CustomEmoji::Loading;

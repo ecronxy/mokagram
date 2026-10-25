@@ -136,6 +136,45 @@ index ec3171e..ee18c18 100644
  	if (!_specialLayerCache.isNull() && specialLayerOpacity > 0) {
  		p.setOpacity(specialLayerOpacity);
  		auto cacheLeft = specialLayerBox.x() - st::boxRoundShadow.extend.left();
+diff --git i/ui/text/custom_emoji_instance.cpp w/ui/text/custom_emoji_instance.cpp
+index 256b889..cf0b5c0 100644
+--- i/ui/text/custom_emoji_instance.cpp
++++ w/ui/text/custom_emoji_instance.cpp
+@@ -19,6 +19,11 @@
+ class QPainter;
+ 
+ namespace Ui::CustomEmoji {
++
++int &ShotScale() {
++	static auto result = 1;
++	return result;
++}
+ namespace {
+ 
+ constexpr auto kMaxFrames = 180;
+@@ -405,7 +410,7 @@ PaintFrameResult Cache::paintCurrentFrame(
+ 		? (_frames - 1)
+ 		: std::min(_frame, _frames - 1);
+ 	const auto info = frame(index);
+-	const auto size = _size / style::DevicePixelRatio();
++	const auto size = _size / (style::DevicePixelRatio() * ShotScale());
+ 	const auto rect = QRect(context.position, QSize(size, size));
+ 	PaintScaledImage(p, rect, info, context);
+ 	const auto next = first ? 0 : currentFrameFinishes();
+diff --git i/ui/text/custom_emoji_instance.h w/ui/text/custom_emoji_instance.h
+index 6b6e97d..ddfa7df 100644
+--- i/ui/text/custom_emoji_instance.h
++++ w/ui/text/custom_emoji_instance.h
+@@ -27,6 +27,9 @@ class FrameGenerator;
+ 
+ namespace Ui::CustomEmoji {
+ 
++// Mokagram: на время снимка сообщений кадры эмодзи рисуются в N раз крупнее.
++[[nodiscard]] int &ShotScale();
++
+ using Context = Ui::Text::CustomEmoji::Context;
+ 
+ [[nodiscard]] QColor PreviewColorFromTextColor(QColor color);
 diff --git i/ui/widgets/box_content_divider.cpp w/ui/widgets/box_content_divider.cpp
 index 948271f..f7b7b24 100644
 --- i/ui/widgets/box_content_divider.cpp
