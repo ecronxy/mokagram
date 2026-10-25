@@ -1,6 +1,7 @@
 // Mokagram: окно «Кастомизация», строится из реестра настроек.
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
+#include "mokagram/plugins/mokagram_plugin_store.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
@@ -2373,6 +2374,11 @@ void StartDebugCommands() {
 						Data::MessageUpdate::Flag::NewUnreadReaction);
 				}
 			}
+		} else if (cmd == u"pluginstore"_q) {
+			controller->show(Box(
+				Mokagram::Plugins::StoreBox,
+				controller,
+				Fn<void()>([] {})));
 		} else if (cmd == u"quit"_q) {
 			Core::Quit();
 		} else if (cmd == u"history"_q) {
