@@ -1,4 +1,5 @@
 #include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 
@@ -181,7 +182,7 @@ void ScheduleBox(not_null<Ui::GenericBox*> box) {
 		[=] { box->closeBox(); });
 	const auto title = Ui::CreateChild<Ui::FlatLabel>(
 		header,
-		U("Расписание призрака"),
+		U(Mokagram::Lang::Tr("Расписание призрака")),
 		st::boxTitle);
 	header->widthValue(
 	) | rpl::on_next([=](int width) {
@@ -193,19 +194,19 @@ void ScheduleBox(not_null<Ui::GenericBox*> box) {
 	}, header->lifetime());
 
 	const auto main = AddScheduleCard(content);
-	AddScheduleToggle(main, U("Включать по расписанию"), u"ghost.schedule"_q);
-	AddScheduleTime(main, U("С"), u"ghost.schedule_from"_q);
-	AddScheduleTime(main, U("До"), u"ghost.schedule_to"_q);
+	AddScheduleToggle(main, U(Mokagram::Lang::Tr("Включать по расписанию")), u"ghost.schedule"_q);
+	AddScheduleTime(main, U(Mokagram::Lang::Tr("С")), u"ghost.schedule_from"_q);
+	AddScheduleTime(main, U(Mokagram::Lang::Tr("До")), u"ghost.schedule_to"_q);
 	AddScheduleNote(
 		content,
-		U("Вне этих часов действуют обычные настройки Призрака."));
+		U(Mokagram::Lang::Tr("Вне этих часов действуют обычные настройки Призрака.")));
 
-	AddScheduleNote(content, U("ЧТО ВКЛЮЧАЕТСЯ В ЭТО ВРЕМЯ"));
+	AddScheduleNote(content, U(Mokagram::Lang::Tr("ЧТО ВКЛЮЧАЕТСЯ В ЭТО ВРЕМЯ")));
 	const auto what = AddScheduleCard(content);
-	AddScheduleToggle(what, U("Не отмечать прочитанным"), u"ghost.sched_read"_q);
-	AddScheduleToggle(what, U("Скрыть «в сети»"), u"ghost.sched_online"_q);
-	AddScheduleToggle(what, U("Не показывать «печатает»"), u"ghost.sched_typing"_q);
-	AddScheduleToggle(what, U("Скрыть просмотры историй"), u"ghost.sched_stories"_q);
+	AddScheduleToggle(what, U(Mokagram::Lang::Tr("Не отмечать прочитанным")), u"ghost.sched_read"_q);
+	AddScheduleToggle(what, U(Mokagram::Lang::Tr("Скрыть «в сети»")), u"ghost.sched_online"_q);
+	AddScheduleToggle(what, U(Mokagram::Lang::Tr("Не показывать «печатает»")), u"ghost.sched_typing"_q);
+	AddScheduleToggle(what, U(Mokagram::Lang::Tr("Скрыть просмотры историй")), u"ghost.sched_stories"_q);
 	content->add(object_ptr<Ui::RpWidget>(content))->resize(0, 14);
 }
 
@@ -251,7 +252,7 @@ void UpdateScheduleLabel() {
 		? (Settings::String(u"ghost.schedule_from"_q)
 			+ QString::fromUtf8(" – ")
 			+ Settings::String(u"ghost.schedule_to"_q))
-		: QString::fromUtf8("Выключено");
+		: QString::fromUtf8(Mokagram::Lang::Tr("Выключено"));
 	if (Settings::String(u"ghost.schedule_label"_q) != label) {
 		Settings::SetString(u"ghost.schedule_label"_q, label);
 	}
@@ -348,11 +349,9 @@ void Refresh() {
 } // namespace
 
 void RegisterSettings() {
-	const auto ghost = QString::fromUtf8("Призрак");
+	const auto ghost = QString::fromUtf8(Mokagram::Lang::Tr("Призрак"));
 	const auto note = QString::fromUtf8(
-		"Вы спокойно читаете чаты, а собеседники не видят, "
-		"что вы были в сети и прочитали сообщения. "
-		"Отключать пункты можно по отдельности.");
+		Mokagram::Lang::Tr("Вы спокойно читаете чаты, а собеседники не видят, что вы были в сети и прочитали сообщения. Отключать пункты можно по отдельности."));
 	const auto add = [&](
 			const char *key,
 			const char *title,
@@ -375,49 +374,44 @@ void RegisterSettings() {
 		});
 	};
 	add("ghost.enabled",
-		"Призрак",
-		"Вы читаете чаты, а собеседники не видят, что вы были в сети "
-		"и прочитали.",
+		Mokagram::Lang::Tr("Призрак"),
+		Mokagram::Lang::Tr("Вы читаете чаты, а собеседники не видят, что вы были в сети и прочитали."),
 		"ghost",
 		false,
 		"");
 	add("ghost.read",
-		"Не отмечать прочитанным",
-		"Вы открыли чат и прочитали, а у собеседника сообщение "
-		"остаётся непрочитанным (без двух галочек).",
+		Mokagram::Lang::Tr("Не отмечать прочитанным"),
+		Mokagram::Lang::Tr("Вы открыли чат и прочитали, а у собеседника сообщение остаётся непрочитанным (без двух галочек)."),
 		"read",
 		true);
 	add("ghost.online",
-		"Скрывать, что я в сети",
-		"Собеседники не видят «в сети» и время вашего последнего "
-		"визита.",
+		Mokagram::Lang::Tr("Скрывать, что я в сети"),
+		Mokagram::Lang::Tr("Собеседники не видят «в сети» и время вашего последнего визита."),
 		"online",
 		true);
 	add("ghost.typing",
-		"Скрывать «печатает»",
-		"Не показываем, что вы пишете, записываете голосовое "
-		"или загружаете файл.",
+		Mokagram::Lang::Tr("Скрывать «печатает»"),
+		Mokagram::Lang::Tr("Не показываем, что вы пишете, записываете голосовое или загружаете файл."),
 		"typing",
 		true);
 	add("ghost.stories",
-		"Скрывать просмотр историй",
-		"Автор не узнает, что вы смотрели его историю.",
+		Mokagram::Lang::Tr("Скрывать просмотр историй"),
+		Mokagram::Lang::Tr("Автор не узнает, что вы смотрели его историю."),
 		"stories",
 		true);
 	add("ghost.offline_on_enable",
-		"Выйти из сети при включении",
-		"Сразу после включения Призрака один раз сообщаем, "
-		"что вас нет в сети.",
+		Mokagram::Lang::Tr("Выйти из сети при включении"),
+		Mokagram::Lang::Tr("Сразу после включения Призрака один раз сообщаем, что вас нет в сети."),
 		"online",
 		true);
 	Settings::Register({
 		.key = u"ghost.schedule_label"_q,
 		.section = ghost,
-		.title = QString::fromUtf8("Расписание"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Расписание")),
 		.description = QString::fromUtf8(
-			"Часы и то, что включается в это время."),
+			Mokagram::Lang::Tr("Часы и то, что включается в это время.")),
 		.kind = Settings::Kind::String,
-		.defaultValue = QString::fromUtf8("Выключено"),
+		.defaultValue = QString::fromUtf8(Mokagram::Lang::Tr("Выключено")),
 		.category = u"privacy"_q,
 		.sectionIcon = u"ghost"_q,
 		.icon = u"online"_q,
@@ -462,10 +456,9 @@ void RegisterSettings() {
 	Settings::Register({
 		.key = u"ghost.exceptions"_q,
 		.section = ghost,
-		.title = QString::fromUtf8("Чаты-исключения (id через запятую)"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Чаты-исключения (id через запятую)")),
 		.description = QString::fromUtf8(
-			"В них Призрак не мешает отмечать прочитанным. "
-			"Проще добавлять через меню чата."),
+			Mokagram::Lang::Tr("В них Призрак не мешает отмечать прочитанным. Проще добавлять через меню чата.")),
 		.kind = Settings::Kind::String,
 		.defaultValue = QString(),
 		.category = u"privacy"_q,
@@ -473,18 +466,16 @@ void RegisterSettings() {
 	});
 	Settings::Register({
 		.key = u"filters.hide_blocked"_q,
-		.section = QString::fromUtf8("Заблокированные"),
-		.title = QString::fromUtf8("Прятать заблокированных в группах"),
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Заблокированные")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Прятать заблокированных в группах")),
 		.description = QString::fromUtf8(
-			"Сообщения людей из вашего чёрного списка пропадают "
-			"из групп и обсуждений. Личные диалоги не трогаем."),
+			Mokagram::Lang::Tr("Сообщения людей из вашего чёрного списка пропадают из групп и обсуждений. Личные диалоги не трогаем.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.category = u"chats"_q,
 		.sectionIcon = u"block"_q,
 		.sectionNote = QString::fromUtf8(
-			"Заблокировать человека мало: в группах его сообщения "
-			"всё равно видны. Здесь можно их спрятать."),
+			Mokagram::Lang::Tr("Заблокировать человека мало: в группах его сообщения всё равно видны. Здесь можно их спрятать.")),
 	});
 
 	auto &data = Data();

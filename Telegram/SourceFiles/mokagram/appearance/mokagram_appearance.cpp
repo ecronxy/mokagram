@@ -1,5 +1,6 @@
 // Mokagram: оформление, настраиваемое в «Кастомизации».
 #include "mokagram/appearance/mokagram_appearance.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/style/style_core.h"
@@ -122,7 +123,7 @@ int SelectionLimit() {
 }
 
 void RegisterSettings() {
-	const auto section = QString::fromUtf8("Пузыри сообщений");
+	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Пузыри сообщений"));
 	const auto add = [&](S::Entry entry) {
 		entry.section = section;
 		entry.category = u"look"_q;
@@ -131,12 +132,12 @@ void RegisterSettings() {
 	};
 	add({
 		.key = u"bubbles.enabled"_q,
-		.title = QString::fromUtf8("Свои цвета пузырьков"),
-		.description = QString::fromUtf8("Выключено: пузырьки рисуются цветами темы."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Свои цвета пузырьков")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Выключено: пузырьки рисуются цветами темы.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 		.sectionNote = QString::fromUtf8(
-			"Цвет пишется как #RRGGBB. Пустое поле оставляет цвет темы."),
+			Mokagram::Lang::Tr("Цвет пишется как #RRGGBB. Пустое поле оставляет цвет темы.")),
 	});
 	const auto color = [&](const char *key, const char *title) {
 		add({
@@ -147,13 +148,13 @@ void RegisterSettings() {
 			.dependsOn = u"bubbles.enabled"_q,
 		});
 	};
-	color(kOutColor, "Мои сообщения: фон");
-	color(kOutText, "Мои сообщения: текст");
-	color(kInColor, "Чужие сообщения: фон");
-	color(kInText, "Чужие сообщения: текст");
+	color(kOutColor, Mokagram::Lang::Tr("Мои сообщения: фон"));
+	color(kOutText, Mokagram::Lang::Tr("Мои сообщения: текст"));
+	color(kInColor, Mokagram::Lang::Tr("Чужие сообщения: фон"));
+	color(kInText, Mokagram::Lang::Tr("Чужие сообщения: текст"));
 
 	{
-		const auto chats = QString::fromUtf8("Сообщения");
+		const auto chats = QString::fromUtf8(Mokagram::Lang::Tr("Сообщения"));
 		const auto chatEntry = [&](S::Entry entry) {
 			entry.section = chats;
 			entry.category = u"chats"_q;
@@ -162,20 +163,20 @@ void RegisterSettings() {
 		};
 		chatEntry({
 			.key = u"chats.select_3000"_q,
-			.title = QString::fromUtf8("Выделять до 3000 сообщений"),
-			.description = QString::fromUtf8("Вместо ста. Удаление и пересылка сами делятся на части."),
+			.title = QString::fromUtf8(Mokagram::Lang::Tr("Выделять до 3000 сообщений")),
+			.description = QString::fromUtf8(Mokagram::Lang::Tr("Вместо ста. Удаление и пересылка сами делятся на части.")),
 			.kind = S::Kind::Bool,
 			.defaultValue = true,
 		});
 		chatEntry({
 			.key = u"chats.edited_pencil"_q,
-			.title = QString::fromUtf8("Короткая надпись «изм.»"),
-			.description = QString::fromUtf8("У изменённого сообщения возле времени стоит «изм.» вместо «изменено»."),
+			.title = QString::fromUtf8(Mokagram::Lang::Tr("Короткая надпись «изм.»")),
+			.description = QString::fromUtf8(Mokagram::Lang::Tr("У изменённого сообщения возле времени стоит «изм.» вместо «изменено».")),
 			.kind = S::Kind::Bool,
 			.defaultValue = true,
 		});
 	}
-	const auto player = QString::fromUtf8("Плеер");
+	const auto player = QString::fromUtf8(Mokagram::Lang::Tr("Плеер"));
 	const auto playerEntry = [&](S::Entry entry) {
 		entry.section = player;
 		entry.category = u"look"_q;
@@ -184,29 +185,29 @@ void RegisterSettings() {
 	};
 	playerEntry({
 		.key = u"player.cover_colors"_q,
-		.title = QString::fromUtf8("Цвета плеера из обложки"),
-		.description = QString::fromUtf8("Окно «Сейчас играет» и панель плеера берут цвет с обложки трека."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Цвета плеера из обложки")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Окно «Сейчас играет» и панель плеера берут цвет с обложки трека.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
 	playerEntry({
 		.key = u"player.autoplay_next"_q,
-		.title = QString::fromUtf8("Автовоспроизведение следующего"),
-		.description = QString::fromUtf8("После трека, голосового или кружка сам включается следующий."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Автовоспроизведение следующего")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("После трека, голосового или кружка сам включается следующий.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
 	playerEntry({
 		.key = u"lyrics.enabled"_q,
-		.title = QString::fromUtf8("Текст песни"),
-		.description = QString::fromUtf8("Показывать слова под обложкой, подсвечивая текущую строку."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Текст песни")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Показывать слова под обложкой, подсвечивая текущую строку.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
 	playerEntry({
 		.key = u"lyrics.plasma"_q,
-		.title = QString::fromUtf8("Плазма за текстом"),
-		.description = QString::fromUtf8("Цветные пятна обложки медленно плывут за словами."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Плазма за текстом")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Цветные пятна обложки медленно плывут за словами.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 		.dependsOn = u"lyrics.enabled"_q,

@@ -1,5 +1,6 @@
 // Mokagram: мелочи (лимит аккаунтов, стикер из фото, владелец пака, название клиента).
 #include "mokagram/misc/mokagram_misc.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "lang/lang_keys.h"
 #include "mokagram/misc/mokagram_datereg.h"
 #include "mokagram/misc/mokagram_ping.h"
@@ -77,12 +78,10 @@ constexpr auto kMaxAccountsKey = "misc.max_accounts";
 void RegisterSettings() {
 	Settings::Register({
 		.key = QString::fromUtf8(kMaxAccountsKey),
-		.section = QString::fromUtf8("Аккаунты"),
-		.title = QString::fromUtf8("Сколько аккаунтов можно добавить"),
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Аккаунты")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько аккаунтов можно добавить")),
 		.description = QString::fromUtf8(
-			"Предел аккаунтов в одном клиенте. "
-			"Если поставить больше 6, официальный Telegram "
-			"не прочтёт эти данные."),
+			Mokagram::Lang::Tr("Предел аккаунтов в одном клиенте. Если поставить больше 6, официальный Telegram не прочтёт эти данные.")),
 		.kind = Settings::Kind::Int,
 		.defaultValue = 10,
 		.minValue = 3,
@@ -90,16 +89,15 @@ void RegisterSettings() {
 		.category = u"accounts"_q,
 		.sectionIcon = u"accounts"_q,
 		.sectionNote = QString::fromUtf8(
-			"Переключаться между аккаунтами можно в меню слева "
-			"вверху. Здесь настраивается только их предельное число."),
+			Mokagram::Lang::Tr("Переключаться между аккаунтами можно в меню слева вверху. Здесь настраивается только их предельное число.")),
 	});
-	const auto look = QString::fromUtf8("Размеры в чате");
+	const auto look = QString::fromUtf8(Mokagram::Lang::Tr("Размеры в чате"));
 	const auto size = [&](const char *key, const char *title, int def, int lo, int hi) {
 		Settings::Register({
 			.key = QString::fromUtf8(key),
 			.section = look,
 			.title = QString::fromUtf8(title),
-			.description = QString::fromUtf8("В пикселях. Применяется после перезапуска."),
+			.description = QString::fromUtf8(Mokagram::Lang::Tr("В пикселях. Применяется после перезапуска.")),
 			.kind = Settings::Kind::Int,
 			.defaultValue = def,
 			.minValue = lo,
@@ -109,27 +107,27 @@ void RegisterSettings() {
 			.sectionIcon = u"hide"_q,
 		});
 	};
-	size("look.sticker_size", "Размер стикеров", 224, 80, 512);
-	size("look.gif_size", "Размер GIF", 320, 120, 640);
-	size("look.round_size", "Размер кружков", 240, 120, 480);
+	size("look.sticker_size", Mokagram::Lang::Tr("Размер стикеров"), 224, 80, 512);
+	size("look.gif_size", Mokagram::Lang::Tr("Размер GIF"), 320, 120, 640);
+	size("look.round_size", Mokagram::Lang::Tr("Размер кружков"), 240, 120, 480);
 	Settings::Register({
 		.key = u"misc.ping_dc"_q,
-		.section = QString::fromUtf8("Сеть"),
-		.title = QString::fromUtf8("Пинг дата-центров"),
-		.description = QString::fromUtf8("Показывает, за сколько отвечает каждый дата-центр Telegram."),
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Сеть")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Пинг дата-центров")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Показывает, за сколько отвечает каждый дата-центр Telegram.")),
 		.kind = Settings::Kind::String,
-		.defaultValue = QString::fromUtf8("Проверить"),
+		.defaultValue = QString::fromUtf8(Mokagram::Lang::Tr("Проверить")),
 		.category = u"other"_q,
 		.sectionIcon = u"storage"_q,
 		.action = [] { ShowPingBox(); },
 	});
 	Settings::Register({
 		.key = u"misc.stars_stats"_q,
-		.section = QString::fromUtf8("Профиль"),
-		.title = QString::fromUtf8("Траты звёзд"),
-		.description = QString::fromUtf8("Сколько звёзд потрачено: по месяцам, категориям и получателям."),
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Профиль")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Траты звёзд")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Сколько звёзд потрачено: по месяцам, категориям и получателям.")),
 		.kind = Settings::Kind::String,
-		.defaultValue = QString::fromUtf8("Открыть"),
+		.defaultValue = QString::fromUtf8(Mokagram::Lang::Tr("Открыть")),
 		.category = u"other"_q,
 		.sectionIcon = u"person"_q,
 		.action = [] { Stars::ShowSpendingStatsBox(); },
@@ -166,7 +164,7 @@ void ShowStickerSetOwner(
 		uint64 setId) {
 	const auto owner = OwnerIdFromStickerSetId(setId);
 	if (!owner || owner > 0xFFFFFFFFFFULL) {
-		show->showToast(QString::fromUtf8("Владельца определить не удалось."));
+		show->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Владельца определить не удалось.")));
 		return;
 	}
 	const auto session = &show->session();
@@ -180,20 +178,19 @@ void ShowStickerSetOwner(
 	const auto idText = QString::number(owner);
 	show->showBox(Ui::MakeConfirmBox({
 		.text = QString::fromUtf8(
-			"Вероятный владелец пака: ID ")
+			Mokagram::Lang::Tr("Вероятный владелец пака: ID "))
 			+ idText
 			+ QString::fromUtf8(
-				". Его профиля нет в кэше, открыть напрямую нельзя. "
-				"Ссылка tg://user?id=")
+				Mokagram::Lang::Tr(". Его профиля нет в кэше, открыть напрямую нельзя. Ссылка tg://user?id="))
 			+ idText
-			+ QString::fromUtf8(" может сработать, если вы с ним знакомы."),
+			+ QString::fromUtf8(Mokagram::Lang::Tr(" может сработать, если вы с ним знакомы.")),
 		.confirmed = [=](Fn<void()> close) {
 			QGuiApplication::clipboard()->setText(idText);
-			show->showToast(QString::fromUtf8("ID скопирован"));
+			show->showToast(QString::fromUtf8(Mokagram::Lang::Tr("ID скопирован")));
 			close();
 		},
-		.confirmText = QString::fromUtf8("Копировать ID"),
-		.cancelText = QString::fromUtf8("Закрыть"),
+		.confirmText = QString::fromUtf8(Mokagram::Lang::Tr("Копировать ID")),
+		.cancelText = QString::fromUtf8(Mokagram::Lang::Tr("Закрыть")),
 	}));
 }
 
@@ -206,10 +203,10 @@ QByteArray BrandRewrite(const QByteArray &value) {
 		QByteArrayLiteral(" stars"),
 		QByteArrayLiteral(" business"),
 		QByteArrayLiteral(" premium"),
-		QString::fromUtf8(" бизнес").toUtf8(),
-		QString::fromUtf8(" для бизнес").toUtf8(),
-		QString::fromUtf8(" звёзд").toUtf8(),
-		QString::fromUtf8(" звезд").toUtf8(),
+		QString::fromUtf8(Mokagram::Lang::Tr(" бизнес")).toUtf8(),
+		QString::fromUtf8(Mokagram::Lang::Tr(" для бизнес")).toUtf8(),
+		QString::fromUtf8(Mokagram::Lang::Tr(" звёзд")).toUtf8(),
+		QString::fromUtf8(Mokagram::Lang::Tr(" звезд")).toUtf8(),
 	};
 	if (!value.contains(from)) {
 		return value;
@@ -309,13 +306,13 @@ constexpr TeamEntry kTeam[] = {
 constexpr auto kOwnerId = 6612638154ULL;
 
 [[nodiscard]] bool Russian() {
-	return Lang::Id().startsWith(u"ru"_q);
+	return ::Lang::Id().startsWith(u"ru"_q);
 }
 
 [[nodiscard]] const char *TeamRole(not_null<UserData*> user) {
 	if (peerToUser(user->id).bare == kOwnerId) {
 		return Russian()
-			? "Разработчик и владелец mokaGram"
+			? Mokagram::Lang::Tr("Разработчик и владелец mokaGram")
 			: "Developer and owner of mokaGram";
 	}
 	for (const auto &username : user->usernames()) {
@@ -347,7 +344,7 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 		.botId = UserId(0),
 		.iconId = state.icon,
 		.description = TextWithEntities{
-			QString::fromUtf8(role ? role : "Разработчик mokaGram"),
+			QString::fromUtf8(role ? role : Mokagram::Lang::Tr("Разработчик mokaGram")),
 		},
 	};
 }
@@ -422,8 +419,12 @@ namespace {
 
 namespace S = ::Mokagram::Settings;
 
-const auto kSection = QString::fromUtf8("Защита от спама");
-const auto kLagSection = QString::fromUtf8("Анти-лаг");
+[[nodiscard]] QString SpamSection() {
+	return QString::fromUtf8(Mokagram::Lang::Tr("Защита от спама"));
+}
+[[nodiscard]] QString LagSection() {
+	return QString::fromUtf8(Mokagram::Lang::Tr("Анти-лаг"));
+}
 
 constexpr auto kDefaultThreats =
 	"убью, прибью, найду тебя, найду и убью, сдохни, зарежу, взорву, "
@@ -456,7 +457,7 @@ void Toast(const QString &text) {
 
 void Block(not_null<UserData*> user, const QString &why) {
 	user->session().api().blockedPeers().block(user);
-	Toast(QString::fromUtf8("Заблокировал ") + user->name() + QString::fromUtf8(": ") + why);
+	Toast(QString::fromUtf8(Mokagram::Lang::Tr("Заблокировал ")) + user->name() + QString::fromUtf8(": ") + why);
 }
 
 [[nodiscard]] QStringList ExemptList() {
@@ -506,7 +507,7 @@ void OnNewMessage(not_null<HistoryItem*> item) {
 			}
 			if (int(log.times.size()) >= S::Int(u"guard.sticker_count"_q)) {
 				logs.erase(peerToUser(user->id).bare);
-				Block(user, QString::fromUtf8("спам стикерами"));
+				Block(user, QString::fromUtf8(Mokagram::Lang::Tr("спам стикерами")));
 				return;
 			}
 		}
@@ -516,7 +517,7 @@ void OnNewMessage(not_null<HistoryItem*> item) {
 		if (!text.isEmpty()) {
 			for (const auto &word : Threats()) {
 				if (text.contains(word)) {
-					Block(user, QString::fromUtf8("угрозы"));
+					Block(user, QString::fromUtf8(Mokagram::Lang::Tr("угрозы")));
 					return;
 				}
 			}
@@ -568,7 +569,7 @@ void WatchMassAdd(not_null<Main::Session*> session) {
 				session->api().userPrivacy().save(
 					Api::UserPrivacy::Key::Invites,
 					rule);
-				Toast(QString::fromUtf8("Много добавлений в чаты подряд: теперь добавлять вас могут только контакты"));
+				Toast(QString::fromUtf8(Mokagram::Lang::Tr("Много добавлений в чаты подряд: теперь добавлять вас могут только контакты")));
 			}
 		});
 	}, session->lifetime());
@@ -604,31 +605,30 @@ void ToggleThreatExempt(not_null<PeerData*> peer) {
 
 void RegisterSettings() {
 	const auto add = [&](S::Entry entry) {
-		entry.section = kSection;
+		entry.section = SpamSection();
 		entry.category = u"privacy"_q;
 		entry.sectionIcon = u"block"_q;
 		entry.sectionNote = QString::fromUtf8(
-			"Работает в личных сообщениях. Заблокированных можно "
-			"вернуть в настройках Telegram, раздел «Заблокированные».");
+			Mokagram::Lang::Tr("Работает в личных сообщениях. Заблокированных можно вернуть в настройках Telegram, раздел «Заблокированные»."));
 		S::Register(std::move(entry));
 	};
 	add({
 		.key = u"guard.only_strangers"_q,
-		.title = QString::fromUtf8("Только для тех, кого нет в контактах"),
-		.description = QString::fromUtf8("Знакомых и ботов защита не трогает."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Только для тех, кого нет в контактах")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Знакомых и ботов защита не трогает.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
 	add({
 		.key = u"guard.stickers"_q,
-		.title = QString::fromUtf8("Блокировать за спам стикерами"),
-		.description = QString::fromUtf8("Если человек присылает слишком много стикеров подряд."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Блокировать за спам стикерами")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Если человек присылает слишком много стикеров подряд.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 	});
 	add({
 		.key = u"guard.sticker_count"_q,
-		.title = QString::fromUtf8("Сколько стикеров ведёт к блокировке"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько стикеров ведёт к блокировке")),
 		.kind = S::Kind::Int,
 		.defaultValue = 5,
 		.minValue = 2,
@@ -637,8 +637,8 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"guard.sticker_seconds"_q,
-		.title = QString::fromUtf8("За сколько секунд"),
-		.description = QString::fromUtf8("Окно, в котором считаются стикеры."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("За сколько секунд")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Окно, в котором считаются стикеры.")),
 		.kind = S::Kind::Int,
 		.defaultValue = 10,
 		.minValue = 1,
@@ -647,37 +647,37 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"guard.threats"_q,
-		.title = QString::fromUtf8("Блокировать за угрозы"),
-		.description = QString::fromUtf8("Если в сообщении есть слово или фраза из списка ниже."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Блокировать за угрозы")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Если в сообщении есть слово или фраза из списка ниже.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 	});
 	add({
 		.key = u"guard.threat_words"_q,
-		.title = QString::fromUtf8("Список угроз"),
-		.description = QString::fromUtf8("Через запятую, регистр не важен."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Список угроз")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Через запятую, регистр не важен.")),
 		.kind = S::Kind::String,
 		.defaultValue = QString::fromUtf8(kDefaultThreats),
 		.dependsOn = u"guard.threats"_q,
 	});
 	add({
 		.key = u"guard.threat_exempt"_q,
-		.title = QString::fromUtf8("На кого список угроз не действует"),
-		.description = QString::fromUtf8("Им можно писать что угодно. Добавляется в меню чата («Угрозы: не проверять»), здесь можно править: айди или @юзернеймы через запятую."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("На кого список угроз не действует")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Им можно писать что угодно. Добавляется в меню чата («Угрозы: не проверять»), здесь можно править: айди или @юзернеймы через запятую.")),
 		.kind = S::Kind::String,
 		.defaultValue = QString(),
 		.dependsOn = u"guard.threats"_q,
 	});
 	add({
 		.key = u"guard.mass_add"_q,
-		.title = QString::fromUtf8("Защита от массового добавления в чаты"),
-		.description = QString::fromUtf8("Если вас подряд добавляют в чаты незнакомые, добавлять смогут только контакты."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Защита от массового добавления в чаты")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Если вас подряд добавляют в чаты незнакомые, добавлять смогут только контакты.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 	});
 	add({
 		.key = u"guard.mass_count"_q,
-		.title = QString::fromUtf8("Сколько добавлений считать массовыми"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько добавлений считать массовыми")),
 		.kind = S::Kind::Int,
 		.defaultValue = 3,
 		.minValue = 2,
@@ -686,7 +686,7 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"guard.mass_minutes"_q,
-		.title = QString::fromUtf8("За сколько минут"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("За сколько минут")),
 		.kind = S::Kind::Int,
 		.defaultValue = 10,
 		.minValue = 1,
@@ -695,46 +695,45 @@ void RegisterSettings() {
 	});
 	add({
 		.key = u"guard.mass_leave"_q,
-		.title = QString::fromUtf8("Сразу выходить из таких чатов"),
-		.description = QString::fromUtf8("Только там, куда вас добавил не контакт."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сразу выходить из таких чатов")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Только там, куда вас добавил не контакт.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 		.dependsOn = u"guard.mass_add"_q,
 	});
 
 	const auto lag = [&](S::Entry entry) {
-		entry.section = kLagSection;
+		entry.section = LagSection();
 		entry.category = u"look"_q;
 		entry.sectionIcon = u"hide"_q;
 		entry.sectionNote = QString::fromUtf8(
-			"Клиент следит за подвисаниями интерфейса. Если их много, он на время "
-			"отключает тяжёлые анимации, а когда всё спокойно, возвращает как было.");
+			Mokagram::Lang::Tr("Клиент следит за подвисаниями интерфейса. Если их много, он на время отключает тяжёлые анимации, а когда всё спокойно, возвращает как было."));
 		S::Register(std::move(entry));
 	};
 	lag({
 		.key = u"lag.enabled"_q,
-		.title = QString::fromUtf8("Анти-лаг"),
-		.description = QString::fromUtf8("Автоматически включает экономный режим при подвисаниях."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Анти-лаг")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Автоматически включает экономный режим при подвисаниях.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
 	lag({
 		.key = u"lag.level"_q,
-		.title = QString::fromUtf8("Что отключать при лагах"),
-		.description = QString::fromUtf8("Мягко: фон чата, эффекты, спойлеры. Средне: ещё стикеры и эмодзи. Жёстко: всё."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Что отключать при лагах")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Мягко: фон чата, эффекты, спойлеры. Средне: ещё стикеры и эмодзи. Жёстко: всё.")),
 		.kind = S::Kind::Choice,
 		.defaultValue = 1,
 		.choices = {
-			QString::fromUtf8("Мягко"),
-			QString::fromUtf8("Средне"),
-			QString::fromUtf8("Жёстко"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Мягко")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Средне")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Жёстко")),
 		},
 		.dependsOn = u"lag.enabled"_q,
 	});
 	lag({
 		.key = u"lag.sensitivity"_q,
-		.title = QString::fromUtf8("Сколько подвисаний за 10 секунд считать лагом"),
-		.description = QString::fromUtf8("Меньше число: реагирует раньше."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько подвисаний за 10 секунд считать лагом")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Меньше число: реагирует раньше.")),
 		.kind = S::Kind::Int,
 		.defaultValue = 8,
 		.minValue = 3,
@@ -743,7 +742,7 @@ void RegisterSettings() {
 	});
 	lag({
 		.key = u"lag.calm"_q,
-		.title = QString::fromUtf8("Через сколько секунд тишины вернуть всё"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Через сколько секунд тишины вернуть всё")),
 		.kind = S::Kind::Int,
 		.defaultValue = 45,
 		.minValue = 10,
@@ -752,15 +751,15 @@ void RegisterSettings() {
 	});
 	lag({
 		.key = u"lag.cache"_q,
-		.title = QString::fromUtf8("Чистить кэш при лагах"),
-		.description = QString::fromUtf8("Только если он больше предела ниже. Не чаще раза в полчаса."),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Чистить кэш при лагах")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Только если он больше предела ниже. Не чаще раза в полчаса.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 		.dependsOn = u"lag.enabled"_q,
 	});
 	lag({
 		.key = u"lag.cache_mb"_q,
-		.title = QString::fromUtf8("Предел кэша, МБ"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Предел кэша, МБ")),
 		.kind = S::Kind::Int,
 		.defaultValue = 2048,
 		.minValue = 256,
@@ -769,7 +768,7 @@ void RegisterSettings() {
 	});
 	lag({
 		.key = u"lag.notify"_q,
-		.title = QString::fromUtf8("Говорить, когда режим включается"),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Говорить, когда режим включается")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 		.dependsOn = u"lag.enabled"_q,
@@ -823,7 +822,7 @@ void LagTick(LagState &state) {
 		state.active = true;
 		PowerSaving::Set(state.saved | flags);
 		if (S::Bool(u"lag.notify"_q)) {
-			Toast(QString::fromUtf8("Анти-лаг: включил экономный режим"));
+			Toast(QString::fromUtf8(Mokagram::Lang::Tr("Анти-лаг: включил экономный режим")));
 		}
 		if (S::Bool(u"lag.cache"_q)
 			&& (now - state.lastCacheClear > 30 * 60 * 1000)) {

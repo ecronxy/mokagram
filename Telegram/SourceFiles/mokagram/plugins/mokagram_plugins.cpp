@@ -1,6 +1,7 @@
 // Mokagram: хост плагинов (встроенный Python).
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/plugins/mokagram_plugins.h"
 
@@ -71,7 +72,7 @@ bool EnsurePython(const LogFn &log) {
 	if (!Py_IsInitialized()) {
 		Py_InitializeEx(0);
 		if (!Py_IsInitialized()) {
-			if (log) log("python: не удалось инициализировать");
+			if (log) log(Mokagram::Lang::Tr("python: не удалось инициализировать"));
 			return false;
 		}
 		if (log) log(std::string("python ") + Py_GetVersion());
@@ -254,7 +255,7 @@ PyMethodDef NativeMethod = {
 	"_moka_native",
 	NativeCall,
 	METH_VARARGS,
-	"Вызов клиента из хоста плагинов",
+	Mokagram::Lang::Tr("Вызов клиента из хоста плагинов"),
 };
 
 bool LoadHelpers() {
@@ -360,7 +361,7 @@ std::string PluginsDir() {
 int Start(LogFn log) {
 	if (const auto env = std::getenv("MOKAGRAM_PLUGINS")) {
 		if (std::string(env) == "0") {
-			if (log) log("plugins: отключены переменной MOKAGRAM_PLUGINS=0");
+			if (log) log(Mokagram::Lang::Tr("plugins: отключены переменной MOKAGRAM_PLUGINS=0"));
 			return 0;
 		}
 	}
@@ -369,7 +370,7 @@ int Start(LogFn log) {
 	}
 	const auto gil = Gil();
 	if (!LoadHelpers()) {
-		if (log) log("python: ошибка загрузки хоста плагинов");
+		if (log) log(Mokagram::Lang::Tr("python: ошибка загрузки хоста плагинов"));
 		return -1;
 	}
 	if (_started) {
@@ -618,7 +619,7 @@ void QueueHook(
 	}
 	_queueCv.notify_one();
 	if (dropped && (dropped % 100) == 1 && _logFn) {
-		_logFn("plugin: очередь хуков переполнена, отброшено событий: "
+		_logFn(Mokagram::Lang::Tr("plugin: очередь хуков переполнена, отброшено событий: ")
 			+ std::to_string(dropped));
 	}
 }

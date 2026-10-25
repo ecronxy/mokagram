@@ -1,4 +1,5 @@
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "core/application.h"
 #include "rpl/event_stream.h"
@@ -126,7 +127,7 @@ void ApiGet(
 		bool retried = false) {
 	EnsureClientId([=](bool ok) {
 		if (!ok) {
-			done({}, u"не удалось получить client_id SoundCloud"_q);
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("не удалось получить client_id SoundCloud")));
 			return;
 		}
 		auto copy = query;
@@ -143,7 +144,7 @@ void ApiGet(
 			if ((status == 401 || status == 403) && !retried) {
 				EnsureClientId([=](bool refreshed) {
 					if (!refreshed) {
-						done({}, u"client_id SoundCloud устарел"_q);
+						done({}, QString::fromUtf8(Mokagram::Lang::Tr("client_id SoundCloud устарел")));
 						return;
 					}
 					ApiGet(base, query, done, true);
@@ -151,7 +152,7 @@ void ApiGet(
 				return;
 			}
 			if (error != QNetworkReply::NoError) {
-				done({}, u"сеть: %1 (код %2)"_q.arg(
+				done({}, QString::fromUtf8(Mokagram::Lang::Tr("сеть: %1 (код %2)")).arg(
 					reply->errorString()).arg(status));
 				return;
 			}
@@ -241,7 +242,7 @@ void FinishFile(
 	auto file = QFile(path + u".part"_q);
 	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
 		|| file.write(bytes) != bytes.size()) {
-		done({}, u"не удалось записать файл"_q);
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("не удалось записать файл")));
 		return;
 	}
 	file.close();
@@ -262,7 +263,7 @@ void DownloadHls(
 		const auto failed = (reply->error() != QNetworkReply::NoError);
 		reply->deleteLater();
 		if (failed) {
-			done({}, u"не загрузился плейлист"_q);
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("не загрузился плейлист")));
 			return;
 		}
 		auto parts = QStringList();
@@ -280,7 +281,7 @@ void DownloadHls(
 			}
 		}
 		if (parts.isEmpty()) {
-			done({}, u"пустой плейлист"_q);
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("пустой плейлист")));
 			return;
 		}
 		const auto buffer = std::make_shared<QByteArray>();
@@ -298,7 +299,7 @@ void DownloadHls(
 				}
 				segment->deleteLater();
 				if (!ok) {
-					done({}, u"сбой загрузки сегмента"_q);
+					done({}, QString::fromUtf8(Mokagram::Lang::Tr("сбой загрузки сегмента")));
 					return;
 				}
 				(*next)(index + 1);
@@ -405,7 +406,7 @@ void Resolve(
 			}
 			auto fresh = ParseTrack(QJsonDocument::fromJson(data).object());
 			if (fresh.transcodingUrl.isEmpty()) {
-				done(track, u"трек недоступен (закрыт или удалён)"_q);
+				done(track, QString::fromUtf8(Mokagram::Lang::Tr("трек недоступен (закрыт или удалён)")));
 				return;
 			}
 			done(std::move(fresh), QString());
@@ -497,7 +498,7 @@ void Download(
 		const auto url = QJsonDocument::fromJson(data).object()
 			.value("url").toString();
 		if (url.isEmpty()) {
-			done({}, u"нет ссылки на поток"_q);
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("нет ссылки на поток")));
 			return;
 		}
 		if (track.hls) {
@@ -510,7 +511,7 @@ void Download(
 			const auto failed = (reply->error() != QNetworkReply::NoError);
 			reply->deleteLater();
 			if (failed) {
-				done({}, u"сбой загрузки трека"_q);
+				done({}, QString::fromUtf8(Mokagram::Lang::Tr("сбой загрузки трека")));
 				return;
 			}
 			FinishFile(path, bytes, done);

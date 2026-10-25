@@ -1,4 +1,5 @@
 #include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/effects/animation_value.h"
@@ -577,7 +578,7 @@ void BuildTiles(Burst &b, int cell, int maxTiles, double speed) {
 } // namespace
 
 void RegisterSettings() {
-	const auto del = QString::fromUtf8("Эффект удаления сообщений");
+	const auto del = QString::fromUtf8(Mokagram::Lang::Tr("Эффект удаления сообщений"));
 	const auto add = [](S::Entry entry, const QString &section, const char *icon) {
 		entry.section = section;
 		entry.category = u"look"_q;
@@ -589,23 +590,23 @@ void RegisterSettings() {
 
 	d({
 		.key = u"fx.delete.enabled"_q,
-		.title = U("Рассыпать сообщение при удалении"),
-		.description = U("Удалённое сообщение превращается в частицы."),
+		.title = U(Mokagram::Lang::Tr("Рассыпать сообщение при удалении")),
+		.description = U(Mokagram::Lang::Tr("Удалённое сообщение превращается в частицы.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
-		.sectionNote = U("Рисуется на лету без нагрузки на чат, а число частиц ограничено."),
+		.sectionNote = U(Mokagram::Lang::Tr("Рисуется на лету без нагрузки на чат, а число частиц ограничено.")),
 	});
 	d({
 		.key = u"fx.delete.style"_q,
-		.title = U("Эффект"),
+		.title = U(Mokagram::Lang::Tr("Эффект")),
 		.kind = S::Kind::Choice,
 		.defaultValue = 0,
-		.choices = { U("Осколки"), U("Динамит"), U("Портал"), U("Пыль") },
+		.choices = { U(Mokagram::Lang::Tr("Осколки")), U(Mokagram::Lang::Tr("Динамит")), U(Mokagram::Lang::Tr("Портал")), U(Mokagram::Lang::Tr("Пыль")) },
 		.dependsOn = u"fx.delete.enabled"_q,
 	});
 	d({
 		.key = u"fx.delete.duration"_q,
-		.title = U("Длительность, мс"),
+		.title = U(Mokagram::Lang::Tr("Длительность, мс")),
 		.kind = S::Kind::Int,
 		.defaultValue = 800,
 		.minValue = 300,
@@ -614,8 +615,8 @@ void RegisterSettings() {
 	});
 	d({
 		.key = u"fx.delete.size"_q,
-		.title = U("Размер частиц, px"),
-		.description = U("Меньше: частиц больше. Число автоматически ограничено."),
+		.title = U(Mokagram::Lang::Tr("Размер частиц, px")),
+		.description = U(Mokagram::Lang::Tr("Меньше: частиц больше. Число автоматически ограничено.")),
 		.kind = S::Kind::Int,
 		.defaultValue = 16,
 		.minValue = 6,
@@ -624,7 +625,7 @@ void RegisterSettings() {
 	});
 	d({
 		.key = u"fx.delete.speed"_q,
-		.title = U("Скорость разлёта, %"),
+		.title = U(Mokagram::Lang::Tr("Скорость разлёта, %")),
 		.kind = S::Kind::Int,
 		.defaultValue = 100,
 		.minValue = 30,
@@ -633,8 +634,8 @@ void RegisterSettings() {
 	});
 	d({
 		.key = u"fx.delete.max_particles"_q,
-		.title = U("Максимум частиц"),
-		.description = U("Предел на одно сообщение. Для слабых компьютеров ставь меньше."),
+		.title = U(Mokagram::Lang::Tr("Максимум частиц")),
+		.description = U(Mokagram::Lang::Tr("Предел на одно сообщение. Для слабых компьютеров ставь меньше.")),
 		.kind = S::Kind::Int,
 		.defaultValue = 160,
 		.minValue = 30,
@@ -643,15 +644,15 @@ void RegisterSettings() {
 	});
 	d({
 		.key = u"fx.delete.only_own"_q,
-		.title = U("Только мои сообщения"),
+		.title = U(Mokagram::Lang::Tr("Только мои сообщения")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 		.dependsOn = u"fx.delete.enabled"_q,
 	});
 	d({
 		.key = u"fx.delete.color"_q,
-		.title = U("Цвет вспышки и портала"),
-		.description = U("Для динамита и портала. Пусто: цвет по умолчанию."),
+		.title = U(Mokagram::Lang::Tr("Цвет вспышки и портала")),
+		.description = U(Mokagram::Lang::Tr("Для динамита и портала. Пусто: цвет по умолчанию.")),
 		.kind = S::Kind::Color,
 		.defaultValue = QString(),
 		.dependsOn = u"fx.delete.enabled"_q,

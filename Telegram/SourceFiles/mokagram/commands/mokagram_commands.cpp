@@ -1,4 +1,5 @@
 #include "mokagram/commands/mokagram_commands.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "api/api_blocked_peers.h"
 #include "api/api_text_entities.h"
@@ -65,13 +66,13 @@ namespace S = Mokagram::Settings;
 
 [[nodiscard]] QString Describe(int seconds) {
 	if (seconds <= 0) {
-		return U("навсегда");
+		return U(Mokagram::Lang::Tr("навсегда"));
 	} else if (seconds % 86400 == 0) {
-		return U("на %1 д").arg(seconds / 86400);
+		return U(Mokagram::Lang::Tr("на %1 д")).arg(seconds / 86400);
 	} else if (seconds % 3600 == 0) {
-		return U("на %1 ч").arg(seconds / 3600);
+		return U(Mokagram::Lang::Tr("на %1 ч")).arg(seconds / 3600);
 	}
-	return U("на %1 мин").arg(seconds / 60);
+	return U(Mokagram::Lang::Tr("на %1 мин")).arg(seconds / 60);
 }
 
 [[nodiscard]] ChatRestrictions MuteFlags() {
@@ -140,21 +141,21 @@ namespace S = Mokagram::Settings;
 [[nodiscard]] QString CommandsHelp() {
 	auto lines = QStringList{
 		U(".mute [30m|2h|1d] глушит чат, а ответом на сообщение в группе запрещает человеку писать"),
-		U(".unmute включает звук чата или снимает запрет писать"),
-		U(".ban исключает человека (в группе, ответом) или блокирует его в личке"),
-		U(".unban снимает бан или разблокирует человека"),
-		U(".kick исключает человека, но он может вернуться (ответом, в группе)"),
-		U(".del удаляет сообщение, на которое ответил"),
-		U(".del N удаляет твои последние N сообщений (с ответом: N сообщений того человека)"),
-		U(".del all с ответом удаляет все сообщения человека в группе, без ответа все твои загруженные"),
-		U(".pin / .unpin закрепляет или открепляет сообщение (ответом)"),
-		U(".id показывает ID автора, чата и сообщения, ссылку на сообщение"),
-		U(".save пересылает сообщение (ответом) в «Избранное»"),
+		U(Mokagram::Lang::Tr(".unmute включает звук чата или снимает запрет писать")),
+		U(Mokagram::Lang::Tr(".ban исключает человека (в группе, ответом) или блокирует его в личке")),
+		U(Mokagram::Lang::Tr(".unban снимает бан или разблокирует человека")),
+		U(Mokagram::Lang::Tr(".kick исключает человека, но он может вернуться (ответом, в группе)")),
+		U(Mokagram::Lang::Tr(".del удаляет сообщение, на которое ответил")),
+		U(Mokagram::Lang::Tr(".del N удаляет твои последние N сообщений (с ответом: N сообщений того человека)")),
+		U(Mokagram::Lang::Tr(".del all с ответом удаляет все сообщения человека в группе, без ответа все твои загруженные")),
+		U(Mokagram::Lang::Tr(".pin / .unpin закрепляет или открепляет сообщение (ответом)")),
+		U(Mokagram::Lang::Tr(".id показывает ID автора, чата и сообщения, ссылку на сообщение")),
+		U(Mokagram::Lang::Tr(".save пересылает сообщение (ответом) в «Избранное»")),
 	};
 	const auto aliases = ParseAliases(S::String(u"commands.aliases"_q));
 	if (!aliases.empty()) {
 		lines.push_back(QString());
-		lines.push_back(U("Твои алиасы:"));
+		lines.push_back(U(Mokagram::Lang::Tr("Твои алиасы:")));
 		for (const auto &[alias, command] : aliases) {
 			lines.push_back(U(".") + alias + U(" = .") + command);
 		}
@@ -330,19 +331,19 @@ void ShowInfo(
 		? item->from().get()
 		: (peer->isUser() ? peer.get() : nullptr);
 	auto lines = QStringList();
-	lines.push_back(U("ℹ️ Информация"));
+	lines.push_back(U(Mokagram::Lang::Tr("ℹ️ Информация")));
 	lines.push_back(QString());
-	lines.push_back(U("👤 ID автора: ") + (author
+	lines.push_back(U(Mokagram::Lang::Tr("👤 ID автора: ")) + (author
 		? QString::number(author->id.value & PeerId::kChatTypeMask)
-		: U("неизвестен")));
+		: U(Mokagram::Lang::Tr("неизвестен"))));
 	if (author && !author->username().isEmpty()) {
-		lines.push_back(U("🔖 Ник: @") + author->username());
+		lines.push_back(U(Mokagram::Lang::Tr("🔖 Ник: @")) + author->username());
 	}
-	lines.push_back(U("📢 ID чата: ") + QString::number(
+	lines.push_back(U(Mokagram::Lang::Tr("📢 ID чата: ")) + QString::number(
 		peer->id.value & PeerId::kChatTypeMask)
 		+ (peer->isChannel() ? U(" (-100…)") : QString()));
 	if (item) {
-		lines.push_back(U("💬 ID сообщения: ") + QString::number(item->id.bare));
+		lines.push_back(U(Mokagram::Lang::Tr("💬 ID сообщения: ")) + QString::number(item->id.bare));
 		const auto link = MessageLink(item);
 		if (!link.isEmpty()) {
 			lines.push_back(QString());
@@ -351,10 +352,10 @@ void ShowInfo(
 	}
 	const auto text = lines.join('\n');
 	QGuiApplication::clipboard()->setText(text);
-	controller->showToast(U("Скопировано. ID автора: ")
+	controller->showToast(U(Mokagram::Lang::Tr("Скопировано. ID автора: "))
 		+ (author
 			? QString::number(author->id.value & PeerId::kChatTypeMask)
-			: U("неизвестен")));
+			: U(Mokagram::Lang::Tr("неизвестен"))));
 }
 
 } // namespace
@@ -362,9 +363,9 @@ void ShowInfo(
 void RegisterSettings() {
 	S::Register({
 		.key = u"commands.enabled"_q,
-		.section = U("Быстрые команды"),
-		.title = U("Команды .mute и .ban в чате"),
-		.description = U("Напиши в поле ввода только команду и отправь, сообщение не уйдёт. С ответом на сообщение: .mute [время], .unmute, .ban, .unban, .kick, .del [N], .pin, .unpin, .id, .save. Без ответа: .mute глушит чат, .ban блокирует человека в личке, .del [N] удаляет твои последние сообщения, .id показывает ID чата. Время: 30m, 2h, 1d."),
+		.section = U(Mokagram::Lang::Tr("Быстрые команды")),
+		.title = U(Mokagram::Lang::Tr("Команды .mute и .ban в чате")),
+		.description = U(Mokagram::Lang::Tr("Напиши в поле ввода только команду и отправь, сообщение не уйдёт. С ответом на сообщение: .mute [время], .unmute, .ban, .unban, .kick, .del [N], .pin, .unpin, .id, .save. Без ответа: .mute глушит чат, .ban блокирует человека в личке, .del [N] удаляет твои последние сообщения, .id показывает ID чата. Время: 30m, 2h, 1d.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 		.category = u"chats"_q,
@@ -372,8 +373,8 @@ void RegisterSettings() {
 	});
 	S::Register({
 		.key = u"commands.aliases"_q,
-		.section = U("Быстрые команды"),
-		.title = U("Алиасы"),
+		.section = U(Mokagram::Lang::Tr("Быстрые команды")),
+		.title = U(Mokagram::Lang::Tr("Алиасы")),
 		.kind = S::Kind::String,
 		.defaultValue = QString(),
 		.category = u"chats"_q,
@@ -451,7 +452,7 @@ bool Handle(
 	if (command == u"calc"_q) {
 		auto value = 0.;
 		if (arg.isEmpty() || !Calc(arg).run(value)) {
-			toast(U("Не получилось посчитать"));
+			toast(U(Mokagram::Lang::Tr("Не получилось посчитать")));
 			if (replacement) {
 				*replacement = text;
 			}
@@ -478,8 +479,8 @@ bool Handle(
 		}
 		history->updateChatListEntry();
 		toast(arg.isEmpty()
-			? U(isTag ? "Тег убран" : "Заметка убрана")
-			: U(isTag ? "Тег сохранён" : "Заметка сохранена"));
+			? U(isTag ? Mokagram::Lang::Tr("Тег убран") : Mokagram::Lang::Tr("Заметка убрана"))
+			: U(isTag ? Mokagram::Lang::Tr("Тег сохранён") : Mokagram::Lang::Tr("Заметка сохранена")));
 		return true;
 	}
 	if (command == u"snip"_q) {
@@ -491,18 +492,18 @@ bool Handle(
 		if (first.isEmpty() || first.toLower() == u"list"_q) {
 			const auto names = Snippets::Names();
 			toast(names.isEmpty()
-				? U("Сниппетов нет. Пример: .snip привет Здравствуйте!")
-				: (U("Сниппеты: ;") + names.join(u", ;"_q)));
+				? U(Mokagram::Lang::Tr("Сниппетов нет. Пример: .snip привет Здравствуйте!"))
+				: (U(Mokagram::Lang::Tr("Сниппеты: ;")) + names.join(u", ;"_q)));
 		} else if (first.toLower() == u"del"_q) {
 			toast(Snippets::Remove(rest)
-				? U("Сниппет удалён")
-				: U("Такого сниппета нет"));
+				? U(Mokagram::Lang::Tr("Сниппет удалён"))
+				: U(Mokagram::Lang::Tr("Такого сниппета нет")));
 		} else if (!nameRe.match(first).hasMatch()) {
-			toast(U("Имя сниппета: буквы, цифры и _"));
+			toast(U(Mokagram::Lang::Tr("Имя сниппета: буквы, цифры и _")));
 		} else if (rest.isEmpty()) {
 			const auto value = Snippets::Get(first);
 			toast(value.text.isEmpty()
-				? U("Такого сниппета нет. Пример: .snip ") + first + U(" текст")
+				? U(Mokagram::Lang::Tr("Такого сниппета нет. Пример: .snip ")) + first + U(Mokagram::Lang::Tr(" текст"))
 				: value.text.left(200));
 		} else {
 			// Берём текст вместе с разметкой и премиум-эмодзи из поля ввода.
@@ -512,13 +513,13 @@ bool Handle(
 				(at >= 0)
 					? Snippets::Slice(text, at, rest.size())
 					: TextWithTags{ rest });
-			toast(U("Сохранено. Пиши ;") + first.toLower() + U(" в тексте"));
+			toast(U(Mokagram::Lang::Tr("Сохранено. Пиши ;")) + first.toLower() + U(Mokagram::Lang::Tr(" в тексте")));
 		}
 		return true;
 	}
 	if (command == u"dl"_q) {
 		if (!replied || !replied->media()) {
-			toast(U("Ответь командой на сообщение с файлом или фото"));
+			toast(U(Mokagram::Lang::Tr("Ответь командой на сообщение с файлом или фото")));
 			return true;
 		}
 		const auto media = replied->media();
@@ -527,7 +528,7 @@ bool Handle(
 				replied->fullId(),
 				document,
 				DocumentSaveClickHandler::Mode::ToFile);
-			toast(U("Сохраняю в загрузки"));
+			toast(U(Mokagram::Lang::Tr("Сохраняю в загрузки")));
 		} else if (const auto photo = media->photo()) {
 			const auto itemId = replied->fullId();
 			const auto view = photo->createMediaView();
@@ -541,17 +542,17 @@ bool Handle(
 					const auto path = folder + u"/photo_"_q
 						+ QString::number(photo->id) + u".jpg"_q;
 					toast(image->original().save(path, "JPG", 95)
-						? (U("Сохранено: ") + path)
-						: U("Не получилось сохранить"));
+						? (U(Mokagram::Lang::Tr("Сохранено: ")) + path)
+						: U(Mokagram::Lang::Tr("Не получилось сохранить")));
 				} else if (left > 0) {
 					QTimer::singleShot(700, [=] { (*attempt)(left - 1); });
 				} else {
-					toast(U("Не получилось скачать фото"));
+					toast(U(Mokagram::Lang::Tr("Не получилось скачать фото")));
 				}
 			};
 			(*attempt)(8);
 		} else {
-			toast(U("В этом сообщении нечего сохранять"));
+			toast(U(Mokagram::Lang::Tr("В этом сообщении нечего сохранять")));
 		}
 		return true;
 	}
@@ -562,7 +563,7 @@ bool Handle(
 		static const auto langRe = QRegularExpression(
 			u"^[a-z]{2,3}(-[a-z]{2,4})?$"_q);
 		if (!langRe.match(lang).hasMatch()) {
-			toast(U("Укажи язык: .tr en"));
+			toast(U(Mokagram::Lang::Tr("Укажи язык: .tr en")));
 			if (replacement) {
 				*replacement = text;
 			}
@@ -574,7 +575,7 @@ bool Handle(
 			entities = replied->originalText().entities;
 		}
 		if (source.isEmpty()) {
-			toast(U("Напиши текст после языка или ответь на сообщение"));
+			toast(U(Mokagram::Lang::Tr("Напиши текст после языка или ответь на сообщение")));
 			if (replacement) {
 				*replacement = text;
 			}
@@ -588,7 +589,7 @@ bool Handle(
 				session,
 				entities,
 				Api::ConvertOption::SkipLocal)));
-		toast(U("Перевожу…"));
+		toast(U(Mokagram::Lang::Tr("Перевожу…")));
 		session->api().request(MTPmessages_TranslateText(
 			MTP_flags(MTPmessages_TranslateText::Flag::f_text),
 			MTP_inputPeerEmpty(),
@@ -599,7 +600,7 @@ bool Handle(
 		)).done([=](const MTPmessages_TranslatedText &result) {
 			const auto &v = result.data().vresult().v;
 			if (v.isEmpty()) {
-				toast(U("Перевод не получился"));
+				toast(U(Mokagram::Lang::Tr("Перевод не получился")));
 				return;
 			}
 			const auto translated = Api::ParseTextWithEntities(
@@ -614,7 +615,7 @@ bool Handle(
 			};
 			session->api().sendMessage(std::move(message));
 		}).fail([=](const MTP::Error &error) {
-			toast(U("Не получилось перевести: ") + error.type());
+			toast(U(Mokagram::Lang::Tr("Не получилось перевести: ")) + error.type());
 		}).send();
 		return true;
 	}
@@ -624,7 +625,7 @@ bool Handle(
 	}
 	if (command == u"save"_q) {
 		if (!replied) {
-			toast(U("Ответь командой на сообщение, которое сохранить"));
+			toast(U(Mokagram::Lang::Tr("Ответь командой на сообщение, которое сохранить")));
 			return true;
 		}
 		const auto &session = peer->session();
@@ -635,14 +636,14 @@ bool Handle(
 			.items = { replied },
 			.options = Data::ForwardOptions::PreserveInfo,
 		}, action);
-		toast(U("Сохранено в «Избранное»"));
+		toast(U(Mokagram::Lang::Tr("Сохранено в «Избранное»")));
 		return true;
 	}
 	if (command == u"pin"_q || command == u"unpin"_q) {
 		if (!replied) {
-			toast(U("Ответь командой на сообщение"));
+			toast(U(Mokagram::Lang::Tr("Ответь командой на сообщение")));
 		} else if (!replied->canPin()) {
-			toast(U("Нет прав закреплять здесь"));
+			toast(U(Mokagram::Lang::Tr("Нет прав закреплять здесь")));
 		} else {
 			Window::ToggleMessagePinned(
 				controller,
@@ -664,16 +665,16 @@ bool Handle(
 			const auto name = byUser->name();
 			controller->show(Ui::MakeConfirmBox({
 				.text = TextWithEntities{
-					U("Удалить все сообщения «%1» в этом чате?").arg(name) },
+					U(Mokagram::Lang::Tr("Удалить все сообщения «%1» в этом чате?")).arg(name) },
 				.confirmed = [=](Fn<void()> close) {
 					channel->session().api().deleteAllFromParticipant(
 						channel,
 						byUser);
 					close();
 				},
-				.confirmText = U("Удалить всё"),
-				.cancelText = U("Отмена"),
-				.title = rpl::single(U("Удаление")),
+				.confirmText = U(Mokagram::Lang::Tr("Удалить всё")),
+				.cancelText = U(Mokagram::Lang::Tr("Отмена")),
+				.title = rpl::single(U(Mokagram::Lang::Tr("Удаление"))),
 			}));
 			return true;
 		}
@@ -701,20 +702,20 @@ bool Handle(
 			}
 		}
 		if (ids.empty()) {
-			toast(U("Нечего удалять или нет прав"));
+			toast(U(Mokagram::Lang::Tr("Нечего удалять или нет прав")));
 			return true;
 		}
 		const auto count = int(ids.size());
 		auto owner = &peer->owner();
 		controller->show(Ui::MakeConfirmBox({
-			.text = TextWithEntities{ U("Удалить сообщений: %1?").arg(count) },
+			.text = TextWithEntities{ U(Mokagram::Lang::Tr("Удалить сообщений: %1?")).arg(count) },
 			.confirmed = [=, ids = std::move(ids)](Fn<void()> close) {
 				owner->histories().deleteMessages(ids, true);
 				close();
 			},
-			.confirmText = U("Удалить"),
-			.cancelText = U("Отмена"),
-			.title = rpl::single(U("Удаление")),
+			.confirmText = U(Mokagram::Lang::Tr("Удалить")),
+			.cancelText = U(Mokagram::Lang::Tr("Отмена")),
+			.title = rpl::single(U(Mokagram::Lang::Tr("Удаление"))),
 		}));
 		return true;
 	}
@@ -738,11 +739,11 @@ bool Handle(
 					: ChatRestrictionsInfo(),
 				[=] {
 					toast(isMute
-						? (name + U(": запрещено писать ") + Describe(seconds))
-						: (name + U(": снова может писать")));
+						? (name + U(Mokagram::Lang::Tr(": запрещено писать ")) + Describe(seconds))
+						: (name + U(Mokagram::Lang::Tr(": снова может писать"))));
 				},
 				[=](const QString &error) {
-					toast(U("Не получилось: ") + error);
+					toast(U(Mokagram::Lang::Tr("Не получилось: ")) + error);
 				});
 			return true;
 		}
@@ -756,8 +757,8 @@ bool Handle(
 		}
 		peer->owner().notifySettings().update(peer, value);
 		toast(isMute
-			? (U("Чат заглушен ") + Describe(seconds))
-			: U("Звук чата включён"));
+			? (U(Mokagram::Lang::Tr("Чат заглушен ")) + Describe(seconds))
+			: U(Mokagram::Lang::Tr("Звук чата включён")));
 		return true;
 	}
 
@@ -772,48 +773,48 @@ bool Handle(
 			channel->session().api().chatParticipants().unblock(
 				channel,
 				target);
-			toast(name + U(": исключён, может вернуться"));
+			toast(name + U(Mokagram::Lang::Tr(": исключён, может вернуться")));
 		});
 		return true;
 	}
 	if (target && channel
 		&& (channel->isMegagroup() || channel->isBroadcast())) {
 		if (!channel->canBanMembers()) {
-			toast(U("Нет прав исключать участников"));
+			toast(U(Mokagram::Lang::Tr("Нет прав исключать участников")));
 		} else if (isBan) {
 			peer->session().api().chatParticipants().kick(
 				channel,
 				target,
 				ChatRestrictionsInfo());
-			toast(target->name() + U(": исключён"));
+			toast(target->name() + U(Mokagram::Lang::Tr(": исключён")));
 		} else {
 			peer->session().api().chatParticipants().unblock(channel, target);
-			toast(target->name() + U(": разбанен"));
+			toast(target->name() + U(Mokagram::Lang::Tr(": разбанен")));
 		}
 		return true;
 	}
 	if (target && chat) {
 		if ((isBan || command == u"kick"_q) && chat->canBanMembers()) {
 			peer->session().api().chatParticipants().kick(chat, target);
-			toast(target->name() + U(": исключён"));
+			toast(target->name() + U(Mokagram::Lang::Tr(": исключён")));
 		} else {
-			toast(U("В обычной группе можно только исключить (.ban)"));
+			toast(U(Mokagram::Lang::Tr("В обычной группе можно только исключить (.ban)")));
 		}
 		return true;
 	}
 	if (const auto user = peer->asUser(); user && !user->isSelf()) {
 		if (isBan) {
 			peer->session().api().blockedPeers().block(user);
-			toast(user->name() + U(": заблокирован"));
+			toast(user->name() + U(Mokagram::Lang::Tr(": заблокирован")));
 		} else if (command == u"unban"_q) {
 			peer->session().api().blockedPeers().unblock(user);
-			toast(user->name() + U(": разблокирован"));
+			toast(user->name() + U(Mokagram::Lang::Tr(": разблокирован")));
 		} else {
-			toast(U("Эта команда работает в группах, ответом на сообщение"));
+			toast(U(Mokagram::Lang::Tr("Эта команда работает в группах, ответом на сообщение")));
 		}
 		return true;
 	}
-	toast(U("В группе ответь командой на сообщение человека"));
+	toast(U(Mokagram::Lang::Tr("В группе ответь командой на сообщение человека")));
 	return true;
 }
 

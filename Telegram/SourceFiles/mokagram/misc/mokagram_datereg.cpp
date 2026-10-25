@@ -1,4 +1,5 @@
 #include "mokagram/misc/mokagram_datereg.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 
@@ -73,12 +74,12 @@ void SaveCache() {
 // "1.2024" -> "январь 2024".
 QString Pretty(const QString &raw) {
 	static const auto months = QStringList{
-		QString::fromUtf8("январь"), QString::fromUtf8("февраль"),
-		QString::fromUtf8("март"), QString::fromUtf8("апрель"),
-		QString::fromUtf8("май"), QString::fromUtf8("июнь"),
-		QString::fromUtf8("июль"), QString::fromUtf8("август"),
-		QString::fromUtf8("сентябрь"), QString::fromUtf8("октябрь"),
-		QString::fromUtf8("ноябрь"), QString::fromUtf8("декабрь"),
+		QString::fromUtf8(Mokagram::Lang::Tr("январь")), QString::fromUtf8(Mokagram::Lang::Tr("февраль")),
+		QString::fromUtf8(Mokagram::Lang::Tr("март")), QString::fromUtf8(Mokagram::Lang::Tr("апрель")),
+		QString::fromUtf8(Mokagram::Lang::Tr("май")), QString::fromUtf8(Mokagram::Lang::Tr("июнь")),
+		QString::fromUtf8(Mokagram::Lang::Tr("июль")), QString::fromUtf8(Mokagram::Lang::Tr("август")),
+		QString::fromUtf8(Mokagram::Lang::Tr("сентябрь")), QString::fromUtf8(Mokagram::Lang::Tr("октябрь")),
+		QString::fromUtf8(Mokagram::Lang::Tr("ноябрь")), QString::fromUtf8(Mokagram::Lang::Tr("декабрь")),
 	};
 	const auto parts = raw.split('.');
 	if (parts.size() == 2) {
@@ -132,8 +133,8 @@ void Fetch(quint64 userId) {
 			}
 			retried.erase(userId);
 			Errors()[userId] = detail.contains(u"balance"_q, Qt::CaseInsensitive)
-				? QString::fromUtf8("пополните баланс API")
-				: QString::fromUtf8("не получилось узнать");
+				? QString::fromUtf8(Mokagram::Lang::Tr("пополните баланс API"))
+				: QString::fromUtf8(Mokagram::Lang::Tr("не получилось узнать"));
 			Updates().fire_copy(userId);
 			return;
 		}

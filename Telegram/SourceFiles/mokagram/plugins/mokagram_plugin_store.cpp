@@ -1,5 +1,6 @@
 // Mokagram: магазин плагинов (подписанный каталог в репозитории mokagram-plugins).
 #include "mokagram/plugins/mokagram_plugin_store.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/plugins/mokagram_plugins.h"
@@ -163,7 +164,7 @@ void StoreBox(
 		[=] { box->closeBox(); });
 	const auto title = Ui::CreateChild<Ui::FlatLabel>(
 		header,
-		U("Магазин плагинов"),
+		U(Mokagram::Lang::Tr("Магазин плагинов")),
 		st::boxTitle);
 	header->widthValue() | rpl::on_next([=](int width) {
 		close->moveToLeft(0, 0);
@@ -174,7 +175,7 @@ void StoreBox(
 	const auto status = content->add(
 		object_ptr<Ui::FlatLabel>(
 			content,
-			U("Загружаю каталог..."),
+			U(Mokagram::Lang::Tr("Загружаю каталог...")),
 			st::boxDividerLabel),
 		QMargins(24, 10, 24, 14));
 	const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
@@ -190,7 +191,7 @@ void StoreBox(
 			return;
 		}
 		if (entries.empty()) {
-			fail(U("В каталоге пока нет плагинов."));
+			fail(U(Mokagram::Lang::Tr("В каталоге пока нет плагинов.")));
 			return;
 		}
 		status->setText(QString());
@@ -235,7 +236,7 @@ void StoreBox(
 				? nullptr
 				: Ui::CreateChild<Ui::FlatLabel>(
 					wrap,
-					U("Доступ: ") + entry.permissions,
+					U(Mokagram::Lang::Tr("Доступ: ")) + entry.permissions,
 					st::boxDividerLabel);
 			static const auto stInstall = [] {
 				auto result = st::defaultActiveButton;
@@ -256,8 +257,8 @@ void StoreBox(
 			const auto button = Ui::CreateChild<Ui::RoundButton>(
 				wrap,
 				rpl::single(installed.isEmpty()
-					? U("Установить")
-					: (current ? U("Установлен") : U("Обновить"))),
+					? U(Mokagram::Lang::Tr("Установить"))
+					: (current ? U(Mokagram::Lang::Tr("Установлен")) : U(Mokagram::Lang::Tr("Обновить")))),
 				current ? stDone : stInstall);
 			wrap->paintOn([=](QPainter &p) {
 				auto hq = PainterHighQualityEnabler(p);
@@ -310,7 +311,7 @@ void StoreBox(
 							bytes,
 							QCryptographicHash::Sha256) != entry.sha256) {
 						strong->showToast(U(
-							"Плагин скачался с ошибкой или не совпал с каталогом."));
+							Mokagram::Lang::Tr("Плагин скачался с ошибкой или не совпал с каталогом.")));
 						return;
 					}
 					InstallFromBytes(strong, bytes, changed);
@@ -328,7 +329,7 @@ void StoreBox(
 			return;
 		}
 		if (indexReply->error() != QNetworkReply::NoError) {
-			fail(U("Не получилось загрузить каталог. Проверьте подключение."));
+			fail(U(Mokagram::Lang::Tr("Не получилось загрузить каталог. Проверьте подключение.")));
 			return;
 		}
 		const auto index = indexReply->readAll();
@@ -344,7 +345,7 @@ void StoreBox(
 				|| !Update::VerifyDetached(
 					"mokagram-plugins\n" + index,
 					signature)) {
-				fail(U("Подпись каталога не сошлась, плагины не показываю."));
+				fail(U(Mokagram::Lang::Tr("Подпись каталога не сошлась, плагины не показываю.")));
 				return;
 			}
 			build(ParseIndex(index));

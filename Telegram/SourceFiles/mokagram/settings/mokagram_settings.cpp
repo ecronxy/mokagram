@@ -1,5 +1,6 @@
 // Mokagram: единый реестр настроек клиента, хранение в tdata/moka_settings.json.
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "base/timer.h"
 #include "base/flat_map.h"
@@ -379,17 +380,17 @@ bool PreviewImport(
 	auto parse = QJsonParseError();
 	const auto document = QJsonDocument::fromJson(data, &parse);
 	if (parse.error != QJsonParseError::NoError || !document.isObject()) {
-		return fail("Файл не похож на набор настроек.");
+		return fail(Mokagram::Lang::Tr("Файл не похож на набор настроек."));
 	}
 	const auto root = document.object();
 	if (root.value(u"format"_q).toString() != u"mokaset"_q) {
-		return fail("Это не файл .mokaset.");
+		return fail(Mokagram::Lang::Tr("Это не файл .mokaset."));
 	}
 	if (root.value(u"version"_q).toInt() > kFormatVersion) {
-		return fail("Файл сделан более новой версией mokaGram.");
+		return fail(Mokagram::Lang::Tr("Файл сделан более новой версией mokaGram."));
 	}
 	if (!root.value(u"values"_q).isObject()) {
-		return fail("В файле нет значений.");
+		return fail(Mokagram::Lang::Tr("В файле нет значений."));
 	}
 	auto result = ImportSummary();
 	const auto values = root.value(u"values"_q).toObject();

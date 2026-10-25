@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_actions.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "ui/text/text_options.h"
 
 #include "api/api_blocked_peers.h"
@@ -317,7 +318,7 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 					if (!value.empty()) {
 						value.append("\n");
 					}
-					value.append(Italic(QString::fromUtf8("Подписка до: ")));
+					value.append(Italic(QString::fromUtf8(Mokagram::Lang::Tr("Подписка до: "))));
 					value.append(Italic(langDateTimeFull(base::unixtime::parse(until))));
 				}
 			}
@@ -1857,7 +1858,7 @@ Section DetailsFiller::makeInfo() {
 							raw)
 						: raw);
 				}),
-				QString::fromUtf8("Копировать ID"));
+				QString::fromUtf8(Mokagram::Lang::Tr("Копировать ID")));
 			{
 				// Mokagram: клик ловит только строка ID, а не вся карточка.
 				const auto holder = idLine.text->parentWidget();
@@ -1883,7 +1884,7 @@ Section DetailsFiller::makeInfo() {
 						TextUtilities::SetClipboardText({ raw });
 					}
 					if (const auto strong = weak.get()) {
-						strong->showToast(QString::fromUtf8("ID скопирован"));
+						strong->showToast(QString::fromUtf8(Mokagram::Lang::Tr("ID скопирован")));
 					}
 				};
 				button->setClickedCallback(copyId);
@@ -1936,17 +1937,17 @@ Section DetailsFiller::makeInfo() {
 						return loc ? int(loc->dcId()) : 0;
 					}();
 				const auto places = std::array<const char*, 6>{
-					"", "Майами", "Амстердам", "Майами", "Амстердам",
-					"Сингапур" };
+					"", Mokagram::Lang::Tr("Майами"), Mokagram::Lang::Tr("Амстердам"), Mokagram::Lang::Tr("Майами"), Mokagram::Lang::Tr("Амстердам"),
+					Mokagram::Lang::Tr("Сингапур") };
 				state->dc = (dcNum >= 1 && dcNum <= 5)
 					? QString::fromUtf8("DC%1, %2").arg(dcNum).arg(
 						QString::fromUtf8(places[dcNum]))
-					: QString::fromUtf8("DC неизвестен (у аккаунта нет фото)");
+					: QString::fromUtf8(Mokagram::Lang::Tr("DC неизвестен (у аккаунта нет фото)"));
 				if (Mokagram::Misc::DateRegEnabled()) {
 					Mokagram::Misc::RegistrationDate(
 						user->id.value & PeerId::kChatTypeMask
 					) | rpl::on_next([=](QString text) {
-						state->date = QString::fromUtf8("Регистрация: ")
+						state->date = QString::fromUtf8(Mokagram::Lang::Tr("Регистрация: "))
 							+ text;
 						if (icon->underMouse()) {
 							Ui::Tooltip::Show(0, state);
@@ -1973,7 +1974,7 @@ Section DetailsFiller::makeInfo() {
 		SetupAboutPeerIdDrag(about.text, user);
 		// Mokagram: личная заметка о человеке, видна только тебе.
 		addInfoLine(
-			QString::fromUtf8("Заметка (видна только тебе)"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Заметка (видна только тебе)")),
 			Mokagram::Notes::NoteValue(user->id) | rpl::map([](QString note) {
 				return TextWithEntities{ note };
 			}));

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_main.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/ui/mokagram_glass.h"
@@ -395,7 +396,7 @@ MokagramSettings::MokagramSettings(
 }
 
 rpl::producer<QString> MokagramSettings::title() {
-	return rpl::single(QString::fromUtf8("Настройки mokaGram"));
+	return rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Настройки mokaGram")));
 }
 
 void MokagramSettings::setupContent() {
@@ -417,7 +418,7 @@ void MokagramSettings::setupContent() {
 		builder.addSkip();
 		builder.addButton({
 			.id = u"main/plugins"_q,
-			.title = rpl::single(QString::fromUtf8("Плагины")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Плагины"))),
 			.icon = { &st::menuIconBotCommands },
 			.onClick = [=] {
 				controller->show(
@@ -427,7 +428,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/customize"_q,
-			.title = rpl::single(QString::fromUtf8("Кастомизация")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Кастомизация"))),
 			.icon = { &st::menuIconPalette },
 			.onClick = [=] {
 				Mokagram::Settings::ShowCustomizeBox(controller);
@@ -436,7 +437,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/privacy"_q,
-			.title = rpl::single(QString::fromUtf8("Приватность")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Приватность"))),
 			.icon = { &st::menuIconLock },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"privacy"_q);
@@ -445,7 +446,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/security"_q,
-			.title = rpl::single(QString::fromUtf8("Безопасность")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Безопасность"))),
 			.icon = { &st::menuIconPermissions },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"security"_q);
@@ -454,7 +455,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/history"_q,
-			.title = rpl::single(QString::fromUtf8("Удалёнки")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Удалёнки"))),
 			.icon = { &st::menuIconDeleteAttention },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"history"_q);
@@ -463,7 +464,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/chats"_q,
-			.title = rpl::single(QString::fromUtf8("Чаты")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Чаты"))),
 			.icon = { &st::menuIconChatBubble },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"chats"_q);
@@ -472,7 +473,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/music"_q,
-			.title = rpl::single(QString::fromUtf8("Музыка")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Музыка"))),
 			.icon = { &st::menuIconUnmute },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"music"_q);
@@ -481,7 +482,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/system"_q,
-			.title = rpl::single(QString::fromUtf8("Система")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Система"))),
 			.icon = { &st::menuIconPowerUsage },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"system"_q);
@@ -490,7 +491,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/tools"_q,
-			.title = rpl::single(QString::fromUtf8("Инструменты")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Инструменты"))),
 			.icon = { &st::menuIconManage },
 			.onClick = [=] {
 				Mokagram::Settings::ShowSettingsPage(controller, u"tools"_q);
@@ -499,7 +500,7 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addButton({
 			.id = u"main/commands"_q,
-			.title = rpl::single(QString::fromUtf8("Быстрые команды")),
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Быстрые команды"))),
 			.icon = { &st::menuIconChats },
 			.onClick = [=] {
 				Mokagram::Settings::ShowCommandsPage(controller);
@@ -518,7 +519,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
 	const auto showOther = builder.showOther();
 
 	builder.addSectionButton({
-		.title = rpl::single(QString::fromUtf8("Настройки mokaGram")),
+		.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Настройки mokaGram"))),
 		.targetSection = MokagramSettings::Id(),
 		.icon = { &Mokagram::Settings::OwnRowIcon() },
 		.keywords = { u"mokagram"_q, u"plugins"_q, u"customize"_q },

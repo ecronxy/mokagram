@@ -1,4 +1,5 @@
 #include "mokagram/avatar/mokagram_avatar_shape.h"
+#include "mokagram/lang/mokagram_lang.h"
 
 #include "data/data_channel.h"
 #include "data/data_peer.h"
@@ -25,27 +26,27 @@ int CurrentShape = 0;
 
 [[nodiscard]] const std::vector<const char*> &Names() {
 	static const auto result = std::vector<const char*>{
-		"Как в Telegram",
-		"Круг",
-		"Скруглённый квадрат",
-		"Суперэллипс",
-		"Квадрат",
-		"Шестиугольник",
-		"Восьмиугольник",
-		"Ромб",
-		"Щит",
-		"Сердце",
-		"Звезда",
-		"Волнистый круг",
-		"Цветок",
-		"Капля",
-		"Треугольник",
-		"Пятиугольник",
-		"Овал вертикальный",
-		"Овал горизонтальный",
-		"Лист",
-		"Скошенный квадрат",
-		"Лепесток",
+		Mokagram::Lang::Tr("Как в Telegram"),
+		Mokagram::Lang::Tr("Круг"),
+		Mokagram::Lang::Tr("Скруглённый квадрат"),
+		Mokagram::Lang::Tr("Суперэллипс"),
+		Mokagram::Lang::Tr("Квадрат"),
+		Mokagram::Lang::Tr("Шестиугольник"),
+		Mokagram::Lang::Tr("Восьмиугольник"),
+		Mokagram::Lang::Tr("Ромб"),
+		Mokagram::Lang::Tr("Щит"),
+		Mokagram::Lang::Tr("Сердце"),
+		Mokagram::Lang::Tr("Звезда"),
+		Mokagram::Lang::Tr("Волнистый круг"),
+		Mokagram::Lang::Tr("Цветок"),
+		Mokagram::Lang::Tr("Капля"),
+		Mokagram::Lang::Tr("Треугольник"),
+		Mokagram::Lang::Tr("Пятиугольник"),
+		Mokagram::Lang::Tr("Овал вертикальный"),
+		Mokagram::Lang::Tr("Овал горизонтальный"),
+		Mokagram::Lang::Tr("Лист"),
+		Mokagram::Lang::Tr("Скошенный квадрат"),
+		Mokagram::Lang::Tr("Лепесток"),
 	};
 	return result;
 }
@@ -250,7 +251,7 @@ void RegisterSettings() {
 	const auto add = [&](int type, const char *title) {
 		S::Register({
 			.key = KeyFor(type),
-			.section = U("Формы аватарок"),
+			.section = U(Mokagram::Lang::Tr("Формы аватарок")),
 			.title = U(title),
 			.kind = S::Kind::Choice,
 			.defaultValue = 0,
@@ -259,11 +260,11 @@ void RegisterSettings() {
 			.sectionIcon = u"person"_q,
 		});
 	};
-	add(0, "Люди");
-	add(1, "Боты");
-	add(2, "Группы");
-	add(3, "Каналы");
-	add(4, "Форумы");
+	add(0, Mokagram::Lang::Tr("Люди"));
+	add(1, Mokagram::Lang::Tr("Боты"));
+	add(2, Mokagram::Lang::Tr("Группы"));
+	add(3, Mokagram::Lang::Tr("Каналы"));
+	add(4, Mokagram::Lang::Tr("Форумы"));
 }
 
 int ShapeFor(not_null<const PeerData*> peer) {
