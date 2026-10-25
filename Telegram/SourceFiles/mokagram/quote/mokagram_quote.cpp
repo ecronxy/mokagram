@@ -987,20 +987,14 @@ void ShowCustomBg(Fn<void()> refresh) {
 		box->setTitle(rpl::single(U("Свой фон")));
 		box->setWidth(360);
 		const auto content = box->verticalLayout();
-		static const auto fieldStyle = [] {
-			auto result = st::defaultInputField;
-			result.textMargins = style::margins(0, 7, 0, 7);
-			return result;
-		}();
 		const auto add = [&](const QString &key, const QString &label) {
-			Ui::AddSubsectionTitle(content, rpl::single(label));
 			const auto field = content->add(
 				object_ptr<Ui::InputField>(
 					content,
-					fieldStyle,
-					rpl::single(QString()),
+					st::defaultInputField,
+					rpl::single(label),
 					S::String(key)),
-				QMargins(22, 4, 22, 8));
+				QMargins(22, 8, 22, 4));
 			field->changes() | rpl::on_next([=] {
 				const auto text = field->getLastText().trimmed();
 				if (QColor(text).isValid()) {
@@ -1009,8 +1003,8 @@ void ShowCustomBg(Fn<void()> refresh) {
 				}
 			}, field->lifetime());
 		};
-		add(u"quote.custom1"_q, U("Цвет 1 (например #ff9a8b)"));
-		add(u"quote.custom2"_q, U("Цвет 2"));
+		add(u"quote.custom1"_q, U("Цвет 1, например #ff9a8b"));
+		add(u"quote.custom2"_q, U("Цвет 2, например #6a11cb"));
 		box->addButton(rpl::single(U("Готово")), [=] { box->closeBox(); });
 	}));
 }
