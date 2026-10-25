@@ -80,10 +80,16 @@ bool BypassLinkGuard = false;
 		u"(do you (still )?sell|are you (still )?selling|selling your|"
 		"want to buy your|wanna buy your|interested in (buying|your)|"
 		"buy your|продаёшь|продаешь|продаете|продаёте|куплю (твой|ваш)|"
-		"выкуплю|интересует (твой|ваш))"_q,
+		"выкуплю|интересует (твой|ваш)|"
+		"(willing|open|ready|happy) (to|for) sell|"
+		"sell (your |the |this )?user ?name|"
+		"what (amount|price) would you (accept|take)|"
+		"how much (do you want|would you (take|accept))|"
+		"(offer|price) for your|your user ?name|"
+		"готов продать|готовы продать|сколько хочешь за|за сколько продашь)"_q,
 		QRegularExpression::CaseInsensitiveOption);
 	static const auto subject = QRegularExpression(
-		u"(@\\w{4,}|username|nft|gift|юзернейм|юзер|подарок|нфт)"_q,
+		u"(@\\w{4,}|user ?name|nft|gift|юзернейм|юзер|подарок|нфт)"_q,
 		QRegularExpression::CaseInsensitiveOption);
 	return phrase.match(text).hasMatch() && subject.match(text).hasMatch();
 }
