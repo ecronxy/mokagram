@@ -3,9 +3,11 @@ __name__ = "Showcase"
 __description__ = "Пример: кнопки, меню, окно с формой, команда, события, фильтр"
 __author__ = "mokagram"
 __version__ = "1.0"
-__permissions__ = ["messages.read"]
+__permissions__ = ["messages.read", "messages.send", "messages.edit"]
 
-from base_plugin import (BasePlugin, MenuItemData, MenuItemType, Header, Switch, Input)
+import asyncio
+
+from base_plugin import (BasePlugin, MenuItemData, MenuItemType, Header, Switch, Input, command, watcher)
 from mokagram_sdk import api
 
 
@@ -17,7 +19,31 @@ class Showcase(BasePlugin):
             self.add_menu_item(MenuItemData(menu_type=place, text="Showcase: форма", icon=icon, on_click=self.open_form))
         self.add_menu_item(MenuItemData(menu_type=MenuItemType.MESSAGE_CONTEXT_MENU, text="Скопировать выделенное",
                                         icon="copy", on_click=lambda c: api.copy_text(c.get("selected") or c["text"])))
-        api.register_command("hello", lambda c: api.show_toast("Привет! Аргументы: " + c["args"]))
+
+    # Команда: .hello мир. Возвращённая строка заменяет текст в поле ввода, лишнего сообщения нет.
+    @command("hello", "приветствие, .hello имя")
+    def hello(self, ctx):
+        name = ctx.args or "мир"
+        text = "Привет, %s!" % name
+        return text, [{"type": "bold", "offset": 8, "length": len(name)}]
+
+    # Async-команда: сообщение сначала «считаю...», потом правится на результат.
+    @command("count", "считает до числа, .count 3", aliases=["cnt"])
+    async def count(self, ctx):
+        n = min(int(ctx.args or 3), 5)
+        await ctx.edit("считаю...")
+        for i in range(1, n + 1):
+            await asyncio.sleep(1)
+            await ctx.edit("уже %d из %d" % (i, n))
+
+    # Watcher: только входящие в группах, где есть слово «moka».
+    @watcher(chats="group", incoming=True, regex="moka")
+    def mention(self, m):
+        api.show_toast("Про moka в «%s»" % m["peer_title"])
+
+    # Подпись рядом со временем у каждого сообщения.
+    def message_badge_hook(self, m):
+        return "#%s" % m["id"]
 
     def open_form(self, ctx):
         api.show_dialog(

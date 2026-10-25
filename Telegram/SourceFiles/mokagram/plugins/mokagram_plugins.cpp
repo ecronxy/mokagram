@@ -30,6 +30,7 @@ namespace {
 #include "mokagram/plugins/py/base_plugin.inc"
 #include "mokagram/plugins/py/sdk_api.inc"
 #include "mokagram/plugins/py/tl.inc"
+#include "mokagram/plugins/py/fw.inc"
 #include "mokagram/plugins/py/tl_schema.inc"
 
 constexpr auto kQueueLimit = size_t(256);
@@ -274,7 +275,8 @@ bool LoadHelpers() {
 	PyDict_SetItemString(globals, "_moka_native", native);
 	Py_DECREF(native);
 	if (PyRun_SimpleString(kTlNamesScript) != 0
-		|| PyRun_SimpleString(kHostScript) != 0) {
+		|| PyRun_SimpleString(kHostScript) != 0
+		|| PyRun_SimpleString(kFwScript) != 0) {
 		return false;
 	}
 	_helpersLoaded = true;

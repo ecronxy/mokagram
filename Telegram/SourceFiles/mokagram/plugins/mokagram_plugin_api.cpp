@@ -402,6 +402,25 @@ std::string GetSetting(const QJsonObject &args) {
 	});
 }
 
+// Несколько настроек клиента, которые плагинам можно читать (не писать).
+std::string ClientSettingGet(const QJsonObject &args) {
+	const auto key = args.value("key").toString();
+	static const auto allowed = std::set<QString>{
+		u"plugins.prefix"_q,
+		u"plugins.dev_reload"_q,
+	};
+	return OnMain([=]() -> std::string {
+		const auto entry = allowed.contains(key) ? FindEntry(key) : nullptr;
+		if (!entry) {
+			return Reply(false, U("настройка закрыта"));
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("v", CurrentValue(*entry));
+		return QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString();
+	});
+}
+
 std::string SetSetting(const QJsonObject &args) {
 	const auto key = args.value("key").toString();
 	const auto value = args.value("value");
@@ -824,6 +843,7 @@ rpl::lifetime SessionLifetime;
 	static const auto result = std::set<std::string>{
 		"new_message", "message_edited", "message_deleted",
 		"peer_updated", "user_status", "new_reaction", "chat_opened", "typing",
+		"message_sent",
 	};
 	return result;
 }
@@ -855,6 +875,33 @@ std::string EventsSubscribe(const QJsonObject &args) {
 	return Reply(true);
 }
 
+[[nodiscard]] QString MediaKind(not_null<const HistoryItem*> item) {
+	const auto media = item->media();
+	if (!media) {
+		return QString();
+	}
+	if (media->photo()) {
+		return u"photo"_q;
+	}
+	if (const auto document = media->document()) {
+		if (document->isVoiceMessage()) {
+			return u"voice"_q;
+		} else if (document->isVideoMessage()) {
+			return u"round"_q;
+		} else if (document->sticker()) {
+			return u"sticker"_q;
+		} else if (document->isAnimation()) {
+			return u"gif"_q;
+		} else if (document->isVideoFile()) {
+			return u"video"_q;
+		} else if (document->isAudioFile()) {
+			return u"audio"_q;
+		}
+		return u"document"_q;
+	}
+	return u"other"_q;
+}
+
 void EmitMessageEvent(
 		const char *name,
 		not_null<const HistoryItem*> item) {
@@ -866,6 +913,8 @@ void EmitMessageEvent(
 	const auto peer = item->history()->peer;
 	payload.insert("peer", QString::number(peer->id.value));
 	payload.insert("peer_title", peer->name());
+	payload.insert("peer_kind", PeerBrief(peer).value("kind"));
+	payload.insert("media", MediaKind(item));
 	payload.insert("from", QString::number(item->from()->id.value));
 	payload.insert("text", item->originalText().text);
 	payload.insert("out", item->out());
@@ -896,6 +945,24 @@ void SubscribeSession(Main::Session *session) {
 		Data::MessageUpdate::Flag::Edited
 	) | rpl::on_next([](const Data::MessageUpdate &update) {
 		EmitMessageEvent("message_edited", update.item);
+	}, SessionLifetime);
+	session->data().itemIdChanged(
+	) | rpl::on_next([](const Data::Session::IdChange &change) {
+		if (!WantEvent("message_sent")) {
+			return;
+		}
+		const auto item = change.newId.msg
+			? ActiveSession()->data().message(change.newId)
+			: nullptr;
+		if (!item || !item->out()) {
+			return;
+		}
+		auto payload = QJsonObject();
+		payload.insert("id", QString::number(change.newId.msg.bare));
+		payload.insert("old_id", QString::number(change.oldId.bare));
+		payload.insert("peer", QString::number(item->history()->peer->id.value));
+		payload.insert("text", item->originalText().text);
+		QueueEvent("message_sent", Json(payload));
 	}, SessionLifetime);
 	session->changes().messageUpdates(
 		Data::MessageUpdate::Flag::NewUnreadReaction
@@ -1576,6 +1643,8 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return CopyText(args);
 	} else if (op == "settings_register") {
 		return RegisterSettings(args);
+	} else if (op == "client_setting_get") {
+		return ClientSettingGet(args);
 	} else if (op == "setting_get") {
 		return GetSetting(args);
 	} else if (op == "setting_set") {
@@ -1585,6 +1654,14 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 }
 
 } // namespace
+
+EntitiesInText EntitiesFromJsonArray(const QJsonArray &list, int textLength) {
+	return EntitiesFromJson(list, textLength);
+}
+
+QJsonArray EntitiesToJsonArray(const EntitiesInText &list) {
+	return EntitiesToJson(list);
+}
 
 void EmitChatOpened(PeerData *peer) {
 	if (!peer || !WantEvent("chat_opened")) {

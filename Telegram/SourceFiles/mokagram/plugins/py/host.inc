@@ -317,6 +317,10 @@ def _fail(entry, exc):
     entry['error'] = ''.join(traceback.format_exception_only(type(exc), exc)).strip()
     _say('[%s] ошибка: %s' % (entry['id'], entry['error']))
     _say(traceback.format_exc().rstrip())
+    try:
+        _fw_error_screen(entry, 'Плагин «%s» не запустился' % (entry['meta'].get('__name__') or entry['id']), traceback.format_exc().rstrip())
+    except BaseException:
+        pass
 
 
 def _activate(entry, source):
@@ -345,6 +349,7 @@ def _activate(entry, source):
         _register_settings(entry)
         _register_filters(entry)
         _register_events(entry)
+        _fw_collect(entry, inst)
     except BaseException as e:   # включая SystemExit: плагин не должен ронять клиент
         _fail(entry, e)
 
@@ -352,7 +357,7 @@ def _activate(entry, source):
 # ---- события клиента (новое, изменённое, удалённое сообщение) ----
 
 _EVENTS = ('new_message', 'message_edited', 'message_deleted', 'new_reaction',
-           'chat_opened', 'peer_updated', 'user_status', 'typing')
+           'chat_opened', 'peer_updated', 'user_status', 'typing', 'message_sent')
 
 
 def _register_events(entry):
@@ -517,6 +522,10 @@ def _moka_event(name, payload_json):
         except Exception:
             pass
         return ''
+    try:
+        _fw_event(name, payload)
+    except BaseException:
+        pass
     if name == 'app_event':
         _moka_app_event(payload.get('event', ''))
         return ''
@@ -532,7 +541,7 @@ def _moka_event(name, payload_json):
             continue
         started = time.monotonic()
         try:
-            fn(dict(payload))
+            _fw_call(entry, fn, dict(payload), 5.0)
             _hook_ok(entry, hook)
         except BaseException as e:
             _hook_error(entry, hook, e)
@@ -582,6 +591,7 @@ def _deactivate(entry):
         pass
     entry['cbs'] = {}
     entry['commands'] = {}
+    entry['watchers'] = []
     for t in list(entry.get('timers', {}).values()):
         t.cancel()
     entry['timers'] = {}
@@ -664,6 +674,11 @@ def _moka_init(folder, sdk_source, api_source, tl_source='', tl_schema=''):
         for name in sorted(os.listdir(folder)):
             if name.endswith('.plugin'):
                 _moka_load_file(name)
+    if '_fw_start' in globals():
+        try:
+            _fw_start()
+        except BaseException as e:
+            _say('каркас: %s' % e)
     return len(_plugins)
 
 
@@ -1030,28 +1045,12 @@ def _moka_hook_observe(kind, ctor, hexdata):
 _HOOK_BUDGETS = {'send_message_hook': 0.15}   # секунд, перехват в главном потоке
 
 
-def _run_command(cur):
-    text = str(cur.get('text', '')).strip()
-    if not text.startswith('/'):
-        return False
-    head, _, rest = text[1:].partition(' ')
-    cmd = head.split('@')[0].lower()
-    for entry in list(_plugins.values()):
-        item = entry.get('commands', {}).get(cmd)
-        if item is None or entry.get('plugin') is None:
-            continue
-        try:
-            item[0]({'args': rest.strip(), 'peer': cur.get('peer'), 'text': text})
-        except BaseException as e:
-            _hook_error(entry, 'command', e)
-        return True
-    return False
-
-
 def _moka_hook(name, params_json):
     cur = json.loads(params_json)
-    if name == 'send_message_hook' and _run_command(cur):
-        return json.dumps({'cancel': True})
+    if name == 'send_message_hook':
+        res = _run_command(cur)
+        if res:
+            return res if isinstance(res, str) else json.dumps({'cancel': True})
     budget = _HOOK_BUDGETS.get(name, 0.15)
     for entry in list(_plugins.values()):
         inst = entry.get('plugin')

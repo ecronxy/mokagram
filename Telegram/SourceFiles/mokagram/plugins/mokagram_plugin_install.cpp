@@ -4,6 +4,7 @@
 #include "base/call_delayed.h"
 
 #include "mokagram/plugins/mokagram_plugins.h"
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/plugins/mokagram_plugin_store.h"
 
 #include "core/application.h"
@@ -552,7 +553,10 @@ void OpenPluginDocument(
 	document->save(origin, QString());
 }
 
-bool RunSendMessageHook(TextWithTags &text, uint64 peerId) {
+bool RunSendMessageHook(
+		TextWithTags &text,
+		uint64 peerId,
+		FullMsgId replyTo) {
 	// Сообщение самого плагина (SDK send_message) через свой же хук не гоняем: петля.
 	if (IsFromPlugin()) {
 		return true;
@@ -560,6 +564,11 @@ bool RunSendMessageHook(TextWithTags &text, uint64 peerId) {
 	auto params = QJsonObject();
 	params.insert("text", text.text);
 	params.insert("peer", QString::number(peerId));
+	params.insert("entities", EntitiesToJsonArray(
+		TextUtilities::ConvertTextTagsToEntities(text.tags)));
+	if (replyTo.msg) {
+		params.insert("reply_to", QString::number(replyTo.msg.bare));
+	}
 	const auto answer = CallHook(
 		"send_message_hook",
 		QJsonDocument(params).toJson(QJsonDocument::Compact).toStdString(),
@@ -574,10 +583,17 @@ bool RunSendMessageHook(TextWithTags &text, uint64 peerId) {
 	if (root.value("cancel").toBool()) {
 		return false;
 	}
-	const auto changed = root.value("value").toObject().value("text");
+	const auto value = root.value("value").toObject();
+	const auto changed = value.value("text");
+	const auto entities = value.value("entities");
 	if (changed.isString() && changed.toString() != text.text) {
 		text.text = changed.toString();
 		text.tags.clear();
+	}
+	if (entities.isArray()) {
+		// Плагин вернул сущности: заменяем форматирование целиком.
+		text.tags = TextUtilities::ConvertEntitiesToTextTags(
+			EntitiesFromJsonArray(entities.toArray(), text.text.size()));
 	}
 	return true;
 }

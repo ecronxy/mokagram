@@ -237,6 +237,8 @@ struct Category {
 		{ "lag.idle", "💤" },
 		{ "lag.toaster", "⚙️" },
 		{ "lag.emoji_cap", "😜" },
+		{ "plugins.prefix", "🔧" },
+		{ "plugins.dev_reload", "⚙️" },
 		{ "lag.sticker_cap", "🎞" },
 		{ "lag.enabled", "📈" },
 		{ "lag.level", "📊" },
@@ -2345,6 +2347,14 @@ void StartDebugCommands() {
 			controller->showPeerHistory(
 				PeerId(cmd.mid(5).toULongLong()),
 				Window::SectionShow::Way::Forward);
+		} else if (cmd.startsWith(u"sendtext:"_q)) {
+			// Только тестовый чат mokaChat: отправка через тот же путь, что и из поля ввода.
+			const auto history = controller->activeChatCurrent().history();
+			if (history && history->peer->id.value == 562954397233167ULL) {
+				auto message = Api::MessageToSend(Api::SendAction(history));
+				message.textWithTags.text = cmd.mid(9);
+				history->session().api().sendMessage(std::move(message));
+			}
 		} else if (cmd == u"history"_q) {
 			History::ShowChatsBox(controller);
 		} else if (cmd == u"deleted"_q) {

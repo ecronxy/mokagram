@@ -25,6 +25,9 @@ def _gate(op, perm, target=''):
         _h['audit'](entry, op, target, 'denied')
         _h['say']('[%s] нет права %s для %s' % (entry['id'], perm, op))
         return None
+    if not _limit(entry, '__all', 300, 60):
+        _h['say']('[%s] больше 300 действий в минуту, %s отклонён' % (entry['id'], op))
+        return None
     return entry
 
 
@@ -512,6 +515,12 @@ def _tl_perm(method):
     return 'tl.read' if readonly else 'tl.write'
 
 
+def _flood_delay(error_type):
+    import re as _re
+    m = _re.match(r'(?:FLOOD_WAIT|SLOWMODE_WAIT|FLOOD_PREMIUM_WAIT)_(\d+)$', error_type or '')
+    return int(m.group(1)) if m else 0
+
+
 def _invoke(entry, method, params, callback):
     tl = _h.get('tl')
     if tl is None or not _limit(entry, 'tl', 60, 60):
@@ -522,6 +531,11 @@ def _invoke(entry, method, params, callback):
     except Exception as e:
         _h['say']('[%s] invoke_tl %s: %s' % (entry['id'], method, e))
         return None
+    state = {'attempt': 0}
+
+    def send():
+        token = _h['register_cb'](entry, done, True)
+        return _native('invoke_raw', {'pid': entry['id'], 'token': token, 'hex': raw.hex()})
 
     def done(payload):
         result = error = None
@@ -533,11 +547,26 @@ def _invoke(entry, method, params, callback):
         else:
             error = {'code': payload.get('code', 0), 'type': payload.get('type', ''),
                      'description': payload.get('description', '')}
+            wait = _flood_delay(error['type'])
+            if wait and wait <= 60 and state['attempt'] < 3:
+                state['attempt'] += 1
+                entry['flood_until'] = time.monotonic() + wait + 1
+                _h['say']('[%s] %s: %s, повтор через %d с' % (entry['id'], method, error['type'], wait + 1))
+                t = threading.Timer(wait + 1, send)
+                t.daemon = True
+                t.start()
+                return
         if callable(callback):
             callback(result, error)
 
-    token = _h['register_cb'](entry, done, True)
-    res = _native('invoke_raw', {'pid': entry['id'], 'token': token, 'hex': raw.hex()})
+    delay = entry.get('flood_until', 0) - time.monotonic()
+    if delay > 0:
+        t = threading.Timer(min(delay, 60), send)
+        t.daemon = True
+        t.start()
+        res = {'ok': True}
+    else:
+        res = send()
     _h['audit'](entry, 'invoke_tl', method, 'allowed' if res.get('ok') else 'failed', len(raw))
     return True if res.get('ok') else None
 

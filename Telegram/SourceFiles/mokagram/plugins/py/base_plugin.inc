@@ -35,6 +35,24 @@ class MenuItem:
     item_id: Optional[str] = None
 
 
+def command(name=None, description='', aliases=()):
+    """Метод плагина становится командой: @command('hello', 'приветствие'). Вызывается handler(ctx)."""
+    def deco(fn):
+        fn._moka_cmd = (name or fn.__name__, description, tuple(aliases))
+        return fn
+    return deco
+
+
+def watcher(**filters):
+    """Метод зовётся на подходящие сообщения: @watcher(chats='group', incoming=True, regex='привет').
+    Фильтры: chats ('private'|'group'|'channel'|'bot' или список), out (True/False), incoming, regex,
+    chat_ids, from_ids, media (True/False/'photo'/'video'/'voice'/'audio'/'sticker'/'document' или список)."""
+    def deco(fn):
+        fn._moka_watcher = dict(filters)
+        return fn
+    return deco
+
+
 class BasePlugin:
     """Наследуйте и переопределяйте нужные методы. Метаданные задаются переменными модуля:
     __id__, __name__, __description__, __author__, __version__, __icon__, __min_version__, __permissions__.
@@ -76,7 +94,8 @@ class BasePlugin:
     def on_new_message(self, message: dict) -> None: ...
     def on_message_edited(self, message: dict) -> None: ...
     def on_message_deleted(self, message: dict) -> None: ...
-    def on_new_reaction(self, message: dict) -> None: ...   # на ваше сообщение поставили реакцию (поля как у on_new_message)
+    def on_new_reaction(self, message: dict) -> None: ...
+    def on_message_sent(self, info: dict) -> None: ...      # {id, old_id, peer, text}: ваше сообщение ушло, id настоящий   # на ваше сообщение поставили реакцию (поля как у on_new_message)
 
     # люди и чаты (нужно право messages.read)
     def on_chat_opened(self, peer: dict) -> None: ...        # {peer, title, username, kind}

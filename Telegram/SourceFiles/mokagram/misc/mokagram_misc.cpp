@@ -122,6 +122,24 @@ void RegisterSettings() {
 		.action = [] { ShowPingBox(); },
 	});
 	Settings::Register({
+		.key = u"plugins.prefix"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Команды плагинов")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Префикс команд")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("С чего начинаются команды плагинов в поле ввода: например .help или !help. Один или два знака.")),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString::fromUtf8("."),
+		.category = u"plugins"_q,
+	});
+	Settings::Register({
+		.key = u"plugins.dev_reload"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Команды плагинов")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Режим разработчика")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Плагин перезагружается сам, когда вы сохраняете его файл, без подтверждения прав. Включайте только для плагинов, которые пишете сами.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.category = u"plugins"_q,
+	});
+	Settings::Register({
 		.key = u"misc.stars_stats"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Профиль")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Траты звёзд")),
