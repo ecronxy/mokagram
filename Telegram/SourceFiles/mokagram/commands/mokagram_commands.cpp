@@ -41,7 +41,6 @@
 #include "window/window_peer_menu.h"
 #include "main/main_session.h"
 #include "mokagram/settings/mokagram_settings.h"
-#include "mokagram/downloader/mokagram_downloader.h"
 #include "ui/widgets/fields/input_field.h"
 #include "window/window_session_controller.h"
 
@@ -94,7 +93,6 @@ namespace S = Mokagram::Settings;
 		u"mute"_q, u"unmute"_q, u"ban"_q, u"unban"_q, u"kick"_q,
 		u"del"_q, u"pin"_q, u"unpin"_q, u"id"_q, u"save"_q,
 		u"tr"_q, u"calc"_q, u"archive"_q, u"unarchive"_q, u"dl"_q,
-		u"show"_q,
 	};
 	return result;
 }
@@ -407,9 +405,7 @@ bool Handle(
 		QRegularExpression::CaseInsensitiveOption);
 	const auto number = numberRe.match(arg);
 	const auto all = (arg.toLower() == u"all"_q);
-	const auto freeText = (command == u"tr"_q)
-		|| (command == u"calc"_q)
-		|| (command == u"show"_q);
+	const auto freeText = (command == u"tr"_q) || (command == u"calc"_q);
 	if (!freeText && !arg.isEmpty() && !all && !number.hasMatch()) {
 		// Обычная фраза, которая случайно начинается с команды.
 		return false;
@@ -464,28 +460,6 @@ bool Handle(
 			controller->uiShow(),
 			history,
 			(command == u"archive"_q));
-		return true;
-	}
-	if (command == u"show"_q) {
-		auto url = Downloader::FindUrl(arg);
-		if (url.isEmpty() && replied) {
-			url = Downloader::FindUrl(replied->originalText().text);
-			if (url.isEmpty()) {
-				for (const auto &entity : replied->originalText().entities) {
-					if (entity.type() == EntityType::Url) {
-						url = Downloader::FindUrl(replied->originalText().text.mid(
-							entity.offset(),
-							entity.length()));
-					} else if (entity.type() == EntityType::CustomUrl) {
-						url = Downloader::FindUrl(entity.data());
-					}
-					if (!url.isEmpty()) {
-						break;
-					}
-				}
-			}
-		}
-		Downloader::Show(controller, history, url);
 		return true;
 	}
 	if (command == u"dl"_q) {
