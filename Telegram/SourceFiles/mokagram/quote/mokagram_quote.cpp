@@ -1,6 +1,8 @@
 #include "mokagram/quote/mokagram_quote.h"
 
 #include "base/call_delayed.h"
+#include "core/application.h"
+#include "window/window_controller.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -20,6 +22,7 @@
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/widgets/checkbox.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/vertical_list.h"
@@ -327,6 +330,27 @@ const std::vector<Gradient> &Gradients() {
 	return result;
 }
 
+constexpr auto kCustomBg = 100;
+
+[[nodiscard]] bool BgColors(int index, QColor &a, QColor &b) {
+	if (index >= 0 && index < int(Gradients().size())) {
+		a = Gradients()[index].a;
+		b = Gradients()[index].b;
+		return true;
+	} else if (index == kCustomBg) {
+		a = QColor(S::String(u"quote.custom1"_q));
+		b = QColor(S::String(u"quote.custom2"_q));
+		if (!a.isValid()) {
+			a = QColor(0xff, 0x9a, 0x8b);
+		}
+		if (!b.isValid()) {
+			b = QColor(0x6a, 0x11, 0xcb);
+		}
+		return true;
+	}
+	return false;
+}
+
 struct MaskRect {
 	QRectF norm; // относительно картинки сообщений, 0..1
 	Mask mask = Mask::Blur;
@@ -478,7 +502,9 @@ struct Composed {
 	const auto cardW = content.width() + innerPad * 2;
 	const auto cardH = content.height() + innerPad * 2 + dotsH;
 	const auto hasCard = (cardMode != 2);
-	const auto hasBg = (gradient >= 0 && gradient < int(Gradients().size()));
+	auto bgA = QColor();
+	auto bgB = QColor();
+	const auto hasBg = BgColors(gradient, bgA, bgB);
 	const auto fullPad = (hasBg || hasCard) ? pad : 0;
 	auto result = QImage(
 		QSize(cardW + fullPad * 2, cardH + fullPad * 2),
@@ -489,10 +515,9 @@ struct Composed {
 	p.setRenderHint(QPainter::SmoothPixmapTransform);
 	const auto all = QRectF(result.rect());
 	if (hasBg) {
-		const auto &g = Gradients()[gradient];
 		auto lg = QLinearGradient(all.topLeft(), all.bottomRight());
-		lg.setColorAt(0, g.a);
-		lg.setColorAt(1, g.b);
+		lg.setColorAt(0, bgA);
+		lg.setColorAt(1, bgB);
 		p.setPen(Qt::NoPen);
 		p.setBrush(lg);
 		p.drawRect(all);
@@ -587,39 +612,51 @@ public:
 	: RpWidget(parent)
 	, _current(current)
 	, _changed(std::move(changed)) {
-		resize(int(Gradients().size() + 1) * 38, 32);
+		resize(int(Gradients().size() + 1) * 38 + 2, 32);
+	}
+
+	void refreshCustom() {
+		update();
 	}
 
 protected:
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
-		for (auto i = 0; i != int(Gradients().size()) + 1; ++i) {
-			const auto r = QRectF(i * 38 + 2, 2, 28, 28);
-			if (i < int(Gradients().size())) {
-				auto lg = QLinearGradient(r.topLeft(), r.bottomRight());
-				lg.setColorAt(0, Gradients()[i].a);
-				lg.setColorAt(1, Gradients()[i].b);
-				p.setPen(Qt::NoPen);
-				p.setBrush(lg);
-			} else {
-				p.setPen(QPen(st::windowSubTextFg, 1.5));
-				p.setBrush(Qt::NoBrush);
-			}
+		const auto count = int(Gradients().size());
+		for (auto i = 0; i != count + 1; ++i) {
+			const auto r = QRectF(i * 38 + 5, 5, 22, 22);
+			const auto index = (i < count) ? i : kCustomBg;
+			auto a = QColor();
+			auto b = QColor();
+			BgColors(index, a, b);
+			auto lg = QLinearGradient(r.topLeft(), r.bottomRight());
+			lg.setColorAt(0, a);
+			lg.setColorAt(1, b);
+			p.setPen(Qt::NoPen);
+			p.setBrush(lg);
 			p.drawEllipse(r);
-			if (i == _current) {
+			if (i == count) {
+				// Свой цвет: значок карандаша заменяем плюсом.
+				p.setPen(QPen(Qt::white, 1.6, Qt::SolidLine, Qt::RoundCap));
+				const auto c = r.center();
+				p.drawLine(QPointF(c.x() - 5, c.y()), QPointF(c.x() + 5, c.y()));
+				p.drawLine(QPointF(c.x(), c.y() - 5), QPointF(c.x(), c.y() + 5));
+			}
+			if (index == _current) {
 				p.setPen(QPen(st::windowFg, 2));
 				p.setBrush(Qt::NoBrush);
-				p.drawEllipse(r.adjusted(-2, -2, 2, 2));
+				p.drawEllipse(r.adjusted(-3, -3, 3, 3));
 			}
 		}
 	}
 	void mousePressEvent(QMouseEvent *e) override {
 		const auto i = e->pos().x() / 38;
-		if (i >= 0 && i <= int(Gradients().size())) {
-			_current = i;
+		const auto count = int(Gradients().size());
+		if (i >= 0 && i <= count) {
+			_current = (i < count) ? i : kCustomBg;
 			update();
-			_changed(i);
+			_changed(_current);
 		}
 	}
 
@@ -677,14 +714,25 @@ void RegisterSettings() {
 	for (const auto &g : Gradients()) {
 		bgs.push_back(U(g.name));
 	}
-	bgs.push_back(U("Без фона"));
 	add({
 		.key = u"quote.bg"_q,
 		.title = U("Фон картинки"),
 		.description = U("Меню «Скриншот сообщений» собирает картинку из сообщений как в чате."),
 		.kind = S::Kind::Choice,
-		.defaultValue = 7,
+		.defaultValue = 5,
 		.choices = bgs,
+	});
+	add({
+		.key = u"quote.custom1"_q,
+		.title = U("Свой фон: цвет 1"),
+		.kind = S::Kind::Color,
+		.defaultValue = QString(u"#ff9a8b"_q),
+	});
+	add({
+		.key = u"quote.custom2"_q,
+		.title = U("Свой фон: цвет 2"),
+		.kind = S::Kind::Color,
+		.defaultValue = QString(u"#6a11cb"_q),
 	});
 	add({
 		.key = u"quote.theme"_q,
@@ -930,6 +978,43 @@ void ShowQuoteBox(
 	});
 }
 
+void ShowCustomBg(Fn<void()> refresh) {
+	const auto window = Core::App().activeWindow();
+	if (!window) {
+		return;
+	}
+	window->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(U("Свой фон")));
+		box->setWidth(360);
+		const auto content = box->verticalLayout();
+		static const auto fieldStyle = [] {
+			auto result = st::defaultInputField;
+			result.textMargins = style::margins(0, 7, 0, 7);
+			return result;
+		}();
+		const auto add = [&](const QString &key, const QString &label) {
+			Ui::AddSubsectionTitle(content, rpl::single(label));
+			const auto field = content->add(
+				object_ptr<Ui::InputField>(
+					content,
+					fieldStyle,
+					rpl::single(U("#RRGGBB")),
+					S::String(key)),
+				QMargins(22, 4, 22, 8));
+			field->changes() | rpl::on_next([=] {
+				const auto text = field->getLastText().trimmed();
+				if (QColor(text).isValid()) {
+					S::SetString(key, text);
+					refresh();
+				}
+			}, field->lifetime());
+		};
+		add(u"quote.custom1"_q, U("Цвет 1 (например #ff9a8b)"));
+		add(u"quote.custom2"_q, U("Цвет 2"));
+		box->addButton(rpl::single(U("Готово")), [=] { box->closeBox(); });
+	}));
+}
+
 void ShowQuoteBoxNow(
 		not_null<Window::SessionController*> controller,
 		std::shared_ptr<Shot> shot,
@@ -944,6 +1029,9 @@ void ShowQuoteBoxNow(
 		base::call_delayed(delay, controller, [=] {
 			auto fresh = StackRows({ RenderShot(*shot, ratio) });
 			if (!fresh.isNull()) {
+				if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
+					fresh.save(QString(u"/tmp/moka_quote_%1.png"_q).arg(delay), "PNG");
+				}
 				*content = std::move(fresh);
 				if (*onUpdate) {
 					(*onUpdate)();
@@ -961,6 +1049,8 @@ void ShowQuoteBoxNow(
 		const auto masks = std::make_shared<std::vector<MaskRect>>();
 		const auto maskKind = std::make_shared<int>(0);
 		const auto result = std::make_shared<Composed>();
+		const auto shown = std::make_shared<QImage>();
+		const auto shownFor = std::make_shared<QImage>();
 		const auto preview = layout->add(
 			object_ptr<PreviewWidget>(layout),
 			QMargins(24, 8, 24, 8));
@@ -990,11 +1080,21 @@ void ShowQuoteBoxNow(
 			if (result->image.isNull()) {
 				return;
 			}
-			p.setRenderHint(QPainter::SmoothPixmapTransform);
 			const auto w = preview->width();
 			const auto h = int(result->image.height() * (w / double(result->image.width())));
-			// Шахматка под прозрачным местом.
-			p.drawImage(QRect(0, 0, w, h), result->image);
+			// Заранее уменьшаем до физического размера превью, иначе Qt
+			// жмёт огромную картинку грубо и всё выглядит мыльным.
+			const auto ratio = style::DevicePixelRatio();
+			const auto target = QSize(w * ratio, h * ratio);
+			if (shown->size() != target || shownFor->cacheKey() != result->image.cacheKey()) {
+				*shown = result->image.scaled(
+					target,
+					Qt::IgnoreAspectRatio,
+					Qt::SmoothTransformation);
+				shown->setDevicePixelRatio(ratio);
+				*shownFor = result->image;
+			}
+			p.drawImage(QRect(0, 0, w, h), *shown);
 			if (drag->first) {
 				p.setPen(QPen(Qt::white, 1, Qt::DashLine));
 				p.setBrush(QColor(255, 255, 255, 40));
@@ -1045,8 +1145,11 @@ void ShowQuoteBoxNow(
 		Ui::AddSubsectionTitle(layout, rpl::single(U("Фон")));
 		layout->add(
 			object_ptr<Swatches>(layout, S::Int(u"quote.bg"_q), [=](int i) {
-				S::SetInt(u"quote.bg"_q, (i >= int(Gradients().size())) ? 99 : i);
+				S::SetInt(u"quote.bg"_q, i);
 				refresh();
+				if (i == kCustomBg) {
+					ShowCustomBg(refresh);
+				}
 			}),
 			QMargins(24, 4, 24, 8));
 		Ui::AddSubsectionTitle(layout, rpl::single(U("Карточка")));
