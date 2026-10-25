@@ -3728,7 +3728,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 							},
 							&st::menuIconCopy);
 						_menu->addAction(
-							QString::fromUtf8("Цитата-картинка"),
+							QString::fromUtf8("Скриншот сообщений"),
 							[=] {
 								auto ids = std::vector<FullMsgId>();
 								for (const auto selected : _selected) {
@@ -3737,7 +3737,49 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 								if (ids.empty()) {
 									ids.push_back(itemId);
 								}
-								Mokagram::Quote::ShowQuoteBox(_controller, std::move(ids));
+								auto rows = std::vector<QImage>();
+								auto items = std::vector<not_null<HistoryItem*>>();
+								for (const auto &id : ids) {
+									if (const auto item = _history->owner().message(id)) {
+										items.push_back(item);
+									}
+								}
+								std::sort(items.begin(), items.end(), [&](auto a, auto b) {
+									const auto va = viewByItem(a);
+									const auto vb = viewByItem(b);
+									return (va && vb) ? (itemTop(va) < itemTop(vb)) : (a->id < b->id);
+								});
+								// Выделение закрашивает пузыри: на снимке его не должно быть.
+								const auto hadSelection = !_selected.empty();
+								if (hadSelection) {
+									clearSelected();
+									repaint();
+								}
+								const auto dpr = devicePixelRatioF();
+								for (const auto item : items) {
+									const auto view = viewByItem(item);
+									if (!view) {
+										continue;
+									}
+									const auto top = itemTop(view);
+									if (top < 0
+										|| top + view->height() <= _visibleAreaTop
+										|| top >= _visibleAreaBottom) {
+										continue;
+									}
+									auto image = QImage(
+										QSize(width(), view->height()) * dpr,
+										QImage::Format_ARGB32_Premultiplied);
+									image.setDevicePixelRatio(dpr);
+									image.fill(Qt::transparent);
+									render(
+										&image,
+										QPoint(),
+										QRegion(QRect(0, top, width(), view->height())),
+										QWidget::DrawChildren);
+									rows.push_back(std::move(image));
+								}
+								Mokagram::Quote::ShowQuoteBox(_controller, std::move(rows), std::move(ids));
 							},
 							&st::menuIconCopy);
 					}

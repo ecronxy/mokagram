@@ -25,6 +25,8 @@
 #include <QtCore/QDir>
 #include <QtCore/QStandardPaths>
 #include <QtGui/QClipboard>
+#include <QtGui/QLinearGradient>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QTextLayout>
 #include <QtGui/QTextOption>
@@ -296,6 +298,269 @@ struct Options {
 	return result;
 }
 
+struct Gradient {
+	const char *name;
+	QColor a, b;
+};
+
+const std::vector<Gradient> &Gradients() {
+	static const auto result = std::vector<Gradient>{
+		{ "Закат", QColor(0xf6, 0xd3, 0x65), QColor(0xfd, 0xa0, 0x85) },
+		{ "Океан", QColor(0x4f, 0xac, 0xfe), QColor(0x00, 0xc6, 0xfb) },
+		{ "Ночь", QColor(0x0f, 0x20, 0x27), QColor(0x2c, 0x53, 0x64) },
+		{ "Фиолет", QColor(0x8e, 0x2d, 0xe2), QColor(0x4a, 0x00, 0xe0) },
+		{ "Мята", QColor(0x11, 0x99, 0x8e), QColor(0x38, 0xef, 0x7d) },
+		{ "Графит", QColor(0x23, 0x25, 0x26), QColor(0x41, 0x43, 0x45) },
+		{ "Белый", QColor(0xf5, 0xf7, 0xfa), QColor(0xc3, 0xcf, 0xe2) },
+	};
+	return result;
+}
+
+struct MaskRect {
+	QRectF norm; // относительно картинки сообщений, 0..1
+	Mask mask = Mask::Blur;
+};
+
+[[nodiscard]] QImage StackRows(const std::vector<QImage> &rows) {
+	if (rows.empty()) {
+		return QImage();
+	}
+	const auto dpr = rows.front().devicePixelRatio();
+	auto left = INT_MAX, right = 0, height = 0;
+	auto heights = std::vector<int>();
+	for (const auto &row : rows) {
+		height += row.height();
+		for (auto y = 0; y != row.height(); ++y) {
+			const auto line = reinterpret_cast<const QRgb*>(row.constScanLine(y));
+			for (auto x = 0; x != row.width(); ++x) {
+				if (qAlpha(line[x]) > 6) {
+					left = std::min(left, x);
+					right = std::max(right, x);
+				}
+			}
+		}
+	}
+	if (right <= left) {
+		return QImage();
+	}
+	const auto margin = int(8 * dpr);
+	left = std::max(0, left - margin);
+	right = std::min(rows.front().width() - 1, right + margin);
+	auto result = QImage(
+		QSize(right - left + 1, height),
+		QImage::Format_ARGB32_Premultiplied);
+	result.setDevicePixelRatio(dpr);
+	result.fill(Qt::transparent);
+	auto p = QPainter(&result);
+	auto y = 0;
+	for (const auto &row : rows) {
+		p.drawImage(QPoint(0, y), row, QRect(left, 0, right - left + 1, row.height()));
+		y += row.height();
+	}
+	return result;
+}
+
+[[nodiscard]] QImage ApplyMasks(QImage content, const std::vector<MaskRect> &masks) {
+	if (content.isNull()) {
+		return content;
+	}
+	auto p = QPainter(&content);
+	p.setRenderHint(QPainter::Antialiasing);
+	for (const auto &m : masks) {
+		const auto r = QRect(
+			int(m.norm.x() * content.width()),
+			int(m.norm.y() * content.height()),
+			std::max(2, int(m.norm.width() * content.width())),
+			std::max(2, int(m.norm.height() * content.height())))
+			.intersected(content.rect());
+		if (r.isEmpty()) {
+			continue;
+		}
+		if (m.mask == Mask::Fill) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(QColor(110, 110, 120));
+			p.drawRoundedRect(r, 6, 6);
+			continue;
+		}
+		const auto part = content.copy(r);
+		p.setCompositionMode(QPainter::CompositionMode_Source);
+		p.drawImage(r.topLeft(), Masked(part, m.mask));
+		p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+	}
+	return content;
+}
+
+struct Composed {
+	QImage image;
+	QRectF content; // где в итоге лежат сообщения (пиксели итога)
+};
+
+[[nodiscard]] Composed Compose(const QImage &content, int gradient, int cardMode, int outer, bool shadow, bool dots) {
+	const auto dpr = std::max(1., content.devicePixelRatio());
+	const auto innerPad = int(22 * dpr);
+	const auto dotsH = dots ? int(34 * dpr) : 0;
+	const auto pad = int(outer * dpr);
+	const auto cardW = content.width() + innerPad * 2;
+	const auto cardH = content.height() + innerPad * 2 + dotsH;
+	const auto hasCard = (cardMode != 2);
+	const auto hasBg = (gradient >= 0 && gradient < int(Gradients().size()));
+	const auto fullPad = (hasBg || hasCard) ? pad : 0;
+	auto result = QImage(
+		QSize(cardW + fullPad * 2, cardH + fullPad * 2),
+		QImage::Format_ARGB32_Premultiplied);
+	result.fill(Qt::transparent);
+	auto p = QPainter(&result);
+	p.setRenderHint(QPainter::Antialiasing);
+	p.setRenderHint(QPainter::SmoothPixmapTransform);
+	const auto all = QRectF(result.rect());
+	if (hasBg) {
+		const auto &g = Gradients()[gradient];
+		auto lg = QLinearGradient(all.topLeft(), all.bottomRight());
+		lg.setColorAt(0, g.a);
+		lg.setColorAt(1, g.b);
+		p.setPen(Qt::NoPen);
+		p.setBrush(lg);
+		p.drawRoundedRect(all, 18 * dpr, 18 * dpr);
+	}
+	const auto card = QRectF(fullPad, fullPad, cardW, cardH);
+	const auto radius = 20 * dpr;
+	if (hasCard) {
+		if (shadow && hasBg) {
+			// Тень: размытый тёмный прямоугольник под карточкой.
+			auto sh = QImage(result.size() / 8 + QSize(2, 2), QImage::Format_ARGB32_Premultiplied);
+			sh.fill(Qt::transparent);
+			{
+				auto q = QPainter(&sh);
+				q.setRenderHint(QPainter::Antialiasing);
+				q.setPen(Qt::NoPen);
+				q.setBrush(QColor(0, 0, 0, 150));
+				q.drawRoundedRect(QRectF(card.x() / 8, (card.y() + 14 * dpr) / 8, card.width() / 8, card.height() / 8), radius / 8, radius / 8);
+			}
+			auto big = sh.scaled(result.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+			p.drawImage(QPoint(0, 0), big);
+		}
+		p.setPen(Qt::NoPen);
+		p.setBrush(cardMode == 0 ? QColor(0x0e, 0x16, 0x21) : QColor(0xe9, 0xee, 0xf2));
+		p.drawRoundedRect(card, radius, radius);
+		if (dots) {
+			const auto colors = std::array<QColor, 3>{ QColor(0xff, 0x5f, 0x57), QColor(0xfe, 0xbc, 0x2e), QColor(0x28, 0xc8, 0x40) };
+			for (auto i = 0; i != 3; ++i) {
+				p.setBrush(colors[i]);
+				p.drawEllipse(QPointF(card.x() + (22 + i * 20) * dpr, card.y() + 20 * dpr), 6 * dpr, 6 * dpr);
+			}
+		}
+	}
+	const auto at = QPointF(card.x() + innerPad, card.y() + innerPad + dotsH);
+	p.drawImage(at, content);
+	p.end();
+	result.setDevicePixelRatio(1.);
+	return { result, QRectF(at, QSizeF(content.size())) };
+}
+
+class Pills final : public Ui::RpWidget {
+public:
+	Pills(QWidget *parent, QStringList names, int current, Fn<void(int)> changed)
+	: RpWidget(parent)
+	, _names(std::move(names))
+	, _current(current)
+	, _changed(std::move(changed)) {
+		setMouseTracking(true);
+		const auto &font = st::normalFont;
+		auto x = 0;
+		for (const auto &name : _names) {
+			const auto w = font->width(name) + 28;
+			_rects.push_back(QRect(x, 0, w, 32));
+			x += w + 8;
+		}
+		resize(x, 32);
+	}
+
+	void setCurrent(int current) {
+		_current = current;
+		update();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setFont(st::normalFont);
+		for (auto i = 0; i != int(_rects.size()); ++i) {
+			const auto active = (i == _current);
+			p.setPen(Qt::NoPen);
+			p.setBrush(active ? st::windowBgActive : st::windowBgOver);
+			p.drawRoundedRect(_rects[i], 16, 16);
+			p.setPen(active ? st::windowFgActive : st::windowFg);
+			p.drawText(_rects[i], Qt::AlignCenter, _names[i]);
+		}
+	}
+	void mousePressEvent(QMouseEvent *e) override {
+		for (auto i = 0; i != int(_rects.size()); ++i) {
+			if (_rects[i].contains(e->pos())) {
+				_current = i;
+				update();
+				_changed(i);
+				return;
+			}
+		}
+	}
+
+private:
+	QStringList _names;
+	std::vector<QRect> _rects;
+	int _current = 0;
+	Fn<void(int)> _changed;
+
+};
+
+class Swatches final : public Ui::RpWidget {
+public:
+	Swatches(QWidget *parent, int current, Fn<void(int)> changed)
+	: RpWidget(parent)
+	, _current(current)
+	, _changed(std::move(changed)) {
+		resize(int(Gradients().size() + 1) * 38, 32);
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		for (auto i = 0; i != int(Gradients().size()) + 1; ++i) {
+			const auto r = QRectF(i * 38 + 2, 2, 28, 28);
+			if (i < int(Gradients().size())) {
+				auto lg = QLinearGradient(r.topLeft(), r.bottomRight());
+				lg.setColorAt(0, Gradients()[i].a);
+				lg.setColorAt(1, Gradients()[i].b);
+				p.setPen(Qt::NoPen);
+				p.setBrush(lg);
+			} else {
+				p.setPen(QPen(st::windowSubTextFg, 1.5));
+				p.setBrush(Qt::NoBrush);
+			}
+			p.drawEllipse(r);
+			if (i == _current) {
+				p.setPen(QPen(st::windowFg, 2));
+				p.setBrush(Qt::NoBrush);
+				p.drawEllipse(r.adjusted(-2, -2, 2, 2));
+			}
+		}
+	}
+	void mousePressEvent(QMouseEvent *e) override {
+		const auto i = e->pos().x() / 38;
+		if (i >= 0 && i <= int(Gradients().size())) {
+			_current = i;
+			update();
+			_changed(i);
+		}
+	}
+
+private:
+	int _current = 0;
+	Fn<void(int)> _changed;
+
+};
+
 } // namespace
 
 void RegisterSettings() {
@@ -306,138 +571,219 @@ void RegisterSettings() {
 		entry.sectionIcon = u"copy"_q;
 		S::Register(std::move(entry));
 	};
-	const auto masks = QStringList{ U("Показывать"), U("Размыть"), U("Пиксели"), U("Заливка") };
+	QStringList bgs;
+	for (const auto &g : Gradients()) {
+		bgs.push_back(U(g.name));
+	}
+	bgs.push_back(U("Без фона"));
+	add({
+		.key = u"quote.bg"_q,
+		.title = U("Фон картинки"),
+		.description = U("Меню «Картинка» на сообщении собирает скриншот как у окна."),
+		.kind = S::Kind::Choice,
+		.defaultValue = 3,
+		.choices = bgs,
+	});
 	add({
 		.key = u"quote.theme"_q,
-		.title = U("Тема"),
-		.description = U("Меню «Цитата-картинка» на сообщении собирает картинку."),
+		.title = U("Карточка"),
 		.kind = S::Kind::Choice,
 		.defaultValue = 0,
-		.choices = { U("Тёмная"), U("Светлая") },
+		.choices = { U("Тёмная"), U("Светлая"), U("Без карточки") },
 	});
 	add({
-		.key = u"quote.names"_q,
-		.title = U("Имена"),
-		.kind = S::Kind::Choice,
-		.defaultValue = 0,
-		.choices = masks,
+		.key = u"quote.padding"_q,
+		.title = U("Отступ от края, px"),
+		.kind = S::Kind::Int,
+		.defaultValue = 36,
+		.minValue = 0,
+		.maxValue = 120,
 	});
 	add({
-		.key = u"quote.avatars"_q,
-		.title = U("Аватарки"),
-		.kind = S::Kind::Choice,
-		.defaultValue = 0,
-		.choices = masks,
-	});
-	add({
-		.key = u"quote.time"_q,
-		.title = U("Время под сообщением"),
+		.key = u"quote.shadow"_q,
+		.title = U("Тень под карточкой"),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
 	add({
-		.key = u"quote.transparent"_q,
-		.title = U("Прозрачный фон"),
+		.key = u"quote.dots"_q,
+		.title = U("Кнопки окна как на macOS"),
 		.kind = S::Kind::Bool,
-		.defaultValue = false,
+		.defaultValue = true,
 	});
 	add({
 		.key = u"quote.width"_q,
-		.title = U("Ширина картинки, px"),
+		.title = U("Ширина текстовой цитаты, px"),
+		.description = U("Только если сообщения не на экране и рисуются как текст."),
 		.kind = S::Kind::Int,
 		.defaultValue = 640,
 		.minValue = 360,
 		.maxValue = 1000,
 	});
-	add({
-		.key = u"quote.bubble_in"_q,
-		.title = U("Цвет чужих пузырей"),
-		.kind = S::Kind::Color,
-		.defaultValue = QString(),
-	});
-	add({
-		.key = u"quote.bubble_out"_q,
-		.title = U("Цвет моих пузырей"),
-		.kind = S::Kind::Color,
-		.defaultValue = QString(),
-	});
-	add({
-		.key = u"quote.background"_q,
-		.title = U("Цвет фона"),
-		.kind = S::Kind::Color,
-		.defaultValue = QString(),
-	});
 }
 
 void ShowQuoteBox(
 		not_null<Window::SessionController*> controller,
+		std::vector<QImage> rows,
 		std::vector<FullMsgId> ids) {
-	if (ids.empty()) {
-		return;
-	}
-	auto lines = std::make_shared<std::vector<Line>>(Collect(controller, ids));
-	if (lines->empty()) {
-		return;
+	auto content = std::make_shared<QImage>(StackRows(rows));
+	if (content->isNull()) {
+		// Сообщений нет на экране: рисуем текстовую версию.
+		const auto lines = Collect(controller, ids);
+		if (lines.empty()) {
+			return;
+		}
+		auto options = CurrentOptions();
+		options.transparent = true;
+		options.dark = (S::Int(u"quote.theme"_q) != 1);
+		*content = StackRows({ Render(lines, options) });
+		if (content->isNull()) {
+			return;
+		}
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(U("Картинка-цитата")));
-		box->setWidth(520);
-		const auto content = box->verticalLayout();
-		const auto image = std::make_shared<QImage>();
-		const auto preview = content->add(
-			object_ptr<Ui::RpWidget>(content),
+		box->setTitle(rpl::single(U("Скриншот сообщений")));
+		box->setWidth(620);
+		const auto layout = box->verticalLayout();
+		const auto masks = std::make_shared<std::vector<MaskRect>>();
+		const auto maskKind = std::make_shared<int>(0);
+		const auto result = std::make_shared<Composed>();
+		const auto preview = layout->add(
+			object_ptr<Ui::RpWidget>(layout),
 			QMargins(24, 8, 24, 8));
+		const auto drag = std::make_shared<std::pair<bool, QPointF>>(false, QPointF());
+		const auto dragRect = std::make_shared<QRectF>();
+		const auto composedFor = [=](bool fresh = false) {
+			Q_UNUSED(fresh);
+			const auto masked = ApplyMasks(*content, *masks);
+			return Compose(
+				masked,
+				S::Int(u"quote.bg"_q),
+				S::Int(u"quote.theme"_q),
+				S::Int(u"quote.padding"_q),
+				S::Bool(u"quote.shadow"_q),
+				S::Bool(u"quote.dots"_q));
+		};
 		const auto refresh = [=] {
-			*image = Render(*lines, CurrentOptions());
-			const auto w = preview->width() > 0 ? preview->width() : 470;
-			const auto h = int(image->height() * (w / double(image->width())));
-			preview->resize(w, std::min(h, 520));
+			*result = composedFor();
+			const auto w = std::max(100, preview->width());
+			const auto h = int(result->image.height() * (w / double(result->image.width())));
+			if (preview->height() != h) {
+				preview->resize(w, h);
+			}
 			preview->update();
 		};
 		preview->paintOn([=](QPainter &p) {
-			if (image->isNull()) {
+			if (result->image.isNull()) {
 				return;
 			}
 			p.setRenderHint(QPainter::SmoothPixmapTransform);
 			const auto w = preview->width();
-			const auto h = int(image->height() * (w / double(image->width())));
-			p.drawImage(QRect(0, 0, w, h), *image);
-		});
-		const auto radio = [&](const QString &title, const char *key, const QStringList &names) {
-			Ui::AddSubsectionTitle(content, rpl::single(title));
-			const auto group = std::make_shared<Ui::RadiobuttonGroup>(S::Int(QString::fromUtf8(key)));
-			for (auto i = 0; i != names.size(); ++i) {
-				content->add(
-					object_ptr<Ui::Radiobutton>(content, group, i, names[i], st::defaultCheckbox),
-					QMargins(24, 4, 24, 4));
+			const auto h = int(result->image.height() * (w / double(result->image.width())));
+			// Шахматка под прозрачным местом.
+			p.drawImage(QRect(0, 0, w, h), result->image);
+			if (drag->first) {
+				p.setPen(QPen(Qt::white, 1, Qt::DashLine));
+				p.setBrush(QColor(255, 255, 255, 40));
+				p.drawRect(*dragRect);
 			}
-			group->setChangedCallback([=](int value) {
-				S::SetInt(QString::fromUtf8(key), value);
-				refresh();
-			});
+		});
+		const auto toNorm = [=](QRectF r) {
+			const auto k = result->image.width() / double(preview->width());
+			const auto px = QRectF(r.x() * k, r.y() * k, r.width() * k, r.height() * k)
+				.translated(-result->content.topLeft());
+			return QRectF(
+				px.x() / result->content.width(),
+				px.y() / result->content.height(),
+				px.width() / result->content.width(),
+				px.height() / result->content.height());
 		};
-		const auto masks = QStringList{ U("Показывать"), U("Размыть"), U("Пиксели"), U("Заливка") };
-		radio(U("Имена"), "quote.names", masks);
-		radio(U("Аватарки"), "quote.avatars", masks);
-		radio(U("Тема"), "quote.theme", { U("Тёмная"), U("Светлая") });
+		preview->events() | rpl::on_next([=](not_null<QEvent*> e) {
+			if (e->type() == QEvent::MouseButtonPress) {
+				const auto pos = static_cast<QMouseEvent*>(e.get())->position();
+				drag->first = true;
+				drag->second = pos;
+				*dragRect = QRectF(pos, pos);
+			} else if (e->type() == QEvent::MouseMove && drag->first) {
+				const auto pos = static_cast<QMouseEvent*>(e.get())->position();
+				*dragRect = QRectF(drag->second, pos).normalized();
+				preview->update();
+			} else if (e->type() == QEvent::MouseButtonRelease && drag->first) {
+				drag->first = false;
+				if (dragRect->width() > 6 && dragRect->height() > 6) {
+					masks->push_back({ toNorm(*dragRect), Mask(*maskKind + 1) });
+				}
+				refresh();
+			}
+		}, preview->lifetime());
+
+		const auto hint = layout->add(
+			object_ptr<Ui::FlatLabel>(
+				layout,
+				U("Проведи мышью по картинке, чтобы скрыть имя или аватарку."),
+				st::boxLabel),
+			QMargins(24, 0, 24, 8));
+		Q_UNUSED(hint);
+
+		Ui::AddSubsectionTitle(layout, rpl::single(U("Фон")));
+		layout->add(
+			object_ptr<Swatches>(layout, S::Int(u"quote.bg"_q), [=](int i) {
+				S::SetInt(u"quote.bg"_q, (i >= int(Gradients().size())) ? 99 : i);
+				refresh();
+			}),
+			QMargins(24, 4, 24, 8));
+		Ui::AddSubsectionTitle(layout, rpl::single(U("Карточка")));
+		layout->add(
+			object_ptr<Pills>(layout, QStringList{ U("Тёмная"), U("Светлая"), U("Без карточки") }, S::Int(u"quote.theme"_q), [=](int i) {
+				S::SetInt(u"quote.theme"_q, i);
+				refresh();
+			}),
+			QMargins(24, 4, 24, 8));
+		Ui::AddSubsectionTitle(layout, rpl::single(U("Чем скрывать")));
+		layout->add(
+			object_ptr<Pills>(layout, QStringList{ U("Размытие"), U("Пиксели"), U("Заливка") }, 0, [=](int i) {
+				*maskKind = i;
+			}),
+			QMargins(24, 4, 24, 8));
+		const auto dots = layout->add(
+			object_ptr<Ui::Checkbox>(layout, U("Кнопки окна как на macOS"), S::Bool(u"quote.dots"_q), st::defaultCheckbox),
+			QMargins(24, 6, 24, 2));
+		dots->checkedChanges() | rpl::on_next([=](bool on) {
+			S::SetBool(u"quote.dots"_q, on);
+			refresh();
+		}, dots->lifetime());
+		const auto shadow = layout->add(
+			object_ptr<Ui::Checkbox>(layout, U("Тень под карточкой"), S::Bool(u"quote.shadow"_q), st::defaultCheckbox),
+			QMargins(24, 2, 24, 8));
+		shadow->checkedChanges() | rpl::on_next([=](bool on) {
+			S::SetBool(u"quote.shadow"_q, on);
+			refresh();
+		}, shadow->lifetime());
+		preview->widthValue() | rpl::on_next([=](int) {
+			refresh();
+		}, preview->lifetime());
 		refresh();
+
 		box->addButton(rpl::single(U("Копировать")), [=] {
-			QGuiApplication::clipboard()->setImage(*image);
+			QGuiApplication::clipboard()->setImage(result->image);
 			controller->showToast(U("Картинка скопирована"));
 		});
 		box->addButton(rpl::single(U("Сохранить")), [=] {
 			auto dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
 			QDir().mkpath(dir);
-			const auto path = dir + u"/mokagram_quote_"_q
+			const auto path = dir + u"/mokagram_"_q
 				+ QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")
 				+ u".png"_q;
-			if (image->save(path, "PNG")) {
-				controller->showToast(U("Сохранено: ") + path);
-			} else {
-				controller->showToast(U("Не получилось сохранить"));
+			controller->showToast(result->image.save(path, "PNG")
+				? U("Сохранено: ") + path
+				: U("Не получилось сохранить"));
+		});
+		box->addLeftButton(rpl::single(U("Отменить скрытие")), [=] {
+			if (!masks->empty()) {
+				masks->pop_back();
+				refresh();
 			}
 		});
-		box->addLeftButton(rpl::single(U("Закрыть")), [=] { box->closeBox(); });
 	}));
 }
 

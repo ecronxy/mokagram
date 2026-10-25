@@ -2084,14 +2084,19 @@ void StartDebugCommands() {
 				Effects::PlayDelete(widget, inner, QRect(0, top, inner->width(), 100), true);
 			}
 		} else if (cmd == u"quote"_q) {
-			if (const auto history = controller->activeChatCurrent().history()) {
-				if (const auto last = history->lastMessage()) {
-					auto ids = std::vector<FullMsgId>();
-					for (auto i = 0; i != 4; ++i) {
-						ids.push_back(FullMsgId(history->peer->id, last->id - i));
-					}
-					Quote::ShowQuoteBox(controller, std::move(ids));
-				}
+			QWidget *inner = nullptr;
+			for (const auto child : controller->widget()->findChildren<QWidget*>()) {
+				if (dynamic_cast<HistoryInner*>(child)) inner = child;
+			}
+			if (inner) {
+				const auto dpr = inner->devicePixelRatioF();
+				auto image = QImage(QSize(inner->width(), 190) * dpr, QImage::Format_ARGB32_Premultiplied);
+				image.setDevicePixelRatio(dpr);
+				image.fill(Qt::transparent);
+				inner->render(&image, QPoint(), QRegion(QRect(0, inner->height() - 200, inner->width(), 190)), QWidget::DrawChildren);
+				auto rows = std::vector<QImage>();
+				rows.push_back(std::move(image));
+				Quote::ShowQuoteBox(controller, std::move(rows), {});
 			}
 		} else if (cmd == u"starsstats"_q) {
 			Stars::ShowSpendingStatsBox();
