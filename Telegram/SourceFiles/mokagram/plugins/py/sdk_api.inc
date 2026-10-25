@@ -65,7 +65,7 @@ def show_toast(text, icon=None, duration=2.5):
 # ---- свои окна, формы и тосты с кнопкой ----
 
 _FIELD_TYPES = {'Header': 'header', 'Text': 'text', 'Switch': 'switch', 'Selector': 'select', 'Input': 'input',
-                'EditText': 'input', 'Divider': 'divider', 'Progress': 'progress'}
+                'EditText': 'input', 'Password': 'password', 'Divider': 'divider', 'Progress': 'progress'}
 
 
 def _field_dict(f):

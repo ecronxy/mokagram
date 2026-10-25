@@ -1285,3 +1285,24 @@ def _moka_restore(path):
                 'В архиве плагинов: %d. Данные плагинов, настройки, заметки, сниппеты и фильтры заменят текущие '
                 '(старые файлы останутся рядом с суффиксом .bak). Плагины пройдут обычную установку с подтверждением прав.' % len(plugins),
                 [{'id': 'yes', 'text': 'Восстановить', 'style': 'red'}, {'id': 'no', 'text': 'Отмена', 'style': 'cancel'}], go)
+
+
+def _fw_password_dialog(entry, key, title):
+    pid = entry['id']
+
+    def done(payload):
+        button = payload.get('button')
+        value = (payload.get('values') or {}).get('v', '')
+        if button == 'save' and value:
+            _fw_secret_set(pid, key, value)
+            _toast('Сохранено')
+        elif button == 'clear':
+            _fw_secret_set(pid, key, None)
+            _toast('Удалено')
+    cb = _register_cb(entry, done)
+    _moka_native('dialog_show', json.dumps({
+        'pid': pid, 'title': str(title)[:120], 'message': 'Значение хранится зашифрованно и в файл настроек не попадает.',
+        'fields': [{'type': 'password', 'key': 'v', 'text': str(title)[:60], 'default': ''}],
+        'buttons': [{'id': 'save', 'text': 'Сохранить', 'style': 'primary'}, {'id': 'clear', 'text': 'Удалить', 'style': 'red'},
+                    {'id': 'no', 'text': 'Отмена', 'style': 'cancel'}],
+        'cb': cb, 'close_cb': ''}, ensure_ascii=False))

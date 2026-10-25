@@ -76,6 +76,7 @@ m: id, peer, peer_title, peer_kind (user|bot|group|channel), from, text, entitie
 ## Платформа
 `api.db.get/set/delete/keys(prefix)` и `api.db.on_change(prefix, fn(key, value, old, plugin_id))`: общая база плагинов (JSON, до 4 МБ, право `storage`).
 `api.secrets.get/set/delete(name)`: секреты плагина в хранилище ОС (`secret-tool`), без него в зашифрованном файле.
+Секретное поле в настройках: `Password(key='token', text='API токен')` рядом с `Switch`/`Input`. Значение вводится в окне с маской, хранится как секрет, в файл настроек не попадает; читать `self.get_secret('token')`. Такое же поле `{'type': 'password'}` есть у `show_dialog`.
 `api.get_plugin(id)` и `__dependencies__ = ['id']`: зависимые плагины грузятся позже тех, от кого зависят; без них плагин не запустится.
 `api.http.get/post/request/download(url, ...)` (право `network`): только http и https, внутренние адреса закрыты, ответ до 20 МБ, 30 запросов в минуту.
 С `callback(response, error)` или `await api.http.get(url)` в async-команде. `response`: `status`, `headers`, `content`, `text`, `json()`.

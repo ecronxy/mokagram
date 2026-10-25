@@ -23,6 +23,7 @@
 #include "ui/vertical_list.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/fields/password_input.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "styles/style_boxes.h"
@@ -638,6 +639,28 @@ std::string DialogShow(const QJsonObject &args) {
 							rpl::single(text),
 							TextWithTags{ def.toString() }),
 						st::boxPadding);
+					getters->push_back({ key, [=] {
+						return QJsonValue(input->getLastText());
+					} });
+				} else if (type == u"password"_q) {
+					// PasswordInput не RpWidget: кладём его в контейнер фиксированной высоты.
+					const auto holder = content->add(
+						object_ptr<Ui::FixedHeightWidget>(
+							content,
+							st::defaultInputField.heightMin),
+						st::boxPadding);
+					const auto input = Ui::CreateChild<Ui::PasswordInput>(
+						holder,
+						st::defaultInputField,
+						rpl::single(text),
+						def.toString());
+					holder->widthValue(
+					) | rpl::on_next([=](int width) {
+						input->setGeometry(0, 0, width, holder->height());
+					}, holder->lifetime());
+					box->setFocusCallback([=] {
+						input->setFocus();
+					});
 					getters->push_back({ key, [=] {
 						return QJsonValue(input->getLastText());
 					} });

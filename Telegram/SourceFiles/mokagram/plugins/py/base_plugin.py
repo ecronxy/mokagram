@@ -101,6 +101,16 @@ class BasePlugin:
                     return text
         return key
 
+    def get_secret(self, key: str):
+        """Секрет плагина (поле Password или api.secrets.set) или None."""
+        import sys
+        api = sys.modules['mokagram_sdk.api']
+        return api.secrets.get(key)
+
+    def set_secret(self, key: str, value) -> bool:
+        import sys
+        return sys.modules['mokagram_sdk.api'].secrets.set(key, value)
+
     @property
     def logger(self):
         return _Logger(getattr(self, '_moka_id', 'plugin'))
@@ -226,6 +236,16 @@ class Input:
     subtext: Optional[str] = None
     icon: Optional[str] = None
     on_change: Optional[Callable[[Any], None]] = None
+
+
+@dataclass
+class Password:
+    """Секретное поле в настройках: значение вводится в окне с маской и хранится зашифрованно,
+    в файл настроек не попадает. Читать: self.get_secret(key)."""
+    key: str = ""
+    text: str = ""
+    subtext: Optional[str] = None
+    icon: Optional[str] = None
 
 
 EditText = Input

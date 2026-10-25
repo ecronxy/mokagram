@@ -838,6 +838,17 @@ def _register_settings(entry):
                 'pid': entry['id'], 'cb': _register_cb(entry, lambda p, f=click: f(None)),
             })
             continue
+        if cls == 'Password' and isinstance(key, str) and key and buttons < 30:
+            buttons += 1
+            out.append({
+                'key': 'plugin.%s.__secret_%s' % (entry['id'], key[:40]), 'section': section,
+                'title': str(getattr(it, 'text', '') or key)[:120],
+                'description': str(getattr(it, 'subtext', '') or 'Хранится зашифрованно')[:200],
+                'icon': str(getattr(it, 'icon', '') or ''),
+                'kind': 'button', 'default': '',
+                'pid': entry['id'], 'cb': _register_cb(entry, lambda p, k=key, t=str(getattr(it, 'text', '') or key): _fw_password_dialog(entry, k, t)),
+            })
+            continue
         if cls not in ('Switch', 'Selector', 'Input', 'EditText') or not isinstance(key, str) or not key or len(key) > 64:
             continue
         item = {
