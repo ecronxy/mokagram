@@ -2,6 +2,9 @@
 #include "mokagram/msginfo/mokagram_message_info.h"
 
 #include "base/unixtime.h"
+#include "base/weak_ptr.h"
+#include "data/data_session.h"
+#include "main/main_session.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
 #include "data/data_media_types.h"
@@ -144,6 +147,9 @@ struct Row {
 				const auto view = document->createMediaView();
 				if (view->loaded()) {
 					bytes = view->bytes();
+				} else {
+					// Голосовое ещё не скачано: качаем, окно откроется заново.
+					document->save(item->fullId(), QString());
 				}
 				if (bytes.isEmpty()) {
 					const auto path = document->filepath(true);
@@ -154,7 +160,7 @@ struct Row {
 				}
 				const auto hint = VoiceHint(bytes);
 				add(U("Голосовое (по заголовку файла)"), hint.isEmpty()
-					? U("скачай голосовое и открой снова")
+					? U("Скачиваю голосовое, окно обновится само...")
 					: hint);
 			}
 		} else if (const auto photo = media->photo()) {
@@ -173,6 +179,33 @@ void Show(
 		not_null<Window::SessionController*> controller,
 		not_null<HistoryItem*> item) {
 	const auto rows = Collect(item);
+	// Для нескачанного голосового ждём файл и показываем окно ещё раз.
+	static rpl::lifetime pending;
+	pending.destroy();
+	if (const auto media = item->media()) {
+		if (const auto document = media->document()) {
+			if (document->isVoiceMessage()) {
+				const auto view = document->createMediaView();
+				if (!view->loaded()) {
+					const auto weak = base::make_weak(controller.get());
+					const auto id = item->fullId();
+					document->session().downloaderTaskFinished(
+					) | rpl::filter([=] {
+						return view->loaded(true);
+					}) | rpl::take(1) | rpl::on_next([=] {
+						const auto strong = weak.get();
+						if (!strong) {
+							return;
+						}
+						if (const auto again = strong->session().data().message(id)) {
+							strong->hideLayer();
+							Show(strong, again);
+						}
+					}, pending);
+				}
+			}
+		}
+	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();

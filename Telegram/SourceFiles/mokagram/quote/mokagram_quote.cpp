@@ -545,6 +545,30 @@ struct Composed {
 	}
 	const auto at = QPointF(card.x() + innerPad, card.y() + innerPad + dotsH);
 	p.drawImage(QRectF(at, QSizeF(content.size())), content);
+	// Водяной знак: подпись в нижнем поле, справа. Выключается в настройках.
+	if (S::Bool(u"quote.watermark"_q) && (hasCard || fullPad > 0)) {
+		auto font = st::normalFont->f;
+		font.setPixelSize(int(11 * dpr));
+		font.setWeight(QFont::DemiBold);
+		p.setFont(font);
+		auto color = hasCard
+			? ((cardMode == 0) ? QColor(255, 255, 255) : QColor(0, 0, 0))
+			: QColor(255, 255, 255);
+		color.setAlphaF(hasCard ? 0.38 : 0.6);
+		p.setPen(color);
+		const auto mark = hasCard
+			? QRectF(
+				card.x() + innerPad,
+				card.y() + card.height() - innerPad,
+				card.width() - 2 * innerPad,
+				innerPad)
+			: QRectF(
+				fullPad,
+				all.height() - fullPad,
+				all.width() - 2 * fullPad,
+				fullPad);
+		p.drawText(mark, Qt::AlignRight | Qt::AlignVCenter, QString::fromUtf8("mokaGram"));
+	}
 	p.end();
 	result.setDevicePixelRatio(1.);
 	return { result, QRectF(at, QSizeF(content.size())) };
@@ -756,6 +780,12 @@ void RegisterSettings() {
 		.defaultValue = 20,
 		.minValue = 0,
 		.maxValue = 120,
+	});
+	add({
+		.key = u"quote.watermark"_q,
+		.title = U("Подпись mokaGram на скриншоте"),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
 	});
 	add({
 		.key = u"quote.shadow"_q,
@@ -1166,6 +1196,13 @@ void ShowQuoteBoxNow(
 			S::SetBool(u"quote.shadow"_q, on);
 			refresh();
 		}, shadow->lifetime());
+		const auto watermark = layout->add(
+			object_ptr<Ui::Checkbox>(layout, U("Подпись mokaGram"), S::Bool(u"quote.watermark"_q), st::defaultCheckbox),
+			QMargins(24, 2, 24, 8));
+		watermark->checkedChanges() | rpl::on_next([=](bool on) {
+			S::SetBool(u"quote.watermark"_q, on);
+			refresh();
+		}, watermark->lifetime());
 		*onUpdate = crl::guard(box, refresh);
 		preview->widthValue() | rpl::on_next([=](int) {
 			refresh();
