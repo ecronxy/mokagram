@@ -1706,7 +1706,7 @@ void CustomizeBox(
 						}));
 					});
 			},
-			QString::fromUtf8("📥"));
+			QString::fromUtf8("🔽"));
 		AddActionRow(
 			actions,
 			U("Вернуть всё как было"),
