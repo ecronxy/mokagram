@@ -39,6 +39,11 @@ void ShowSettingsPage(
 	const QString &page);
 void StartDebugCommands();
 
+// Открывает «Кастомизацию» сразу с поиском по тексту (например, по названию плагина).
+void ShowCustomizeSearch(
+	Window::SessionController *controller,
+	const QString &query);
+
 // Значок плагина из набора iOSTelegram по обычному эмодзи. false: набора пока нет, рисуйте запасной.
 bool PaintPackIcon(
 	QPainter &p,

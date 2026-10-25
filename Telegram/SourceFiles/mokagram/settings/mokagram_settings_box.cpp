@@ -98,6 +98,8 @@
 namespace Mokagram::Settings {
 namespace {
 
+QString PendingQuery;
+
 constexpr auto kPad = 16;
 constexpr auto kPlate = 30;
 constexpr auto kTextLeft = kPad + kPlate + 12;
@@ -977,10 +979,14 @@ void ShowColorBox(const QString &title, const QString &key) {
 
 	const auto key = entry.key;
 	const auto kind = entry.kind;
-	const auto iconName = entry.icon.isEmpty()
+	// «alt:эмодзи» у плагинов: значок самого плагина из набора.
+	const auto altIcon = entry.icon.startsWith(u"alt:"_q);
+	const auto iconName = (entry.icon.isEmpty() || altIcon)
 		? entry.sectionIcon
 		: entry.icon;
-	const auto autoAlt = entry.icon.isEmpty() ? AutoAlt(entry.key) : QString();
+	const auto autoAlt = altIcon
+		? entry.icon.mid(4)
+		: entry.icon.isEmpty() ? AutoAlt(entry.key) : QString();
 	const auto &icon = IconByName(iconName);
 	auto description = entry.description;
 	if (const auto dot = description.indexOf(QStringLiteral(". ")); dot > 0) {
@@ -2046,6 +2052,19 @@ void CustomizeBox(
 		applyFilter();
 	});
 
+	if (!PendingQuery.isEmpty()) {
+		const auto query = base::take(PendingQuery);
+		*searching = true;
+		headerTitle->hide();
+		pill->show();
+		field->show();
+		field->raise();
+		chipsWrap->toggle(false, anim::type::instant);
+		field->setText(query);
+		field->finishAnimating();
+		applyFilter();
+	}
+
 	// Плавное появление окна: закрывающая плёнка постепенно тает.
 	const auto cover = Ui::CreateChild<Ui::RpWidget>(box.get());
 	MakeTransparent(cover);
@@ -2070,6 +2089,13 @@ void CustomizeBox(
 			cover->hide();
 		}
 	}, 1., 0., 380, anim::easeOutCubic);
+}
+
+void ShowCustomizeSearch(
+		Window::SessionController *controller,
+		const QString &query) {
+	PendingQuery = query;
+	ShowSettingsPage(controller, u"look"_q);
 }
 
 void ShowCustomizeBox(Window::SessionController *controller) {

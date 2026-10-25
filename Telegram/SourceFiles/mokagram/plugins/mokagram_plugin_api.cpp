@@ -396,6 +396,7 @@ std::string RegisterSettings(const QJsonObject &args) {
 			entry.section = item.value("section").toString();
 			entry.title = item.value("title").toString();
 			entry.description = item.value("description").toString();
+			entry.icon = item.value("icon").toString();
 			entry.defaultValue = item.value("default");
 			const auto kind = item.value("kind").toString();
 			if (kind == "bool") {

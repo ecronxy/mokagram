@@ -68,6 +68,9 @@ bool CallMessageFilter(const std::string &messageJson, LogFn log);
 std::string CallTextHook(const std::string &messageJson, LogFn log);
 
 // Бэкап из Избранного: проверяет архив, спрашивает подтверждение, готовит восстановление.
+// Окно «Создать плагин»: плагин без кода по шаблону.
+void OpenPluginBuilder(LogFn log);
+
 void RestoreBackupFile(const std::string &path, LogFn log);
 
 // Бейдж в пузыре: JSON сообщения -> короткая строка или пустая.

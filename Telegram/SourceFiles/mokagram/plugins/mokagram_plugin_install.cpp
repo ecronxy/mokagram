@@ -1,5 +1,6 @@
 // Mokagram: окно установки плагина при клике на файл .plugin в чате.
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "base/call_delayed.h"
 
@@ -943,6 +944,35 @@ Card AddPluginCard(
 	const auto text = description.isEmpty()
 		? nullptr
 		: Ui::CreateChild<Ui::FlatLabel>(panel, description, st::boxLabel);
+	// Подробное описание раскрывается под ссылкой «Подробнее».
+	const auto details = entry.value("details").toString();
+	const auto more = details.isEmpty()
+		? nullptr
+		: Ui::CreateChild<Ui::LinkButton>(
+			panel,
+			U(Mokagram::Lang::Tr("Подробнее")));
+	const auto moreText = std::make_shared<QPointer<Ui::FlatLabel>>();
+	const auto expanded = std::make_shared<bool>(false);
+	const auto relayout = std::make_shared<Fn<void()>>();
+	if (more) {
+		more->setClickedCallback([=] {
+			*expanded = !*expanded;
+			if (*expanded) {
+				*moreText = Ui::CreateChild<Ui::FlatLabel>(
+					panel,
+					details,
+					st::boxLabel);
+				(*moreText)->show();
+			} else if (*moreText) {
+				(*moreText)->deleteLater();
+				*moreText = nullptr;
+			}
+			more->setText(*expanded
+				? U(Mokagram::Lang::Tr("Свернуть"))
+				: U(Mokagram::Lang::Tr("Подробнее")));
+			(*relayout)();
+		});
+	}
 
 	const auto path = QString::fromStdString(PluginsDir())
 		+ '/' + fileName;
@@ -964,6 +994,12 @@ Card AddPluginCard(
 			SetPinned(id.toStdString(), !pinned);
 			refresh();
 		});
+	Ui::AbstractButton *gear = nullptr;
+	if (entry.value("has_settings").toBool()) {
+		gear = MakeIconButton(panel, st::menuIconSettings, [=] {
+			Settings::ShowCustomizeSearch(controller, name);
+		});
+	}
 	const auto trash = MakeIconButton(
 		panel,
 		st::menuIconDeleteAttention,
@@ -983,7 +1019,8 @@ Card AddPluginCard(
 			st::lineWidth,
 			line);
 	});
-	panel->widthValue() | rpl::on_next([=](int width) {
+	*relayout = [=] {
+		const auto width = panel->width();
 		const auto textLeft = kCardPad + kAvatar + 12;
 		avatar->move(kCardPad, kCardPad);
 		toggle->move(
@@ -1000,13 +1037,28 @@ Card AddPluginCard(
 			text->move(kCardPad, bottom + 12);
 			bottom += 12 + text->height();
 		}
+		if (more) {
+			more->move(kCardPad, bottom + 4);
+			bottom += 4 + more->height();
+			if (*expanded && *moreText) {
+				(*moreText)->resizeToWidth(width - 2 * kCardPad);
+				(*moreText)->move(kCardPad, bottom + 6);
+				bottom += 6 + (*moreText)->height();
+			}
+		}
 		bottom += 10;
 		const auto y = bottom + 2;
 		share->move(kCardPad - 8, y);
 		open->move(kCardPad - 8 + share->width(), y);
 		pin->move(kCardPad - 8 + 2 * share->width(), y);
+		if (gear) {
+			gear->move(kCardPad - 8 + 3 * share->width(), y);
+		}
 		trash->move(width - kCardPad + 8 - trash->width(), y);
 		panel->resize(width, y + trash->height() + 4);
+	};
+	panel->widthValue() | rpl::on_next([=](int) {
+		(*relayout)();
 	}, panel->lifetime());
 	return { wrap, (name + ' ' + description + ' ' + author).toLower() };
 }
@@ -1220,6 +1272,9 @@ void PluginsBox(
 			st::popupMenuWithIcons);
 		(*menu)->addAction(U(Mokagram::Lang::Tr("Добавить плагин")), pickPlugin, &st::menuIconAdd);
 		(*menu)->addAction(U(Mokagram::Lang::Tr("Магазин плагинов")), openStore, &st::menuIconShop);
+		(*menu)->addAction(U(Mokagram::Lang::Tr("Создать плагин")), [=] {
+			OpenPluginBuilder(log);
+		}, &st::menuIconEdit);
 		(*menu)->popup(QCursor::pos());
 	});
 	Ui::AddSkip(content, 14);

@@ -719,6 +719,7 @@ def _moka_list():
             'enabled': e['id'] not in _disabled,
             'pinned': e['id'] in _pinned,
             'name': m.get('__name__', e['id']), 'description': m.get('__description__', ''),
+            'details': str(m.get('__details__', ''))[:4000], 'has_settings': bool(e.get('settings')),
             'author': m.get('__author__', ''), 'version': m.get('__version__', ''),
             'icon': m.get('__icon__', ''), 'permissions': m.get('__permissions__', []),
         })
@@ -856,6 +857,13 @@ def _register_settings(entry):
             'title': str(getattr(it, 'text', '') or key)[:120],
             'description': str(getattr(it, 'subtext', '') or '')[:200],
         }
+        # без своего значка у строки значок самого плагина (эмодзи из его __icon__)
+        own_icon = str(getattr(it, 'icon', '') or '')
+        plugin_icon = str(entry['meta'].get('__icon__', '') or '')
+        if own_icon:
+            item['icon'] = own_icon
+        elif plugin_icon and '/' not in plugin_icon:
+            item['icon'] = 'alt:' + plugin_icon[:8]
         if cls == 'Switch':
             item['kind'] = 'bool'
             item['default'] = bool(it.default)
