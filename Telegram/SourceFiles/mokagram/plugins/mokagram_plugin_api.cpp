@@ -1460,12 +1460,21 @@ std::map<FullMsgId, bool> FilterCache;
 std::atomic<int> TextHookCount = 0;
 std::set<std::string> TextHookPlugins;
 
+std::atomic<int> BadgeHookCount = 0;
+std::set<std::string> BadgeHookPlugins;
+std::map<FullMsgId, std::pair<TimeId, QString>> BadgeCache;
+
 std::string FilterSubscribe(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto pid = args.value("pid").toString().toStdString();
 		const auto on = args.value("on").toBool();
-		const auto text = (args.value("kind").toString() == u"text"_q);
-		auto &set = text ? TextHookPlugins : FilterPlugins;
+		const auto kind = args.value("kind").toString();
+		const auto text = (kind == u"text"_q);
+		auto &set = (kind == u"badge"_q)
+			? BadgeHookPlugins
+			: text
+			? TextHookPlugins
+			: FilterPlugins;
 		if (on) {
 			set.insert(pid);
 		} else {
@@ -1473,7 +1482,9 @@ std::string FilterSubscribe(const QJsonObject &args) {
 		}
 		FilterCount = int(FilterPlugins.size());
 		TextHookCount = int(TextHookPlugins.size());
+		BadgeHookCount = int(BadgeHookPlugins.size());
 		FilterCache.clear();
+		BadgeCache.clear();
 		return Reply(true);
 	});
 }
@@ -1501,6 +1512,10 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		FilterSubscribe(QJsonObject{
 			{ "pid", args.value("pid") },
 			{ "kind", "text" },
+			{ "on", false } });
+		FilterSubscribe(QJsonObject{
+			{ "pid", args.value("pid") },
+			{ "kind", "badge" },
 			{ "on", false } });
 		return PluginUnloaded(args);
 	} else if (op == "filter_subscribe") {
@@ -1674,6 +1689,26 @@ void TransformMessageText(
 			EntitiesFromJson(object.value("entities").toArray(), changed.size()),
 		};
 	}
+}
+
+QString MessageBadge(not_null<const HistoryItem*> item) {
+	if (BadgeHookCount.load(std::memory_order_relaxed) <= 0
+		|| !IsMainThread()) {
+		return QString();
+	}
+	const auto id = item->fullId();
+	const auto edited = TimeId(qHash(item->originalText().text) & 0x7fffffff);
+	const auto i = BadgeCache.find(id);
+	if (i != BadgeCache.end() && i->second.first == edited) {
+		return i->second.second;
+	}
+	if (BadgeCache.size() > 5000) {
+		BadgeCache.clear();
+	}
+	const auto answer = CallBadgeHook(Json(ItemBrief(item)), PluginLog);
+	const auto result = QString::fromStdString(answer).left(40);
+	BadgeCache[id] = { edited, result };
+	return result;
 }
 
 bool HiddenByPlugin(not_null<const HistoryItem*> item) {

@@ -67,6 +67,9 @@ bool CallMessageFilter(const std::string &messageJson, LogFn log);
 // Замена текста плагинами: JSON сообщения -> пустая строка (без изменений) или "T"+новый текст.
 std::string CallTextHook(const std::string &messageJson, LogFn log);
 
+// Бейдж в пузыре: JSON сообщения -> короткая строка или пустая.
+std::string CallBadgeHook(const std::string &messageJson, LogFn log);
+
 // Колбэк плагина по токену (диалог, тост с кнопкой, кнопка интерфейса). payloadJson уходит в колбэк как dict.
 bool Invoke(
 	const std::string &pid,

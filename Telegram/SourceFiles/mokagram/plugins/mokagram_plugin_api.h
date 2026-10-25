@@ -32,4 +32,7 @@ void EmitChatOpened(PeerData *peer);
 // Кто-то в чате набирает текст, записывает голосовое и т.п.
 void EmitTyping(PeerData *peer, UserData *user, mtpTypeId type);
 
+// Короткий бейдж плагина в подвале пузыря рядом со временем (message_badge_hook). Пусто, если нет.
+[[nodiscard]] QString MessageBadge(not_null<const HistoryItem*> item);
+
 } // namespace Mokagram::Plugins

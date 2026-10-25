@@ -508,6 +508,16 @@ std::string CallTextHook(const std::string &messageJson, LogFn log) {
 	return result;
 }
 
+std::string CallBadgeHook(const std::string &messageJson, LogFn log) {
+	if (!_started) {
+		return {};
+	}
+	const auto gil = Gil();
+	auto result = CallStr("_moka_badge_hook", { messageJson });
+	Drain(log);
+	return result;
+}
+
 bool Invoke(
 		const std::string &pid,
 		const std::string &token,

@@ -66,6 +66,11 @@ class BasePlugin:
     # Копирование и поиск увидят уже новый текст. Нужно право messages.read.
     def message_text_hook(self, message: dict) -> Any: return None
 
+    # короткая подпись (до 40 знаков) в подвале пузыря рядом со временем: верните строку или None.
+    # message: {id, peer, text, entities, buttons, out, date, has_media}. Зовётся один раз на сообщение (результат кэшируется
+    # до правки сообщения), бюджет 50 мс. Нужно право messages.read.
+    def message_badge_hook(self, message: dict) -> Optional[str]: return None
+
     # события клиента (нужно право messages.read): message это dict
     # {id, peer, peer_title, from, text, entities, out, date, has_media, reply_to}
     def on_new_message(self, message: dict) -> None: ...

@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/plugins/mokagram_plugin_api.h"
 #include "history/view/history_view_bottom_info.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -697,6 +698,13 @@ BottomInfo::Data BottomInfoDataFromMessage(not_null<Message*> message) {
 				result.author = msgsigned->author;
 			}
 		}
+	}
+	// Бейдж плагина встаёт перед подписью автора, рядом со временем.
+	if (const auto badge = Mokagram::Plugins::MessageBadge(item);
+		!badge.isEmpty()) {
+		result.author = result.author.isEmpty()
+			? badge
+			: (badge + u" \u00b7 "_q + result.author);
 	}
 	if (Mokagram::History::IsGhost(item)) {
 		result.flags |= Flag::Deleted;
