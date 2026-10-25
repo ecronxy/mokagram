@@ -1,10 +1,18 @@
 #include "mokagram/quote/mokagram_quote.h"
 
+#include "base/call_delayed.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/history_item_components.h"
+#include "history/view/history_view_element.h"
+#include "dialogs/ui/dialogs_video_userpic.h"
+#include "ui/chat/chat_theme.h"
+#include "ui/effects/path_shift_gradient.h"
+#include "ui/style/style_core_scale.h"
+#include "data/data_forum.h"
 #include "main/main_session.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/layers/generic_box.h"
@@ -18,6 +26,7 @@
 #include "ui/empty_userpic.h"
 #include "window/window_session_controller.h"
 #include "styles/style_boxes.h"
+#include "styles/style_chat.h"
 #include "styles/style_layers.h"
 #include "styles/style_widgets.h"
 
@@ -716,24 +725,201 @@ void RegisterSettings() {
 	});
 }
 
+
+// Идея и схема отрисовки (отдельные Element со своим делегатом, рендер вне
+// окна) взяты из функции Message Shot в AyuGram Desktop (GPL, Radolyn).
+class ShotDelegate final : public HistoryView::DefaultElementDelegate {
+public:
+	ShotDelegate(not_null<const Ui::ChatStyle*> st, not_null<History*> history)
+	: _pathGradient(HistoryView::MakePathShiftGradient(st, [] {}))
+	, _history(history) {
+	}
+
+	bool elementAnimationsPaused() override {
+		return true;
+	}
+	not_null<Ui::PathShiftGradient*> elementPathShiftGradient() override {
+		return _pathGradient.get();
+	}
+	HistoryView::Context elementContext() override {
+		return HistoryView::Context::AdminLog;
+	}
+	bool elementHideReply(not_null<const HistoryView::Element*> view) override {
+		if (const auto reply = view->data()->Get<HistoryMessageReply>()) {
+			const auto replyToPeerId = reply->externalPeerId()
+				? reply->externalPeerId()
+				: _history->peer->id;
+			if (reply->fields().manualQuote) {
+				return false;
+			} else if (replyToPeerId == _history->peer->id) {
+				return _history->asForum()
+					&& _history->asForum()->topicFor(reply->messageId());
+			}
+		}
+		return false;
+	}
+	HistoryView::ElementChatMode elementChatMode() override {
+		return HistoryView::ElementChatMode::Wide;
+	}
+
+private:
+	const std::unique_ptr<Ui::PathShiftGradient> _pathGradient;
+	const not_null<History*> _history;
+
+};
+
+struct Shot {
+	not_null<Window::SessionController*> controller;
+	std::vector<not_null<HistoryItem*>> items;
+	std::unique_ptr<ShotDelegate> delegate;
+	std::vector<std::unique_ptr<HistoryView::Element>> views;
+};
+
+// На время снимка поднимаем style::DevicePixelRatio: эмодзи, углы и
+// аватарки строятся сразу в большом разрешении. Создание Element тоже
+// должно идти под этим же значением.
+struct RatioScope {
+	explicit RatioScope(int ratio) : old(style::DevicePixelRatio()) {
+		style::SetDevicePixelRatio(std::max(ratio, old));
+	}
+	~RatioScope() {
+		style::SetDevicePixelRatio(old);
+	}
+	int old = 1;
+};
+
+[[nodiscard]] std::shared_ptr<Shot> MakeShot(
+		not_null<Window::SessionController*> controller,
+		const std::vector<FullMsgId> &ids) {
+	auto items = std::vector<not_null<HistoryItem*>>();
+	for (const auto &id : ids) {
+		if (const auto item = controller->session().data().message(id)) {
+			items.push_back(item);
+		}
+	}
+	std::sort(items.begin(), items.end(), [](auto a, auto b) {
+		return a->date() < b->date()
+			|| (a->date() == b->date() && a->id < b->id);
+	});
+	if (items.empty()) {
+		return nullptr;
+	}
+	auto result = std::make_shared<Shot>(Shot{ controller, items });
+	result->delegate = std::make_unique<ShotDelegate>(
+		controller->chatStyle(),
+		items.front()->history());
+	for (const auto item : items) {
+		result->views.push_back(item->createView(result->delegate.get()));
+	}
+	const auto &v = result->views;
+	for (auto i = 1; i < int(v.size()); ++i) {
+		const auto prev = v[i - 1].get();
+		const auto next = v[i].get();
+		if (next->isHidden()) {
+			next->setDisplayDate(false);
+			continue;
+		}
+		next->setDisplayDate(
+			next->dateTime().date() != prev->dateTime().date());
+		const auto attached = next->computeIsAttachToPrevious(prev);
+		next->setAttachToPrevious(attached, prev);
+		prev->setAttachToNext(attached, next);
+	}
+	v.front()->setAttachToPrevious(false);
+	v.back()->setAttachToNext(false);
+	return result;
+}
+
+// Рисуем с поднятым style::DevicePixelRatio: эмодзи, углы и аватарки
+// строятся сразу в большом разрешении.
+[[nodiscard]] QImage RenderShot(Shot &shot, int ratio) {
+	// style::DevicePixelRatio не трогаем: размеры эмодзи в Telegram жёстко
+	// привязаны к нему. Чёткость даёт масштаб самой картинки.
+	const auto dpr = double(std::max(ratio, style::DevicePixelRatio()));
+
+	const auto width = st::msgMaxWidth + st::boxPadding.left() + st::boxPadding.right();
+	auto height = 0;
+	for (const auto &view : shot.views) {
+		view->itemDataChanged();
+		height += view->resizeGetHeight(width);
+	}
+	auto image = QImage(QSize(int(width * dpr), int(height * dpr)), QImage::Format_ARGB32_Premultiplied);
+	image.setDevicePixelRatio(dpr);
+	image.fill(Qt::transparent);
+	Painter p(&image);
+	p.setRenderHint(QPainter::Antialiasing);
+	p.setRenderHint(QPainter::SmoothPixmapTransform);
+	p.setRenderHint(QPainter::TextAntialiasing);
+	const auto st = shot.controller->chatStyle();
+	const auto viewport = QRect(0, 0, width, height);
+	base::flat_map<not_null<PeerData*>, Ui::PeerUserpicView> userpics;
+	auto y = 0;
+	for (auto i = 0; i != int(shot.items.size()); ++i) {
+		const auto item = shot.items[i];
+		const auto &view = shot.views[i];
+		const auto rect = QRect(0, 0, width, view->height());
+		auto context = shot.controller->defaultChatTheme()->preparePaintContext(
+			st,
+			viewport,
+			rect,
+			rect,
+			true);
+		p.translate(0, y);
+		view->draw(p, context);
+		p.translate(0, -y);
+		if (view->displayFromPhoto() || item->isPost()) {
+			if (const auto from = item->displayFrom()) {
+				const auto size = st::msgPhotoSize;
+				const auto x = st::msgMargin.left();
+				const auto ay = y + view->height() - size;
+				auto &userpic = userpics[from];
+				const auto cloud = from->userpicCloudImage(userpic);
+				if (cloud && !cloud->isNull()) {
+					// Исходная картинка аватарки, а не кеш размером с экран.
+					auto path = QPainterPath();
+					path.addEllipse(QRectF(x, ay, size, size));
+					p.setClipPath(path);
+					p.drawImage(QRectF(x, ay, size, size), *cloud);
+					p.setClipping(false);
+				} else {
+					Dialogs::Ui::PaintUserpic(
+						p, from, nullptr, userpic, x, ay, width, size, true);
+				}
+			}
+		}
+		y += view->height();
+	}
+	p.end();
+	return image;
+}
+
 void ShowQuoteBox(
 		not_null<Window::SessionController*> controller,
-		std::vector<QImage> rows,
 		std::vector<FullMsgId> ids) {
-	auto content = std::make_shared<QImage>(StackRows(rows));
+	const auto ratio = 2 + std::clamp(S::Int(u"quote.quality"_q), 0, 2);
+	const auto shot = MakeShot(controller, ids);
+	if (!shot) {
+		return;
+	}
+	auto content = std::make_shared<QImage>(StackRows({ RenderShot(*shot, ratio) }));
 	if (content->isNull()) {
-		// Сообщений нет на экране: рисуем текстовую версию.
-		const auto lines = Collect(controller, ids);
-		if (lines.empty()) {
-			return;
-		}
-		auto options = CurrentOptions();
-		options.transparent = true;
-		options.dark = (S::Int(u"quote.theme"_q) != 1);
-		*content = StackRows({ Render(lines, options) });
-		if (content->isNull()) {
-			return;
-		}
+		return;
+	}
+	const auto onUpdate = std::make_shared<Fn<void()>>();
+	// Эмодзи и медиа подгружаются не сразу: через пару секунд перерисовываем.
+	for (const auto delay : { 700, 2000 }) {
+		base::call_delayed(delay, controller, [=] {
+			auto fresh = StackRows({ RenderShot(*shot, ratio) });
+			if (!fresh.isNull()) {
+				*content = std::move(fresh);
+				if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
+					content->save(u"/tmp/moka_quote_content.png"_q, "PNG");
+				}
+				if (*onUpdate) {
+					(*onUpdate)();
+				}
+			}
+		});
 	}
 	if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
 		content->save(u"/tmp/moka_quote_content.png"_q, "PNG");
@@ -853,6 +1039,7 @@ void ShowQuoteBox(
 			S::SetBool(u"quote.shadow"_q, on);
 			refresh();
 		}, shadow->lifetime());
+		*onUpdate = crl::guard(box, refresh);
 		preview->widthValue() | rpl::on_next([=](int) {
 			refresh();
 		}, preview->lifetime());

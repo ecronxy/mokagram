@@ -110,7 +110,6 @@ class HistoryInner
 	: public Ui::RpWidget
 	, public Ui::AbstractTooltipShower {
 public:
-	void mokaScreenshot(std::vector<FullMsgId> ids);
 	using Element = HistoryView::Element;
 
 	HistoryInner(

@@ -2084,19 +2084,13 @@ void StartDebugCommands() {
 				Effects::PlayDelete(widget, inner, QRect(0, top, inner->width(), 100), true);
 			}
 		} else if (cmd == u"quote"_q) {
-			HistoryInner *inner = nullptr;
-			for (const auto child : controller->widget()->findChildren<QWidget*>()) {
-				if (const auto cast = dynamic_cast<HistoryInner*>(child)) inner = cast;
-			}
-			if (inner) {
-				if (const auto history = controller->activeChatCurrent().history()) {
-					if (const auto last = history->lastMessage()) {
-						auto ids = std::vector<FullMsgId>();
-						for (auto i = 0; i != 4; ++i) {
-							ids.push_back(FullMsgId(history->peer->id, last->id - i));
-						}
-						inner->mokaScreenshot(std::move(ids));
+			if (const auto history = controller->activeChatCurrent().history()) {
+				if (const auto last = history->lastMessage()) {
+					auto ids = std::vector<FullMsgId>();
+					for (auto i = 0; i != 3; ++i) {
+						ids.push_back(FullMsgId(history->peer->id, last->id - i));
 					}
+					Quote::ShowQuoteBox(controller, std::move(ids));
 				}
 			}
 		} else if (cmd.startsWith(u"mdrag:"_q)) {
