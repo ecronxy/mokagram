@@ -58,6 +58,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_dialogs.h"
 #include "styles/style_widgets.h"
 
+#include <QtGui/QLinearGradient>
 #include <QtWidgets/QApplication>
 
 namespace ChatHelpers {
@@ -375,7 +376,33 @@ void FieldAutocomplete::paintEvent(QPaintEvent *e) {
 		return;
 	}
 
-	p.fillRect(rect(), _st.bg);
+	if (_type != Type::BotCommands) {
+		p.fillRect(rect(), _st.bg);
+		return;
+	}
+
+	auto hq = PainterHighQualityEnabler(p);
+	const auto panel = QRectF(rect()).adjusted(
+		st::commandMenuMargin.left(),
+		st::commandMenuMargin.top(),
+		-st::commandMenuMargin.right(),
+		-st::commandMenuMargin.bottom());
+	const auto radius = st::commandMenuRadius;
+	auto surface = QLinearGradient(panel.topLeft(), panel.bottomRight());
+	surface.setColorAt(0., _st.bg->c.lighter(108));
+	surface.setColorAt(1., _st.bg->c);
+	p.setPen(Qt::NoPen);
+	p.setBrush(surface);
+	p.drawRoundedRect(panel, radius, radius);
+	auto edge = st::windowFg->c;
+	edge.setAlphaF(0.10);
+	p.setPen(QPen(edge, st::lineWidth));
+	p.setBrush(Qt::NoBrush);
+	const auto halfStroke = st::lineWidth / 2.;
+	p.drawRoundedRect(
+		panel.adjusted(halfStroke, halfStroke, -halfStroke, -halfStroke),
+		radius,
+		radius);
 }
 
 void FieldAutocomplete::showFiltered(
@@ -902,6 +929,13 @@ void FieldAutocomplete::setBoundings(QRect boundings) {
 void FieldAutocomplete::recount(bool resetScroll) {
 	const auto oldScrollTop = _scroll->scrollTop();
 	const auto maxHeight = int(4.5 * st::mentionHeight);
+	const auto commands = (_type == Type::BotCommands);
+	const auto insetX = commands ? st::commandMenuPadding.left() : 0;
+	const auto insetY = commands ? st::commandMenuPadding.top() : 0;
+	const auto panelWidth = commands
+		? std::min(_boundings.width(), st::commandMenuWidthMax)
+		: _boundings.width();
+	const auto innerWidth = std::max(panelWidth - 2 * insetX, 0);
 	auto height = 0;
 	if (!_srows.empty()) {
 		const auto stickersPerRow = std::max(
@@ -919,18 +953,30 @@ void FieldAutocomplete::recount(bool resetScroll) {
 	}
 	height += _st.autocompleteBottomSkip;
 
-	if (_inner->width() != _boundings.width()
+	if (_inner->width() != innerWidth
 		|| _inner->height() != height) {
-		_inner->resize(_boundings.width(), height);
+		_inner->resize(innerWidth, height);
 	}
-	height = std::min({ height, _boundings.height(), maxHeight });
+	height = std::min({
+		height + 2 * insetY,
+		_boundings.height(),
+		maxHeight + 2 * insetY,
+	});
 	const auto top = _boundings.y() + _boundings.height() - height;
-	if (width() != _boundings.width() || RpWidget::height() != height) {
-		setGeometry(_boundings.x(), top, _boundings.width(), height);
-		_scroll->resize(_boundings.width(), height);
+	if (width() != panelWidth || RpWidget::height() != height) {
+		setGeometry(_boundings.x(), top, panelWidth, height);
 	} else if (x() != _boundings.x() || y() != top) {
 		move(_boundings.x(), top);
 	}
+	_scroll->setGeometry(
+		insetX,
+		insetY,
+		innerWidth,
+		std::max(height - 2 * insetY, 0));
+	setAttribute(
+		Qt::WA_OpaquePaintEvent,
+		!commands && !_opacityAnimation.animating());
+	update();
 	const auto scrollTop = resetScroll ? 0 : oldScrollTop;
 	if (scrollTop != oldScrollTop) {
 		_scroll->scrollToY(scrollTop);
@@ -998,7 +1044,7 @@ void FieldAutocomplete::animationCallback() {
 	update();
 	if (!_opacityAnimation.animating()) {
 		_cache = QPixmap();
-		setAttribute(Qt::WA_OpaquePaintEvent);
+		setAttribute(Qt::WA_OpaquePaintEvent, _type != Type::BotCommands);
 		if (_hiding) {
 			hideFinish();
 		} else {
@@ -1124,9 +1170,13 @@ void FieldAutocomplete::Inner::paintEvent(QPaintEvent *e) {
 		paintStickers(p, clip);
 	} else {
 		paintRows(p, clip);
-		paintShadow(p, _parent->innerBottom() - st::lineWidth);
+		if (_parent->_type != Type::BotCommands) {
+			paintShadow(p, _parent->innerBottom() - st::lineWidth);
+		}
 	}
-	paintShadow(p, _parent->innerTop());
+	if (_parent->_type != Type::BotCommands) {
+		paintShadow(p, _parent->innerTop());
+	}
 }
 
 void FieldAutocomplete::Inner::paintShadow(QPainter &p, int top) {
@@ -1267,12 +1317,26 @@ void FieldAutocomplete::Inner::paintRows(Painter &p, QRect clip) {
 		const auto textTop = top + st::mentionTop;
 		const auto selected = (i == _sel);
 		if (selected) {
-			p.fillRect(
-				0,
-				top,
-				width(),
-				st::mentionHeight,
-				st::mentionBgOver);
+			if (_parent->_type == Type::BotCommands) {
+				auto hq = PainterHighQualityEnabler(p);
+				auto highlight = st::windowActiveTextFg->c;
+				highlight.setAlphaF(0.14);
+				p.setPen(Qt::NoPen);
+				p.setBrush(highlight);
+				const auto skip = st::commandMenuRowSkip;
+				const auto radius = (st::mentionHeight - 2 * skip) / 2;
+				p.drawRoundedRect(
+					QRect(0, top + skip, width(), st::mentionHeight - 2 * skip),
+					radius,
+					radius);
+			} else {
+				p.fillRect(
+					0,
+					top,
+					width(),
+					st::mentionHeight,
+					st::mentionBgOver);
+			}
 			if (!_hrows->empty() || isRemovableMentionRow(i)) {
 				const auto &icon = st::smallCloseIconOver;
 				const auto skip = (st::mentionHeight - icon.height()) / 2;
