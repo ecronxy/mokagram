@@ -375,6 +375,15 @@ jobs:
           key: ${{ runner.OS }}-x64-qt6r-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-x64-qt6r-
 
+      - name: ATL для breakpad (на образе его может не быть).
+        shell: pwsh
+        run: |
+          $inst = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          if (-not (Get-ChildItem "$inst\VC\Tools\MSVC\*\atlmfc\include\atlbase.h" -ErrorAction SilentlyContinue)) {
+            Start-Process -Wait -FilePath "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe" -ArgumentList "modify --installPath `"$inst`" --add Microsoft.VisualStudio.Component.VC.ATL --quiet --norestart --noUpdateInstaller"
+          }
+          Get-ChildItem "$inst\VC\Tools\MSVC\*\atlmfc\include\atlbase.h"
+
       - name: Пересобрать rust-стадии, если из кэша вырезаны их исходники.
         shell: bash
         run: |
