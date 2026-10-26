@@ -1,0 +1,788 @@
+diff --git a/ui/effects/panel_animation.cpp b/ui/effects/panel_animation.cpp
+index fd2a4d4..755fbb2 100644
+--- a/ui/effects/panel_animation.cpp
++++ b/ui/effects/panel_animation.cpp
+@@ -309,6 +309,23 @@ void PanelAnimation::setAlphaDuration() {
+ void PanelAnimation::start() {
+ 	Assert(!_finalImage.isNull());
+ 	RoundShadowAnimation::start(_finalWidth, _finalHeight, _finalImage.devicePixelRatio());
++	const auto clampStart = [this](const Corner &corner) {
++		if (!corner.valid()) return;
++		if (_startWidth >= 0) {
++			_startWidth = std::min(
++				std::max(_startWidth, corner.width),
++				_finalInnerWidth);
++		}
++		if (_startHeight >= 0) {
++			_startHeight = std::min(
++				std::max(_startHeight, corner.height),
++				_finalInnerHeight);
++		}
++	};
++	clampStart(_topLeft);
++	clampStart(_topRight);
++	clampStart(_bottomLeft);
++	clampStart(_bottomRight);
+ 	auto checkCorner = [this](const Corner &corner) {
+ 		if (!corner.valid()) return;
+ 		if (_startWidth >= 0) Assert(corner.width <= _startWidth);
+diff --git a/ui/layers/box_content.cpp b/ui/layers/box_content.cpp
+index b255ca0..929a404 100644
+--- a/ui/layers/box_content.cpp
++++ b/ui/layers/box_content.cpp
+@@ -448,13 +448,11 @@ object_ptr<RpWidget> BoxContent::doTakeInnerWidget() {
+ }
+ 
+ void BoxContent::paintEvent(QPaintEvent *e) {
+-	Painter p(this);
+-
++	// Mokagram: фон и скругления рисует слой окна, поэтому содержимое
++	// не должно быть непрозрачным, иначе углы получаются квадратными.
+ 	if (testAttribute(Qt::WA_OpaquePaintEvent)) {
+-		const auto &color = getDelegate()->style().bg;
+-		for (const auto &rect : e->region()) {
+-			p.fillRect(rect, color);
+-		}
++		setAttribute(Qt::WA_OpaquePaintEvent, false);
++		update();
+ 	}
+ }
+ 
+diff --git a/ui/layers/box_layer_widget.cpp b/ui/layers/box_layer_widget.cpp
+index 7a9c2b7..3b17cec 100644
+--- a/ui/layers/box_layer_widget.cpp
++++ b/ui/layers/box_layer_widget.cpp
+@@ -132,6 +132,18 @@ QRect BoxLayerWidget::loadingRect() const {
+ void BoxLayerWidget::paintEvent(QPaintEvent *e) {
+ 	Painter p(this);
+ 
++	// Mokagram: окно может запросить своё скругление (свойство moka-radius).
++	if (const auto custom = std::max(property("moka-radius").toInt(), 28);
++		custom > 0) {
++		auto hq = PainterHighQualityEnabler(p);
++		p.setPen(Qt::NoPen);
++		p.setBrush(st().bg);
++		p.drawRoundedRect(rect(), custom, custom);
++		if (!_additionalTitle.current().isEmpty()) {
++			paintAdditionalTitle(p);
++		}
++		return;
++	}
+ 	const auto clip = e->rect();
+ 	const auto paintTopRounded = !(_customCornersFilling & RectPart::FullTop)
+ 		&& clip.intersects(QRect(0, 0, width(), st::boxRadius));
+diff --git a/ui/layers/layer_widget.cpp b/ui/layers/layer_widget.cpp
+index ec3171e..ee18c18 100644
+--- a/ui/layers/layer_widget.cpp
++++ b/ui/layers/layer_widget.cpp
+@@ -20,6 +20,7 @@
+ #include "styles/palette.h"
+ 
+ #include <QtGui/QtEvents>
++#include <QtGui/QPainterPath>
+ 
+ namespace Ui {
+ 
+@@ -299,17 +300,50 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
+ 		// (alpha_final - alpha_current) / (1 - alpha_current) so we won't get glitches
+ 		// in the transparent special layer cache corners after filling special layer
+ 		// rect above its cache with alpha_current opacity.
+-		const auto region = QRegion(bg) - specialLayerBox;
++		// Mokagram: углы окна скруглены (32), там слой не рисует ничего,
++		// поэтому в углах затемнение должно быть обычным, а не ослабленным.
++		const auto core = QRegion(specialLayerBox.marginsRemoved(QMargins(32, 0, 32, 0)))
++			+ QRegion(specialLayerBox.marginsRemoved(QMargins(0, 32, 0, 32)));
++		const auto region = QRegion(bg) - core;
+ 		for (const auto &rect : region) {
+ 			p.fillRect(rect, st::layerBg);
+ 		}
+ 		p.setOpacity((bgOpacity - overSpecialOpacity) / (1. - (overSpecialOpacity * st::layerBg->c.alphaF())));
+-		p.fillRect(specialLayerBox, st::layerBg);
++		for (const auto &rect : core) {
++			p.fillRect(rect, st::layerBg);
++		}
+ 		p.setOpacity(bgOpacity);
+ 	} else {
+ 		p.fillRect(bg, st::layerBg);
+ 	}
+ 
++	if (!specialLayerBox.isEmpty() && _specialLayerCache.isNull()) {
++		// Mokagram: в скруглённых углах окна нет тени, и они выглядят светлее
++		// окружения: подтемняем их под цвет тени вокруг.
++		auto hq = PainterHighQualityEnabler(p);
++		p.setOpacity(bgOpacity);
++		p.setPen(Qt::NoPen);
++		p.setBrush(QColor(0, 0, 0, 107));
++		const auto wedge = [&](int x, int y, int r, bool right, bool bottom) {
++			auto path = QPainterPath();
++			path.addRect(QRectF(x, y, r, r));
++			auto circle = QPainterPath();
++			circle.addEllipse(
++				QPointF(right ? x : x + r, bottom ? y : y + r),
++				r,
++				r);
++			p.drawPath(path.subtracted(circle));
++		};
++		const auto &b = specialLayerBox;
++		wedge(b.x(), b.y(), 32, false, false);
++		wedge(b.x() + b.width() - 32, b.y(), 32, true, false);
++		if (b.y() + b.height() < height()) {
++			wedge(b.x(), b.y() + b.height() - 20, 20, false, true);
++			wedge(b.x() + b.width() - 20, b.y() + b.height() - 20, 20, true, true);
++		}
++		p.setOpacity(1.);
++	}
++
+ 	if (!_specialLayerCache.isNull() && specialLayerOpacity > 0) {
+ 		p.setOpacity(specialLayerOpacity);
+ 		auto cacheLeft = specialLayerBox.x() - st::boxRoundShadow.extend.left();
+diff --git a/ui/text/custom_emoji_instance.cpp b/ui/text/custom_emoji_instance.cpp
+index 256b889..cf0b5c0 100644
+--- a/ui/text/custom_emoji_instance.cpp
++++ b/ui/text/custom_emoji_instance.cpp
+@@ -19,6 +19,11 @@
+ class QPainter;
+ 
+ namespace Ui::CustomEmoji {
++
++int &ShotScale() {
++	static auto result = 1;
++	return result;
++}
+ namespace {
+ 
+ constexpr auto kMaxFrames = 180;
+@@ -405,7 +410,7 @@ PaintFrameResult Cache::paintCurrentFrame(
+ 		? (_frames - 1)
+ 		: std::min(_frame, _frames - 1);
+ 	const auto info = frame(index);
+-	const auto size = _size / style::DevicePixelRatio();
++	const auto size = _size / (style::DevicePixelRatio() * ShotScale());
+ 	const auto rect = QRect(context.position, QSize(size, size));
+ 	PaintScaledImage(p, rect, info, context);
+ 	const auto next = first ? 0 : currentFrameFinishes();
+diff --git a/ui/text/custom_emoji_instance.h b/ui/text/custom_emoji_instance.h
+index 6b6e97d..ddfa7df 100644
+--- a/ui/text/custom_emoji_instance.h
++++ b/ui/text/custom_emoji_instance.h
+@@ -27,6 +27,9 @@ class FrameGenerator;
+ 
+ namespace Ui::CustomEmoji {
+ 
++// Mokagram: на время снимка сообщений кадры эмодзи рисуются в N раз крупнее.
++[[nodiscard]] int &ShotScale();
++
+ using Context = Ui::Text::CustomEmoji::Context;
+ 
+ [[nodiscard]] QColor PreviewColorFromTextColor(QColor color);
+diff --git a/ui/text/text_renderer.cpp b/ui/text/text_renderer.cpp
+index 8ad5f61..3a3158f 100644
+--- a/ui/text/text_renderer.cpp
++++ b/ui/text/text_renderer.cpp
+@@ -5,6 +5,7 @@
+ // https://github.com/desktop-app/legal/blob/master/LEGAL
+ //
+ #include "ui/text/text_renderer.h"
++#include "ui/text/text_emoji_budget.h"
+ 
+ #include "ui/text/text_block.h"
+ #include "ui/text/text_extended_data.h"
+@@ -17,6 +18,50 @@
+ namespace Ui::Text {
+ namespace {
+ 
++int CustomEmojiLimit = 0;
++crl::time CustomEmojiWindow = 0;
++int CustomEmojiUsed = 0;
++int StickerLimit = 0;
++crl::time StickerWindow = 0;
++int StickerUsed = 0;
++
++} // namespace
++
++void SetCustomEmojiBudget(int limit) {
++	CustomEmojiLimit = std::max(limit, 0);
++}
++
++bool TakeCustomEmojiBudget() {
++	if (!CustomEmojiLimit) {
++		return true;
++	}
++	// Один кадр отрисовки: все эмодзи, нарисованные в пределах ~12 мс.
++	const auto now = crl::now();
++	if (now - CustomEmojiWindow > 12 || now < CustomEmojiWindow) {
++		CustomEmojiWindow = now;
++		CustomEmojiUsed = 0;
++	}
++	return ++CustomEmojiUsed <= CustomEmojiLimit;
++}
++
++void SetStickerBudget(int limit) {
++	StickerLimit = std::max(limit, 0);
++}
++
++bool TakeStickerBudget() {
++	if (!StickerLimit) {
++		return true;
++	}
++	const auto now = crl::now();
++	if (now - StickerWindow > 12 || now < StickerWindow) {
++		StickerWindow = now;
++		StickerUsed = 0;
++	}
++	return ++StickerUsed <= StickerLimit;
++}
++
++namespace {
++
+ constexpr auto kQuoteHeaderTextLarge = 25;
+ 
+ const ClickHandlerPtr &CustomEmojiMismatchLink() {
+@@ -1206,6 +1251,9 @@ bool Renderer::drawLine(uint16 lineEnd, Blocks::const_iterator blocksEnd) {
+ 								: QPoint(
+ 									ex + _customEmojiSkip,
+ 									ey + _customEmojiSkip);
++							// Mokagram: сверх бюджета эмодзи не анимируется, а стоит на кадре.
++							_customEmojiContext->paused = _pausedEmoji
++								|| !TakeCustomEmojiBudget();
+ 							custom->paint(*_p, *_customEmojiContext);
+ 						}
+ 						if (showFallbackText) {
+diff --git a/ui/widgets/box_content_divider.cpp b/ui/widgets/box_content_divider.cpp
+index 948271f..f7b7b24 100644
+--- a/ui/widgets/box_content_divider.cpp
++++ b/ui/widgets/box_content_divider.cpp
+@@ -23,10 +23,13 @@ BoxContentDivider::BoxContentDivider(
+ : RpWidget(parent)
+ , _st(st)
+ , _parts(parts) {
++	setProperty("moka-break", true);
+ 	resize(width(), height);
+ }
+ 
+ void BoxContentDivider::paintEvent(QPaintEvent *e) {
++	// Mokagram: полос-разделителей нет, секции разделены зазорами.
++	return;
+ 	QPainter p(this);
+ 
+ 	p.fillRect(e->rect(), _st.bg);
+diff --git a/ui/widgets/buttons.cpp b/ui/widgets/buttons.cpp
+index 690ba6f..f813eab 100644
+--- a/ui/widgets/buttons.cpp
++++ b/ui/widgets/buttons.cpp
+@@ -53,7 +53,7 @@ public:
+ 
+ protected:
+ 	QImage prepareRippleMask() const override final {
+-		return RippleAnimation::RoundRectMask(size(), st::buttonRadius);
++		return RippleAnimation::RoundRectMask(size(), std::max(st::buttonRadius, 16));
+ 	}
+ 
+ };
+@@ -303,8 +303,8 @@ RoundButton::RoundButton(
+ : RippleButton(parent, st.ripple)
+ , _textFull(std::move(text) | rpl::map(Text::WithEntities))
+ , _st(st)
+-, _roundRect(st.radius ? st.radius : st::buttonRadius, _st.textBg)
+-, _roundRectOver(st.radius ? st.radius : st::buttonRadius, _st.textBgOver)
++, _roundRect(st.radius ? st.radius : std::max(st::buttonRadius, 16), _st.textBg)
++, _roundRectOver(st.radius ? st.radius : std::max(st::buttonRadius, 16), _st.textBgOver)
+ , _fullRadius(st.fullRadius) {
+ 	_textFull.value(
+ 	) | rpl::on_next([=](const TextWithEntities &text) {
+@@ -506,7 +506,7 @@ void RoundButton::paintEvent(QPaintEvent *e) {
+ 			PainterHighQualityEnabler hq(p);
+ 			p.setPen(_penOverride ? *_penOverride : Qt::NoPen);
+ 			p.setBrush(*_brushOverride);
+-			const auto radius = _st.radius ? _st.radius : st::buttonRadius;
++			const auto radius = _st.radius ? _st.radius : std::max(st::buttonRadius, 16);
+ 			p.drawRoundedRect(fill, radius, radius);
+ 		} else {
+ 			rect.paint(p, fill);
+@@ -606,7 +606,7 @@ QImage RoundButton::prepareRippleMask() const {
+ 	}
+ 	return RippleAnimation::RoundRectMask(
+ 		rounded.size(),
+-		_st.radius ? _st.radius : st::buttonRadius);
++		_st.radius ? _st.radius : std::max(st::buttonRadius, 16));
+ }
+ 
+ QPoint RoundButton::prepareRippleStartPosition() const {
+@@ -990,8 +990,22 @@ void SettingsButton::paintEvent(QPaintEvent *e) {
+ 	}
+ }
+ 
++// Mokagram: подсветка строки и волна клика скруглены, как в карточках.
++QImage SettingsButton::prepareRippleMask() const {
++	return RippleAnimation::RoundRectMask(
++		size(),
++		std::min(height() / 2, 20));
++}
++
+ void SettingsButton::paintBg(Painter &p, const QRect &rect, bool over) const {
+-	p.fillRect(rect, over ? _st.textBgOver : _st.textBg);
++	// Mokagram: строка без своей заливки, фон даёт карточка или окно.
++	if (over) {
++		auto hq = PainterHighQualityEnabler(p);
++		p.setPen(Qt::NoPen);
++		p.setBrush(_st.textBgOver);
++		const auto radius = std::min(height() / 2, 20);
++		p.drawRoundedRect(QRectF(this->rect()), radius, radius);
++	}
+ }
+ 
+ void SettingsButton::paintText(Painter &p, bool over, int outerw) const {
+diff --git a/ui/widgets/buttons.h b/ui/widgets/buttons.h
+index 0801610..0bfab98 100644
+--- a/ui/widgets/buttons.h
++++ b/ui/widgets/buttons.h
+@@ -349,6 +349,7 @@ protected:
+ 
+ 	void paintEvent(QPaintEvent *e) override;
+ 
++	QImage prepareRippleMask() const override;
+ 	void paintBg(Painter &p, const QRect &rect, bool over) const;
+ 	void paintText(Painter &p, bool over, int outerw) const;
+ 	void paintToggle(Painter &p, int outerw) const;
+diff --git a/ui/widgets/checkbox.cpp b/ui/widgets/checkbox.cpp
+index df0dc58..ceadaf2 100644
+--- a/ui/widgets/checkbox.cpp
++++ b/ui/widgets/checkbox.cpp
+@@ -84,11 +84,59 @@ void ToggleView::setStyle(const style::Toggle &st) {
+ }
+ 
+ void ToggleView::paint(QPainter &p, int left, int top, int outerWidth) {
++	const auto outerLeft = left;
++	const auto outerTop = top;
+ 	left += _st->border;
+ 	top += _st->border;
+ 
+ 	PainterHighQualityEnabler hq(p);
+ 	auto toggled = currentAnimationValue();
++	if (_st->xsize <= 0) {
++		// Mokagram: переключатель в стиле Material 3.
++		const auto width = 2 * _st->border + _st->diameter + _st->width;
++		const auto height = 2 * _st->border + _st->diameter;
++		const auto track = style::rtlrect(
++			outerLeft,
++			outerTop,
++			width,
++			height,
++			outerWidth);
++		const auto off = _st->untoggledFg->c;
++		const auto on = _st->toggledFg->c;
++		const auto radius = height / 2.;
++		const auto outline = 2. * (1. - toggled);
++		p.setBrush(anim::color(QColor(0, 0, 0, 0), on, toggled));
++		p.setPen(outline > 0.05
++			? QPen(anim::color(off, on, toggled), outline)
++			: QPen(Qt::NoPen));
++		p.drawRoundedRect(
++			QRectF(track).adjusted(1, 1, -1, -1),
++			radius - 1,
++			radius - 1);
++		const auto thumb = height * (0.25 + 0.125 * toggled);
++		const auto fromX = radius;
++		const auto toX = width - radius;
++		const auto centerX = fromX + (toX - fromX) * toggled;
++		const auto center = style::rtlpoint(
++			QPointF(outerLeft + centerX, outerTop + radius),
++			outerWidth);
++		p.setPen(Qt::NoPen);
++		p.setBrush(anim::color(off, QColor(255, 255, 255), toggled));
++		p.drawEllipse(center, thumb, thumb);
++		if (_locked) {
++			const auto toggleLeft = left + anim::interpolate(
++				0,
++				_st->diameter + _st->width - _st->diameter,
++				toggled);
++			_st->lockIcon.paint(
++				p,
++				toggleLeft,
++				top,
++				outerWidth,
++				toggled > 0.5 ? on : off);
++		}
++		return;
++	}
+ 	auto fullWidth = _st->diameter + _st->width;
+ 	auto innerDiameter = _st->diameter - 2 * _st->shift;
+ 	auto innerRadius = float64(innerDiameter) / 2.;
+diff --git a/ui/widgets/fields/input_field.cpp b/ui/widgets/fields/input_field.cpp
+index d57ac56..7226abd 100644
+--- a/ui/widgets/fields/input_field.cpp
++++ b/ui/widgets/fields/input_field.cpp
+@@ -1925,6 +1925,15 @@ InputField::InputField(
+ 		}
+ 	}
+ 
++	// Mokagram: у скруглённого поля текст не липнет к краю.
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
++		_additionalMargins = QMargins(
++			std::max(0, std::min(14, _st.borderRadius) - _st.textMargins.left()),
++			0,
++			std::max(0, std::min(10, _st.borderRadius) - _st.textMargins.right()),
++			0);
++	}
++
+ 	if (_st.textBg->c.alphaF() >= 1. && !_st.borderRadius) {
+ 		setAttribute(Qt::WA_OpaquePaintEvent);
+ 	}
+@@ -2868,7 +2877,7 @@ void InputField::paintSurrounding(
+ 		QRect clip,
+ 		float64 errorDegree,
+ 		float64 focusedDegree) {
+-	if (_st.borderRadius > 0) {
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
+ 		paintRoundSurrounding(p, clip, errorDegree, focusedDegree);
+ 	} else {
+ 		paintFlatSurrounding(p, clip, errorDegree, focusedDegree);
+@@ -2882,10 +2891,14 @@ void InputField::paintRoundSurrounding(
+ 		float64 focusedDegree) {
+ 	const auto divide = _st.borderDenominator ? _st.borderDenominator : 1;
+ 	const auto border = _st.border / float64(divide);
+-	const auto borderHalf = border / 2.;
++	const auto borderHalf = std::max(border, 1.5) / 2.;
+ 	auto pen = anim::pen(_st.borderFg, _st.borderFgActive, focusedDegree);
+-	pen.setWidthF(border);
+-	p.setPen(pen);
++	// Mokagram: без рамки в покое, при фокусе тонкое акцентное кольцо.
++	const auto lineWidth = (border > 0.)
++		? border
++		: (_st.borderActive ? (1.5 * focusedDegree) : 0.);
++	pen.setWidthF(lineWidth);
++	p.setPen((lineWidth > 0.) ? pen : QPen(Qt::NoPen));
+ 	p.setBrush(anim::brush(_st.textBg, _st.textBgActive, focusedDegree));
+ 
+ 	PainterHighQualityEnabler hq(p);
+diff --git a/ui/widgets/fields/masked_input_field.cpp b/ui/widgets/fields/masked_input_field.cpp
+index ef96309..a082ef9 100644
+--- a/ui/widgets/fields/masked_input_field.cpp
++++ b/ui/widgets/fields/masked_input_field.cpp
+@@ -141,6 +141,14 @@ int MaskedInputField::borderAnimationStart() const {
+ 
+ void MaskedInputField::setTextMargins(const QMargins &mrg) {
+ 	_textMargins = mrg;
++	// Mokagram: у скруглённого поля текст не липнет к краю.
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
++		_textMargins += QMargins(
++			std::max(0, std::min(14, _st.borderRadius) - mrg.left()),
++			0,
++			std::max(0, std::min(10, _st.borderRadius) - mrg.right()),
++			0);
++	}
+ 	setContentsMargins(_textMargins + QMargins(-2, -1, -2, -1));
+ 	refreshPlaceholder(_placeholderFull.current());
+ }
+@@ -149,12 +157,29 @@ void MaskedInputField::paintEvent(QPaintEvent *e) {
+ 	auto p = QPainter(this);
+ 
+ 	auto r = rect().intersected(e->rect());
++	auto errorDegree = _a_error.value(_error ? 1. : 0.);
++	auto focusedDegree = _a_focused.value(_focused ? 1. : 0.);
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
++		const auto focused = focusedDegree;
++		auto hq = PainterHighQualityEnabler(p);
++		auto pen = anim::pen(_st.borderFg, _st.borderFgActive, focused);
++		const auto lineWidth = _st.border ? _st.border : (1.5 * focused);
++		pen.setWidthF(lineWidth);
++		p.setPen((lineWidth > 0.) ? pen : QPen(Qt::NoPen));
++		p.setBrush(anim::brush(_st.textBg, _st.textBgActive, focused));
++		const auto half = std::max<float64>(lineWidth, 1.5) / 2.;
++		p.drawRoundedRect(
++			QRectF(0, 0, width(), height()).marginsRemoved(
++				QMarginsF(half, half, half, half)),
++			_st.borderRadius - half,
++			_st.borderRadius - half);
++		p.setPen(Qt::NoPen);
++		p.setBrush(Qt::NoBrush);
++	} else {
+ 	p.fillRect(r, _st.textBg);
+ 	if (_st.border) {
+ 		p.fillRect(0, height() - _st.border, width(), _st.border, _st.borderFg->b);
+ 	}
+-	auto errorDegree = _a_error.value(_error ? 1. : 0.);
+-	auto focusedDegree = _a_focused.value(_focused ? 1. : 0.);
+ 	auto borderShownDegree = _a_borderShown.value(1.);
+ 	auto borderOpacity = _a_borderOpacity.value(_borderVisible ? 1. : 0.);
+ 	if (_st.borderActive && (borderOpacity > 0.)) {
+@@ -173,6 +198,8 @@ void MaskedInputField::paintEvent(QPaintEvent *e) {
+ 		}
+ 	}
+ 
++	}
++
+ 	p.setClipRect(r);
+ 	if (_st.placeholderScale > 0. && !_placeholderPath.isEmpty()) {
+ 		auto placeholderShiftDegree = _a_placeholderShifted.value(_placeholderShifted ? 1. : 0.);
+diff --git a/ui/widgets/labels.cpp b/ui/widgets/labels.cpp
+index ceed27c..8bfe1c6 100644
+--- a/ui/widgets/labels.cpp
++++ b/ui/widgets/labels.cpp
+@@ -1151,6 +1151,7 @@ DividerLabel::DividerLabel(
+ 	RectParts parts)
+ : PaddingWrap(parent, std::move(child), padding)
+ , _background(this, st::boxDividerHeight, st, parts) {
++	setProperty("moka-break", true);
+ 	setNaturalWidth(-1);
+ }
+ 
+diff --git a/ui/widgets/menu/menu.cpp b/ui/widgets/menu/menu.cpp
+index 5421134..2b236a9 100644
+--- a/ui/widgets/menu/menu.cpp
++++ b/ui/widgets/menu/menu.cpp
+@@ -5,6 +5,7 @@
+ // https://github.com/desktop-app/legal/blob/master/LEGAL
+ //
+ #include "ui/widgets/menu/menu.h"
++#include "ui/widgets/popup_menu.h"
+ 
+ #include "ui/widgets/menu/menu_action.h"
+ #include "ui/widgets/menu/menu_item_base.h"
+@@ -48,13 +49,17 @@ void Menu::init() {
+ 
+ 	setMouseTracking(true);
+ 
+-	if (_st.itemBg->c.alpha() == 255) {
+-		setAttribute(Qt::WA_OpaquePaintEvent);
+-	}
+-
++	// Mokagram: углы скругляет слой поверх меню (PopupMenu::_roundingOverlay),
++	// поэтому квадратная заливка тут нужна: без неё меню прозрачное.
+ 	paintRequest(
+ 	) | rpl::on_next([=](const QRect &clip) {
+-		QPainter(this).fillRect(clip, _st.itemBg);
++		// Остальные контейнеры (выпадающие окна и т.п.) красят и скругляют фон сами.
++		for (auto w = parentWidget(); w; w = w->parentWidget()) {
++			if (dynamic_cast<PopupMenu*>(w)) {
++				QPainter(this).fillRect(clip, _st.itemBg);
++				break;
++			}
++		}
+ 	}, lifetime());
+ 
+ 	positionValue(
+diff --git a/ui/widgets/menu/menu_action.cpp b/ui/widgets/menu/menu_action.cpp
+index 4c16b67..2ded2eb 100644
+--- a/ui/widgets/menu/menu_action.cpp
++++ b/ui/widgets/menu/menu_action.cpp
+@@ -96,12 +96,7 @@ void Action::paintEvent(QPaintEvent *e) {
+ }
+ 
+ void Action::paintBackground(QPainter &p, bool selected) {
+-	if (selected && _st.itemBgOver->c.alpha() < 255) {
+-		p.fillRect(0, 0, width(), _height, _st.itemBg);
+-	}
+-	p.fillRect(
+-		QRect(0, 0, width(), _height),
+-		selected ? _st.itemBgOver : _st.itemBg);
++	PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
+ }
+ 
+ void Action::paintText(Painter &p) {
+@@ -212,7 +207,7 @@ QPoint Action::prepareRippleStartPosition() const {
+ }
+ 
+ QImage Action::prepareRippleMask() const {
+-	return Ui::RippleAnimation::RectMask(size());
++	return Ui::RippleAnimation::RoundRectMask(size(), size().height() / 2);
+ }
+ 
+ int Action::contentHeight() const {
+diff --git a/ui/widgets/menu/menu_item_base.h b/ui/widgets/menu/menu_item_base.h
+index 7b329a1..56155d0 100644
+--- a/ui/widgets/menu/menu_item_base.h
++++ b/ui/widgets/menu/menu_item_base.h
+@@ -7,6 +7,7 @@
+ #pragma once
+ 
+ #include "base/qt_connection.h"
++#include <QtGui/QPainter>
+ #include "ui/widgets/buttons.h"
+ #include "ui/widgets/menu/menu.h"
+ #include "ui/widgets/menu/menu_common.h"
+@@ -90,4 +91,26 @@ private:
+ 
+ };
+ 
++inline void PaintItemBackground(
++		QPainter &p,
++		const QRect &rect,
++		const style::Menu &st,
++		bool selected) {
++	if (!selected) {
++		return;
++	}
++	const auto sx = style::ConvertScale(8);
++	const auto sy = style::ConvertScale(2);
++	const auto inner = rect.marginsRemoved({ sx, sy, sx, sy });
++	const auto radius = std::min<double>(
++		inner.height() / 2.,
++		style::ConvertScale(16));
++	p.save();
++	p.setRenderHint(QPainter::Antialiasing);
++	p.setPen(Qt::NoPen);
++	p.setBrush(st.itemBgOver);
++	p.drawRoundedRect(inner, radius, radius);
++	p.restore();
++}
++
+ } // namespace Ui::Menu
+diff --git a/ui/widgets/menu/menu_multiline_action.cpp b/ui/widgets/menu/menu_multiline_action.cpp
+index db27772..a105815 100644
+--- a/ui/widgets/menu/menu_multiline_action.cpp
++++ b/ui/widgets/menu/menu_multiline_action.cpp
+@@ -82,7 +82,7 @@ int MultilineAction::contentHeight() const {
+ void MultilineAction::paintEvent(QPaintEvent *e) {
+ 	auto p = QPainter(this);
+ 	const auto selected = isSelected();
+-	p.fillRect(rect(), selected ? _st.itemBgOver : _st.itemBg);
++	PaintItemBackground(p, rect(), _st, selected);
+ 	RippleButton::paintRipple(p, 0, 0);
+ 	if (const auto icon = (selected ? _iconOver : _icon)) {
+ 		icon->paint(p, _st.itemIconPosition, width());
+diff --git a/ui/widgets/scroll_area.cpp b/ui/widgets/scroll_area.cpp
+index 36af139..425ecbb 100644
+--- a/ui/widgets/scroll_area.cpp
++++ b/ui/widgets/scroll_area.cpp
+@@ -292,6 +292,8 @@ void ScrollBar::setMoving(bool moving) {
+ }
+ 
+ void ScrollBar::paintEvent(QPaintEvent *e) {
++	// Mokagram: полос прокрутки нет, прокрутка остаётся.
++	return;
+ 	if (!_bar.width() && !_bar.height()) {
+ 		hide();
+ 		return;
+diff --git a/ui/widgets/side_bar_button.cpp b/ui/widgets/side_bar_button.cpp
+index 7633972..d697404 100644
+--- a/ui/widgets/side_bar_button.cpp
++++ b/ui/widgets/side_bar_button.cpp
+@@ -167,7 +167,14 @@ void SideBarButton::paintEvent(QPaintEvent *e) {
+ 	const auto clip = e->rect();
+ 
+ 	const auto &bg = _active ? _st.textBgActive : _st.textBg;
+-	p.fillRect(clip, bg);
++	// Mokagram: вкладка-пилюля вместо прямоугольника.
++	p.fillRect(clip, _st.textBg);
++	if (_active) {
++		auto hq = PainterHighQualityEnabler(p);
++		p.setPen(Qt::NoPen);
++		p.setBrush(_st.textBgActive);
++		p.drawRoundedRect(rect().marginsRemoved({ 4, 2, 4, 2 }), 16, 16);
++	}
+ 
+ 	RippleButton::paintRipple(p, 0, 0);
+ 
+diff --git a/ui/widgets/time_input.cpp b/ui/widgets/time_input.cpp
+index 7be4b1e..bd5bc20 100644
+--- a/ui/widgets/time_input.cpp
++++ b/ui/widgets/time_input.cpp
+@@ -232,6 +232,10 @@ void TimeInput::paintEvent(QPaintEvent *e) {
+ 	auto p = QPainter(this);
+ 
+ 	const auto &_st = _stDateField;
++	// Mokagram: у скруглённых полей части рисуют себя сами, без общей черты.
++	if (_st.borderRadius > 0 && (_st.border || _st.borderActive)) {
++		return;
++	}
+ 	const auto height = _st.heightMin;
+ 	if (_st.border) {
+ 		p.fillRect(0, height - _st.border, width(), _st.border, _st.borderFg);
+diff --git a/ui/widgets/widgets.style b/ui/widgets/widgets.style
+index 8b8df7d..e5687e6 100644
+--- a/ui/widgets/widgets.style
++++ b/ui/widgets/widgets.style
+@@ -992,7 +992,7 @@ defaultPopupMenu: PopupMenu {
+ 
+ 	menu: defaultMenu;
+ 
+-	radius: 8px;
++	radius: 26px;
+ 	duration: 150;
+ 	showDuration: 200;
+ }
+@@ -1030,7 +1030,7 @@ defaultInputField: InputField {
+ 	textBgActive: windowBg;
+ 	textFg: windowFg;
+ 	textMarkBg: windowBgOver;
+-	textMargins: margins(0px, 28px, 0px, 4px);
++	textMargins: margins(16px, 28px, 16px, 4px);
+ 	textAlign: align(topleft);
+ 
+ 	placeholderFg: windowSubTextFg;
+@@ -1047,9 +1047,9 @@ defaultInputField: InputField {
+ 	borderFgActive: activeLineFg;
+ 	borderFgError: activeLineFgError;
+ 
+-	border: 1px;
++	border: 0px;
+ 	borderActive: 2px;
+-	borderRadius: 0px;
++	borderRadius: 16px;
+ 	borderDenominator: 1;
+ 
+ 	style: boxTextStyle;
+@@ -1252,7 +1252,7 @@ defaultPeerListCheckbox: RoundImageCheckbox {
+ 	check: defaultPeerListCheck;
+ }
+ 
+-innerDropdownRadius: 8px;
++innerDropdownRadius: 26px;
+ defaultInnerDropdown: InnerDropdown {
+ 	padding: margins(10px, 10px, 10px, 10px);
+ 	shadow: roundShadowRadius8px;
+@@ -1266,11 +1266,14 @@ defaultInnerDropdown: InnerDropdown {
+ 	bg: menuBg;
+ 	scroll: defaultSolidScroll;
+ }
++defaultDropdownMenuInner: Menu(defaultMenu) {
++	itemBg: transparent;
++}
+ defaultDropdownMenu: DropdownMenu {
+ 	wrap: InnerDropdown(defaultInnerDropdown) {
+ 		scrollPadding: margins(0px, 10px, 0px, 10px);
+ 	}
+-	menu: defaultMenu;
++	menu: defaultDropdownMenuInner;
+ }
+ 
+ defaultTooltip: Tooltip {
+@@ -1710,11 +1713,14 @@ popupMenuWithIcons: PopupMenu(defaultPopupMenu) {
+ 	scrollPadding: margins(0px, 5px, 0px, 5px);
+ 	menu: menuWithIcons;
+ }
++dropdownMenuWithIconsInner: Menu(menuWithIcons) {
++	itemBg: transparent;
++}
+ dropdownMenuWithIcons: DropdownMenu(defaultDropdownMenu) {
+ 	wrap: InnerDropdown(defaultInnerDropdown) {
+ 		scrollPadding: margins(0px, 6px, 0px, 6px);
+ 	}
+-	menu: menuWithIcons;
++	menu: dropdownMenuWithIconsInner;
+ }
+ 
+ universalRippleAnimation: RippleAnimation(defaultRippleAnimation) {
+diff --git a/ui/text/text_emoji_budget.h b/ui/text/text_emoji_budget.h
+new file mode 100644
+index 0000000..fc47787
+--- /dev/null
++++ b/ui/text/text_emoji_budget.h
+@@ -0,0 +1,16 @@
++// Mokagram: потолок одновременно играющих премиум-эмодзи за кадр.
++#pragma once
++
++#include "base/basic_types.h"
++
++namespace Ui::Text {
++
++// 0: без ограничения. Остальные эмодзи сверх лимита замирают на текущем кадре.
++void SetCustomEmojiBudget(int limit);
++[[nodiscard]] bool TakeCustomEmojiBudget();
++
++// То же для анимированных стикеров в сообщениях.
++void SetStickerBudget(int limit);
++[[nodiscard]] bool TakeStickerBudget();
++
++} // namespace Ui::Text
