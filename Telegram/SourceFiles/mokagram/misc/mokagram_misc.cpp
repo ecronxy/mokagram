@@ -608,12 +608,18 @@ void Start() {
 	}) | rpl::on_next([](Main::Session *) {
 		Refresh(0);
 	}, lifetime);
+	// Вернулись в окно: свежий список сразу, не ждём минуту.
+	QObject::connect(qApp, &QGuiApplication::applicationStateChanged, [](Qt::ApplicationState state) {
+		if (state == Qt::ApplicationActive) {
+			Refresh(0);
+		}
+	});
 	static auto timer = new QTimer();
 	timer->setInterval(3000);
 	QObject::connect(timer, &QTimer::timeout, [] {
 		static auto ticks = 0;
-		// Пока список не получен, повторяем каждые 3 с, потом раз в 10 минут (200 тиков).
-		if (!Data().fresh || ++ticks >= 200) {
+		// Пока список не получен, повторяем каждые 3 с, потом раз в минуту (20 тиков).
+		if (!Data().fresh || ++ticks >= 20) {
 			ticks = 0;
 			Refresh(0);
 		}
