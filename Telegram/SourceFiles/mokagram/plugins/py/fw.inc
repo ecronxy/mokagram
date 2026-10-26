@@ -1307,4 +1307,182 @@ def _fw_password_dialog(entry, key, title):
         'buttons': [{'id': 'save', 'text': 'Сохранить', 'style': 'primary'}, {'id': 'clear', 'text': 'Удалить', 'style': 'red'},
                     {'id': 'no', 'text': 'Отмена', 'style': 'cancel'}],
         'cb': cb, 'close_cb': ''}, ensure_ascii=False))
+
+
+def _fw_tl_id(peer):
+    n = int(peer)
+    if n >= (1 << 49):
+        return '-100%d' % (n - (1 << 49))
+    if n >= (1 << 48):
+        return '-%d' % (n - (1 << 48))
+    return str(n)
+
+
+@_fw_builtin('id', 'номера: этот чат, вы, а в ответе на сообщение ещё и автор: .id')
+def _fw_cmd_id(ctx):
+    lines = ['Чат: %s' % _fw_tl_id(ctx.peer)]
+    try:
+        me = json.loads(_moka_native('get_me', '{}'))
+        if me.get('ok'):
+            lines.append('Вы: %s' % me['peer'])
+        if ctx.reply_to:
+            m = json.loads(_moka_native('get_message', json.dumps({'peer': str(ctx.peer), 'id': str(ctx.reply_to)})))
+            if m.get('ok'):
+                lines.append('Сообщение: %s' % ctx.reply_to)
+                lines.append('Автор: %s' % _fw_tl_id(m.get('from', '0')))
+    except Exception:
+        pass
+    _fw_private('ID', '\n'.join(lines))
+
+
+@_fw_builtin('ping', 'задержка до серверов Telegram и состояние плагинов: .ping')
+def _fw_cmd_ping(ctx):
+    tl = sys.modules['mokagram_sdk.tl']
+    started = time.monotonic()
+    answered = [False]
+
+    def silent():
+        if not answered[0]:
+            answered[0] = True
+            _fw_private('Пинг', 'Сервер не ответил за 10 секунд: нет соединения.')
+    t = threading.Timer(10, silent)
+    t.daemon = True
+    t.start()
+
+    def done(payload):
+        if answered[0]:
+            return
+        answered[0] = True
+        t.cancel()
+        ms = int((time.monotonic() - started) * 1000)
+        loaded = sum(1 for e in _plugins.values() if e.get('state') == 'loaded')
+        text = ('Ответ сервера: %d мс\nПлагинов работает: %d из %d' % (ms, loaded, len(_plugins))
+                if payload.get('ok') else 'Сервер не ответил: %s' % payload.get('type', ''))
+        _fw_private('Пинг', text)
+    token = _fw_cb(done)
+    res = json.loads(_moka_native('invoke_raw', json.dumps({
+        'pid': '_fw', 'token': token, 'hex': tl.encode_request('help.getNearestDc', {}).hex()})))
+    if not res.get('ok'):
+        _fw_private('Пинг', 'Не вышло: %s' % res.get('error', ''))
+
+
+# ---- конструктор плагинов без кода: окно с формой, на выходе настоящий .plugin с настройками ----
+
+_FW_TEMPLATES = [
+    # (название, поле «слово», поле «текст», права, описание)
+    ('Команда: пишете .слово, уходит текст', 'Слово команды (без точки)', 'Что отправить',
+     ['messages.send', 'settings'], 'Пишете .{word}, и вместо этого уходит заданный текст.'),
+    ('Автозамена: слово меняется на текст', 'Что заменять', 'Чем заменять',
+     ['messages.send', 'settings'], 'В каждом вашем сообщении слово «{word}» меняется на заданный текст.'),
+    ('Автоответ в личных чатах на слово', 'Слово в сообщении', 'Что ответить',
+     ['messages.read', 'messages.send', 'settings'], 'Когда в личные сообщения приходит слово «{word}», плагин отвечает заданным текстом (не чаще раза в минуту на человека).'),
+    ('Скрывать сообщения со словом', 'Слово или фраза', 'Не используется',
+     ['messages.read', 'settings'], 'Сообщения со словом «{word}» скрываются у вас в чате. На сервере ничего не меняется.'),
+]
+
+_FW_BUILDER_BODY = {
+    0: """
+    def send_message_hook(self, params):
+        text = (params.get('text') or '').strip()
+        word = str(api.get_setting('word', DEFAULT_WORD) or '').strip().lstrip('.').lower()
+        if api.get_setting('enabled', True) and word and text.lstrip('.').lower() == word and text.startswith('.'):
+            params['text'] = str(api.get_setting('text', DEFAULT_TEXT) or '')
+            return HookResult(HookStrategy.MODIFY, params)
+        return HookResult()
+""",
+    1: """
+    def send_message_hook(self, params):
+        word = str(api.get_setting('word', DEFAULT_WORD) or '')
+        if api.get_setting('enabled', True) and word and word in (params.get('text') or ''):
+            params['text'] = params['text'].replace(word, str(api.get_setting('text', DEFAULT_TEXT) or ''))
+            return HookResult(HookStrategy.MODIFY, params)
+        return HookResult()
+""",
+    2: """
+    def on_plugin_load(self):
+        self.last = {}
+
+    def on_new_message(self, m):
+        if m.get('out') or m.get('peer_kind') not in ('user',) or not api.get_setting('enabled', True):
+            return
+        word = str(api.get_setting('word', DEFAULT_WORD) or '').lower()
+        if not word or word not in (m.get('text') or '').lower():
+            return
+        now = time.time()
+        if now - self.last.get(m['peer'], 0) < 60:
+            return
+        self.last[m['peer']] = now
+        api.send_message(m['peer'], str(api.get_setting('text', DEFAULT_TEXT) or ''))
+""",
+    3: """
+    def message_filter_hook(self, message):
+        word = str(api.get_setting('word', DEFAULT_WORD) or '').lower()
+        return bool(api.get_setting('enabled', True) and word and word in (message.get('text') or '').lower())
+""",
+}
+
+
+def _fw_build_source(name, kind, word, text):
+    import random as _r
+    title, _wl, _tl, perms, desc = _FW_TEMPLATES[kind]
+    slug = ''.join(c for c in name.lower() if c.isalnum() and c.isascii())[:14] or 'my'
+    pid = 'my_%s_%04d' % (slug, _r.randint(0, 9999))
+    details = ('%s\nШаблон: %s.\nСоздан в конструкторе плагинов. Слово и текст меняются в настройках плагина '
+               '(Кастомизация, раздел «Плагины», или значок шестерёнки на карточке).'
+               % (desc.format(word=word), title))
+    head = '\n'.join([
+        '__id__ = %r' % pid, '__name__ = %r' % name, '__description__ = %r' % desc.format(word=word)[:200],
+        '__details__ = %r' % details, '__author__ = "вы"', '__version__ = "1.0.0"', '__icon__ = "✏️"',
+        '__min_version__ = "0.1.0"', '__permissions__ = %r' % perms, '',
+        'import time', '',
+        'from base_plugin import BasePlugin, HookResult, HookStrategy, Input, Switch', 'from mokagram_sdk import api', '',
+        'DEFAULT_WORD = %r' % word, 'DEFAULT_TEXT = %r' % text, '', '',
+        'class Mine(BasePlugin):',
+        '    def create_settings(self):',
+        '        return [',
+        '            Switch(key="enabled", text="Включён", default=True),',
+        '            Input(key="word", text=%r, default=DEFAULT_WORD),' % _FW_TEMPLATES[kind][1],
+    ])
+    if kind != 3:
+        head += '\n            Input(key="text", text=%r, default=DEFAULT_TEXT),' % _FW_TEMPLATES[kind][2]
+    return head + '\n        ]\n' + _FW_BUILDER_BODY[kind]
+
+
+def _moka_builder():
+    """Окно «Создать плагин»: шаблон, слово, текст. Готовый файл ставится обычным окном установки."""
+    def done(payload):
+        if payload.get('button') != 'make':
+            return
+        v = payload.get('values') or {}
+        name = str(v.get('name') or '').strip()[:40]
+        word = str(v.get('word') or '').strip()[:60]
+        text = str(v.get('text') or '')[:2000]
+        try:
+            kind = int(v.get('kind', 0))
+        except (TypeError, ValueError):
+            kind = 0
+        kind = min(max(kind, 0), len(_FW_TEMPLATES) - 1)
+        if not name or not word or (kind != 3 and not text):
+            _fw_private('Конструктор', 'Заполните название, слово и текст.')
+            return
+        import tempfile
+        src = _fw_build_source(name, kind, word, text)
+        tmp = tempfile.mkdtemp(prefix='moka_builder_')
+        path = os.path.join(tmp, 'my.plugin')
+        with open(path, 'w', encoding='utf8') as f:
+            f.write(src)
+        _fw_install_downloaded(path)
+
+    cb = _fw_cb(done)
+    _moka_native('dialog_show', json.dumps({
+        'pid': '_fw', 'title': 'Создать плагин',
+        'message': 'Без кода: выберите шаблон и заполните поля. Потом всё можно поменять в настройках плагина.',
+        'fields': [
+            {'type': 'input', 'key': 'name', 'text': 'Название плагина', 'default': ''},
+            {'type': 'select', 'key': 'kind', 'text': 'Шаблон', 'items': [t[0] for t in _FW_TEMPLATES], 'default': 0},
+            {'type': 'input', 'key': 'word', 'text': 'Слово или команда', 'default': ''},
+            {'type': 'input', 'key': 'text', 'text': 'Текст', 'default': '', 'multiline': True},
+        ],
+        'buttons': [{'id': 'make', 'text': 'Создать', 'style': 'primary'}, {'id': 'no', 'text': 'Отмена', 'style': 'cancel'}],
+        'cb': cb, 'close_cb': ''}, ensure_ascii=False))
 )PY";

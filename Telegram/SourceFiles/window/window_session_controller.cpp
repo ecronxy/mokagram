@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mokagram/plugins/mokagram_plugin_api.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "window/window_session_controller.h"
 
 #include "apiwrap.h"
@@ -2005,6 +2006,7 @@ void SessionController::setupScreenshotProtection() {
 	) | rpl::on_next([](Dialogs::Key key) {
 		Mokagram::Plugins::EmitChatOpened(key.peer());
 	}, lifetime());
+	Mokagram::Plugins::MaybeShowWelcome(this);
 }
 
 void SessionController::setupShortcuts() {

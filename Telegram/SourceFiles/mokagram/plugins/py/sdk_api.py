@@ -382,12 +382,13 @@ def chat_info(peer):
     return {k: v for k, v in res.items() if k != 'ok'} if res.get('ok') else None
 
 
-def open_chat(peer):
-    peer, _, ok = _ids(peer)
+def open_chat(peer, msg_id=None):
+    """Открыть чат; с msg_id сразу прокрутить к этому сообщению. Нужно право ui."""
+    peer, msg, ok = _ids(peer, msg_id)
     entry = _gate('open_chat', 'ui', peer)
     if entry is None or not ok or not _limit(entry, 'open', 20, 60):
         return None
-    return True if _native('open_chat', {'peer': peer}).get('ok') else None
+    return True if _native('open_chat', {'peer': peer, 'msg_id': msg}).get('ok') else None
 
 
 def open_url(url):

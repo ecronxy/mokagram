@@ -520,6 +520,15 @@ std::string CallBadgeHook(const std::string &messageJson, LogFn log) {
 	return result;
 }
 
+void OpenPluginBuilder(LogFn log) {
+	if (!_started) {
+		return;
+	}
+	const auto gil = Gil();
+	CallStr("_moka_builder", {});
+	Drain(log);
+}
+
 void RestoreBackupFile(const std::string &path, LogFn log) {
 	if (!_started) {
 		return;

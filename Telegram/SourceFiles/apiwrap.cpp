@@ -4779,6 +4779,7 @@ void ApiWrap::sendMessage(
 			message.action.replyTo.messageId)) {
 		return;
 	}
+	Mokagram::Snippets::ApplyFont(message.textWithTags);
 	const auto &textWithTags = message.textWithTags;
 
 	auto action = message.action;

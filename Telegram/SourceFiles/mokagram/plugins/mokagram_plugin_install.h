@@ -56,11 +56,16 @@ void OpenPluginDocument(
 // Делает из прямоугольной кнопки пилюлю: накладывает на углы виджеты цвета фона.
 void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg);
 
+// Окно первого запуска (один раз после входа) и его принудительный показ.
+void MaybeShowWelcome(not_null<Window::SessionController*> controller);
+void ShowWelcome(Window::SessionController *controller);
+
 // Пункты плагинов в контекстное меню сообщения.
 void AddMessageMenuItems(
 	not_null<Ui::PopupMenu*> menu,
 	HistoryItem *item,
-	const QString &selected = QString());
+	const QString &selected = QString(),
+	const std::vector<not_null<HistoryItem*>> &selectedItems = {});
 
 // Пункты плагинов для места "chat" (меню чата и строки списка) и "profile" (меню профиля).
 // ctx: peer, title, kind (user|bot|group|channel), username. add вызывается на каждый пункт.

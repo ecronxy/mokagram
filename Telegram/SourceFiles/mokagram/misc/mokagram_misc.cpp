@@ -77,6 +77,13 @@ constexpr auto kMaxAccountsKey = "misc.max_accounts";
 
 void RegisterSettings() {
 	Settings::Register({
+		.key = u"misc.welcome_shown"_q,
+		.title = u"welcome"_q,
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.hidden = true,
+	});
+	Settings::Register({
 		.key = QString::fromUtf8(kMaxAccountsKey),
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Аккаунты")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько аккаунтов можно добавить")),
@@ -90,6 +97,36 @@ void RegisterSettings() {
 		.sectionIcon = u"accounts"_q,
 		.sectionNote = QString::fromUtf8(
 			Mokagram::Lang::Tr("Переключаться между аккаунтами можно в меню слева вверху. Здесь настраивается только их предельное число.")),
+	});
+	Settings::Register({
+		.key = u"chats.font"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Шрифт сообщений")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Каким шрифтом отправлять")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Всё, что вы пишете, уходит выбранным начертанием: напишете «привет», уйдёт жирным.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Mokagram::Lang::Tr("Обычный")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Жирный")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Курсив")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Жирный курсив")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Подчёркнутый")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Зачёркнутый")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Моноширинный")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Скрытый (спойлер)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Цитата")),
+			QString::fromUtf8("𝐁𝐨𝐥𝐝 (жирный)"),
+			QString::fromUtf8("𝓢𝓬𝓻𝓲𝓹𝓽 (рукописный)"),
+			QString::fromUtf8("𝔊𝔬𝔱𝔥𝔦𝔠 (готический)"),
+			QString::fromUtf8("Ⓒⓘⓡⓒⓛⓔⓢ (в кружках)"),
+			QString::fromUtf8("Ｗｉｄｅ (широкий)"),
+			QString::fromUtf8("ꜱᴍᴀʟʟ ᴄᴀᴘꜱ (малые заглавные)"),
+		},
+		.category = u"chats"_q,
+		.sectionIcon = u"edit"_q,
+		.sectionNote = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Начертания с 𝐁𝐨𝐥𝐝 и ниже меняют только латиницу, кириллица остаётся обычной. Команды плагинов, ссылки, @имена и текст, где вы сами выделили жирный или курсив, не меняются.")),
 	});
 	const auto look = QString::fromUtf8(Mokagram::Lang::Tr("Размеры в чате"));
 	const auto size = [&](const char *key, const char *title, int def, int lo, int hi) {
@@ -271,7 +308,7 @@ namespace {
 struct State {
 	base::flat_set<quint64> users;
 	base::flat_set<quint64> remote;
-	DocumentId icon = 5397879498492389616ULL;
+	DocumentId icon = 5402452264273094522ULL;
 	bool loaded = false;
 };
 
@@ -326,14 +363,33 @@ struct TeamEntry {
 	const char *name;
 	const char *ru;
 	const char *en;
+	bool blue;
 };
 constexpr TeamEntry kTeam[] = {
-	{ "litteraliy", "Разработчик mokaGram", "Maintainer mokaGram" },
+	{ "litteraliy", "Разработчик mokaGram", "Maintainer mokaGram", false },
+	{ "xdshka", "Разработчик mokaGram", "Maintainer mokaGram", true },
 };
 constexpr auto kOwnerId = 6612638154ULL;
 
 [[nodiscard]] bool Russian() {
 	return ::Lang::Id().startsWith(u"ru"_q);
+}
+
+constexpr auto kBlueIcon = 5397879498492389616ULL;
+
+[[nodiscard]] bool BlueIcon(not_null<UserData*> user) {
+	if (peerToUser(user->id).bare == kOwnerId) {
+		return true;
+	}
+	for (const auto &username : user->usernames()) {
+		const auto lower = username.toLower().toUtf8();
+		for (const auto &entry : kTeam) {
+			if (entry.blue && lower == entry.name) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 [[nodiscard]] const char *TeamRole(not_null<UserData*> user) {
@@ -369,15 +425,109 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	}
 	return Ui::BotVerifyDetails{
 		.botId = UserId(0),
-		.iconId = state.icon,
+		.iconId = BlueIcon(user) ? kBlueIcon : state.icon,
 		.description = TextWithEntities{
-			QString::fromUtf8(role ? role : Mokagram::Lang::Tr("Разработчик mokaGram")),
+			QString::fromUtf8(role ? role : (state.remote.contains(id) ? Mokagram::Lang::Tr("Поддерживает mokaGram") : Mokagram::Lang::Tr("Разработчик mokaGram"))),
 		},
 	};
 }
 
+// Список выданных галочек пришёл (из бота или из файла): обновляем значки у уже загруженных людей.
+void ApplyRemote(const std::vector<quint64> &ids, quint64 icon) {
+	auto &state = Data();
+	const auto old = base::take(state.remote);
+	if (icon) {
+		state.icon = icon;
+	}
+	for (const auto id : ids) {
+		state.remote.emplace(id);
+	}
+	auto all = old;
+	for (const auto id : state.remote) {
+		all.emplace(id);
+	}
+	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
+	if (const auto session = account ? account->maybeSession() : nullptr) {
+		for (const auto id : all) {
+			if (const auto user = session->data().userLoaded(UserId(id))) {
+				user->setBotVerifyDetails(Synthetic(user));
+			}
+		}
+	}
+}
+
+// Основной путь: inline-запрос «list» к @mokagent (без сообщений в чатах, нужна только сессия).
+void RefreshInline(Fn<void()> fail) {
+	constexpr auto kBotId = 8687512401LL;
+	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
+	const auto session = account ? account->maybeSession() : nullptr;
+	if (!session) {
+		fail();
+		return;
+	}
+	const auto weak = base::make_weak(session);
+	const auto ask = [=](not_null<UserData*> bot) {
+		session->api().request(MTPmessages_GetInlineBotResults(
+			MTP_flags(0),
+			bot->inputUser(),
+			MTP_inputPeerSelf(),
+			MTPInputGeoPoint(),
+			MTP_string(u"list"_q),
+			MTP_string()
+		)).done([=](const MTPmessages_BotResults &result) {
+			auto ids = std::vector<quint64>();
+			auto icon = quint64();
+			result.match([&](const MTPDmessages_botResults &data) {
+				for (const auto &item : data.vresults().v) {
+					item.match([&](const MTPDbotInlineResult &r) {
+						const auto id = qs(r.vid());
+						const auto title = r.vtitle() ? qs(*r.vtitle()) : QString();
+						if (id == u"e"_q) {
+							icon = title.toULongLong();
+						} else if (id.startsWith('l')) {
+							for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
+								if (const auto value = part.toULongLong()) {
+									ids.push_back(value);
+								}
+							}
+						}
+					}, [](const auto &) {});
+				}
+			});
+			ApplyRemote(ids, icon);
+		}).fail([=] {
+			fail();
+		}).send();
+	};
+	if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
+		ask(bot);
+		return;
+	}
+	session->api().request(MTPcontacts_Search(
+		MTP_flags(0),
+		MTP_string(u"mokagent"_q),
+		MTP_int(5)
+	)).done([=](const MTPcontacts_Found &result) {
+		result.match([&](const MTPDcontacts_found &data) {
+			session->data().processUsers(data.vusers());
+		});
+		if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
+			ask(bot);
+		} else {
+			fail();
+		}
+	}).fail([=] {
+		fail();
+	}).send();
+}
+
 void Refresh(int index = 0) {
 	Load();
+	if (index == 0) {
+		RefreshInline([] { Refresh(1); });
+		return;
+	}
+	index -= 1;
 	if (index >= int(std::size(kBadgesUrls))) {
 		return;
 	}
@@ -393,41 +543,28 @@ void Refresh(int index = 0) {
 			: QJsonDocument();
 		if (!document.isObject()) {
 			// Сервер недоступен: пробуем следующий источник.
-			Refresh(index + 1);
+			Refresh(index + 2);
 			return;
 		}
 		const auto object = document.object();
-		auto &state = Data();
-		const auto old = base::take(state.remote);
-		const auto icon = object.value(u"emoji_id"_q).toVariant().toString().toULongLong();
-		if (icon) {
-			state.icon = icon;
-		}
+		auto ids = std::vector<quint64>();
 		for (const auto &value : object.value(u"users"_q).toArray()) {
 			if (const auto id = value.toVariant().toULongLong()) {
-				state.remote.emplace(id);
+				ids.push_back(id);
 			}
 		}
-		// Пересчитываем значок у тех, кто уже загружен, и у тех, кого убрали.
-		auto all = old;
-		for (const auto id : state.remote) {
-			all.emplace(id);
-		}
-		const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
-		if (const auto session = account ? account->maybeSession() : nullptr) {
-			for (const auto id : all) {
-				if (const auto user = session->data().userLoaded(UserId(id))) {
-					user->setBotVerifyDetails(Synthetic(user));
-				}
-			}
-		}
+		ApplyRemote(ids, object.value(u"emoji_id"_q).toVariant().toString().toULongLong());
 	});
 }
 
 void Start() {
 	Refresh(0);
+	// При старте клиент ещё может быть не авторизован: пробуем ещё раз позже.
+	for (const auto delay : { 20000, 90000 }) {
+		QTimer::singleShot(delay, [] { Refresh(0); });
+	}
 	static auto timer = new QTimer();
-	timer->setInterval(30 * 60 * 1000);
+	timer->setInterval(10 * 60 * 1000);
 	QObject::connect(timer, &QTimer::timeout, [] { Refresh(0); });
 	timer->start();
 }
@@ -768,6 +905,26 @@ void RegisterSettings() {
 		.defaultValue = 6,
 		.minValue = 0,
 		.maxValue = 50,
+	});
+	S::Register({
+		.key = u"lag.autostart"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Запуск и фон")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Запускать вместе с системой")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Нужно, чтобы расписания и команды плагинов работали сразу после включения компьютера.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = false,
+		.category = u"look"_q,
+		.sectionIcon = u"storage"_q,
+	});
+	S::Register({
+		.key = u"lag.background"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Запуск и фон")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Крестик убирает окно в фон")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Клиент продолжает работать со свёрнутым окном: плагины, расписания и уведомления не останавливаются. Если выключить, крестик закрывает клиент.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+		.category = u"look"_q,
+		.sectionIcon = u"storage"_q,
 	});
 	lag({
 		.key = u"lag.toaster"_q,

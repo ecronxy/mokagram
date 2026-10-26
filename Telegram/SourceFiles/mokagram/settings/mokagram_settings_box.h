@@ -2,6 +2,7 @@
 #pragma once
 
 namespace Ui {
+class RpWidget;
 class GenericBox;
 } // namespace Ui
 
@@ -37,6 +38,19 @@ void ShowSettingsPage(
 	Window::SessionController *controller,
 	const QString &page);
 void StartDebugCommands();
+
+// Открывает «Кастомизацию» сразу с поиском по тексту (например, по названию плагина).
+void ShowCustomizeSearch(
+	Window::SessionController *controller,
+	const QString &query);
+
+// Значок плагина из набора iOSTelegram по обычному эмодзи. false: набора пока нет, рисуйте запасной.
+bool PaintPackIcon(
+	QPainter &p,
+	const QRect &rect,
+	const QString &alt,
+	std::shared_ptr<void> &state,
+	not_null<Ui::RpWidget*> widget);
 
 // Значок строки настроек из набора iOSTelegram; nullptr, если для значка
 // нет пары или набор ещё не загрузился.

@@ -1,5 +1,7 @@
 // Mokagram: окно установки плагина при клике на файл .plugin в чате.
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "base/call_delayed.h"
 
@@ -943,6 +945,35 @@ Card AddPluginCard(
 	const auto text = description.isEmpty()
 		? nullptr
 		: Ui::CreateChild<Ui::FlatLabel>(panel, description, st::boxLabel);
+	// Подробное описание раскрывается под ссылкой «Подробнее».
+	const auto details = entry.value("details").toString();
+	const auto more = details.isEmpty()
+		? nullptr
+		: Ui::CreateChild<Ui::LinkButton>(
+			panel,
+			U(Mokagram::Lang::Tr("Подробнее")));
+	const auto moreText = std::make_shared<QPointer<Ui::FlatLabel>>();
+	const auto expanded = std::make_shared<bool>(false);
+	const auto relayout = std::make_shared<Fn<void()>>();
+	if (more) {
+		more->setClickedCallback([=] {
+			*expanded = !*expanded;
+			if (*expanded) {
+				*moreText = Ui::CreateChild<Ui::FlatLabel>(
+					panel,
+					details,
+					st::boxLabel);
+				(*moreText)->show();
+			} else if (*moreText) {
+				(*moreText)->deleteLater();
+				*moreText = nullptr;
+			}
+			more->setText(*expanded
+				? U(Mokagram::Lang::Tr("Свернуть"))
+				: U(Mokagram::Lang::Tr("Подробнее")));
+			(*relayout)();
+		});
+	}
 
 	const auto path = QString::fromStdString(PluginsDir())
 		+ '/' + fileName;
@@ -964,6 +995,12 @@ Card AddPluginCard(
 			SetPinned(id.toStdString(), !pinned);
 			refresh();
 		});
+	Ui::AbstractButton *gear = nullptr;
+	if (entry.value("has_settings").toBool()) {
+		gear = MakeIconButton(panel, st::menuIconSettings, [=] {
+			Settings::ShowCustomizeSearch(controller, name);
+		});
+	}
 	const auto trash = MakeIconButton(
 		panel,
 		st::menuIconDeleteAttention,
@@ -983,7 +1020,8 @@ Card AddPluginCard(
 			st::lineWidth,
 			line);
 	});
-	panel->widthValue() | rpl::on_next([=](int width) {
+	*relayout = [=] {
+		const auto width = panel->width();
 		const auto textLeft = kCardPad + kAvatar + 12;
 		avatar->move(kCardPad, kCardPad);
 		toggle->move(
@@ -1000,13 +1038,28 @@ Card AddPluginCard(
 			text->move(kCardPad, bottom + 12);
 			bottom += 12 + text->height();
 		}
+		if (more) {
+			more->move(kCardPad, bottom + 4);
+			bottom += 4 + more->height();
+			if (*expanded && *moreText) {
+				(*moreText)->resizeToWidth(width - 2 * kCardPad);
+				(*moreText)->move(kCardPad, bottom + 6);
+				bottom += 6 + (*moreText)->height();
+			}
+		}
 		bottom += 10;
 		const auto y = bottom + 2;
 		share->move(kCardPad - 8, y);
 		open->move(kCardPad - 8 + share->width(), y);
 		pin->move(kCardPad - 8 + 2 * share->width(), y);
+		if (gear) {
+			gear->move(kCardPad - 8 + 3 * share->width(), y);
+		}
 		trash->move(width - kCardPad + 8 - trash->width(), y);
 		panel->resize(width, y + trash->height() + 4);
+	};
+	panel->widthValue() | rpl::on_next([=](int) {
+		(*relayout)();
 	}, panel->lifetime());
 	return { wrap, (name + ' ' + description + ' ' + author).toLower() };
 }
@@ -1038,6 +1091,207 @@ not_null<Ui::AbstractButton*> MakeHeaderButton(
 		Fn<void()> callback) {
 	return MakeRoundButton(parent, close, std::move(callback));
 }
+
+// Окно первого запуска: три настройки приватности и быстрые переходы.
+void WelcomeBox(
+		not_null<Ui::GenericBox*> box,
+		Window::SessionController *controller) {
+	RoundedNoButtons(box);
+	const auto content = box->verticalLayout();
+	const auto weak = base::make_weak(controller);
+
+	const auto header = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		QMargins(10, 10, 10, 0));
+	header->resize(header->width(), 40);
+	const auto close = MakeRoundButton(
+		header,
+		true,
+		[=] { box->closeBox(); });
+	const auto title = Ui::CreateChild<Ui::FlatLabel>(
+		header,
+		U(Mokagram::Lang::Tr("Добро пожаловать")),
+		st::boxTitle);
+	header->widthValue() | rpl::on_next([=](int width) {
+		close->moveToLeft(0, 0);
+		title->moveToLeft((width - title->width()) / 2, 6);
+	}, header->lifetime());
+	content->add(
+		object_ptr<Ui::FlatLabel>(
+			content,
+			U(Mokagram::Lang::Tr("Несколько настроек для старта. Всё это можно поменять потом в «Настройки mokaGram».")),
+			st::boxDividerLabel),
+		QMargins(24, 12, 24, 4));
+
+	struct Row {
+		QString title;
+		QString about;
+		bool on;
+		Fn<void(bool)> apply;
+	};
+	namespace S = Mokagram::Settings;
+	auto rows = std::vector<Row>{
+		{
+			U(Mokagram::Lang::Tr("Скрывать просмотр историй")),
+			U(Mokagram::Lang::Tr("Люди не узнают, что вы смотрели их истории.")),
+			S::Bool(u"ghost.enabled"_q) && S::Bool(u"ghost.stories"_q),
+			[](bool on) {
+				if (on) {
+					S::SetBool(u"ghost.enabled"_q, true);
+					S::SetBool(u"ghost.stories"_q, true);
+					S::SetBool(u"ghost.read"_q, false);
+					S::SetBool(u"ghost.online"_q, false);
+					S::SetBool(u"ghost.typing"_q, false);
+				} else {
+					S::SetBool(u"ghost.stories"_q, false);
+					if (!S::Bool(u"ghost.read"_q)
+						&& !S::Bool(u"ghost.online"_q)
+						&& !S::Bool(u"ghost.typing"_q)) {
+						S::SetBool(u"ghost.enabled"_q, false);
+					}
+				}
+			},
+		},
+		{
+			U(Mokagram::Lang::Tr("Сохранять удалённые сообщения")),
+			U(Mokagram::Lang::Tr("Если собеседник удалил или поправил сообщение, у вас останется копия.")),
+			S::Bool(u"history.save_deleted"_q),
+			[](bool on) {
+				S::SetBool(u"history.save_deleted"_q, on);
+				S::SetBool(u"history.save_edited"_q, on);
+			},
+		},
+		{
+			U(Mokagram::Lang::Tr("Предупреждать о мошенниках")),
+			U(Mokagram::Lang::Tr("Помечает фейковые офферы и гарант-боты.")),
+			S::Bool(u"scam.enabled"_q),
+			[](bool on) {
+				S::SetBool(u"scam.enabled"_q, on);
+			},
+		},
+	};
+
+	const auto card = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		QMargins(14, 10, 14, 0));
+	const auto lines = std::make_shared<std::vector<int>>();
+	card->resize(card->width(), 3 * 72);
+	card->paintOn([=](QPainter &p) {
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(card->rect(), 22, 22);
+		auto line = st::windowSubTextFg->c;
+		line.setAlpha(36);
+		for (const auto y : *lines) {
+			p.fillRect(
+				kCardPad,
+				y,
+				card->width() - 2 * kCardPad,
+				st::lineWidth,
+				line);
+		}
+	});
+	struct Placed {
+		Ui::FlatLabel *name;
+		Ui::FlatLabel *about;
+		Ui::AbstractButton *toggle;
+	};
+	auto placed = std::make_shared<std::vector<Placed>>();
+	for (auto &row : rows) {
+		const auto apply = row.apply;
+		const auto name = Ui::CreateChild<Ui::FlatLabel>(
+			card,
+			row.title,
+			st::boxLabel);
+		const auto about = Ui::CreateChild<Ui::FlatLabel>(
+			card,
+			row.about,
+			st::boxDividerLabel);
+		const auto toggle = MakeSwitch(card, row.on, apply);
+		placed->push_back({ name, about, toggle.get() });
+	}
+	card->widthValue() | rpl::on_next([=](int width) {
+		lines->clear();
+		auto y = 0;
+		for (auto i = 0; i != int(placed->size()); ++i) {
+			const auto &one = (*placed)[i];
+			const auto textWidth = width - 3 * kCardPad - one.toggle->width();
+			one.name->resizeToWidth(textWidth);
+			one.about->resizeToWidth(textWidth);
+			const auto block = one.name->height() + 2 + one.about->height();
+			const auto height = std::max(64, block + 28);
+			one.name->move(kCardPad, y + (height - block) / 2);
+			one.about->move(
+				kCardPad,
+				y + (height - block) / 2 + one.name->height() + 2);
+			one.toggle->move(
+				width - kCardPad - one.toggle->width(),
+				y + (height - one.toggle->height()) / 2);
+			y += height;
+			if (i + 1 != int(placed->size())) {
+				lines->push_back(y);
+			}
+		}
+		card->resize(width, y);
+	}, card->lifetime());
+
+	Ui::AddSkip(content, 14);
+	static const auto stBig = [] {
+		auto result = st::defaultActiveButton;
+		result.height = 40;
+		result.textTop = 10;
+		result.radius = 20;
+		result.fullRadius = true;
+		return result;
+	}();
+	static const auto stSoft = [] {
+		auto result = st::defaultLightButton;
+		result.height = 40;
+		result.textTop = 10;
+		result.radius = 20;
+		result.fullRadius = true;
+		return result;
+	}();
+	const auto buttons = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		QMargins(14, 0, 14, 16));
+	buttons->resize(buttons->width(), 40);
+	const auto plugins = Ui::CreateChild<Ui::RoundButton>(
+		buttons,
+		rpl::single(U(Mokagram::Lang::Tr("Плагины"))),
+		stSoft);
+	const auto more = Ui::CreateChild<Ui::RoundButton>(
+		buttons,
+		rpl::single(U(Mokagram::Lang::Tr("Настройки"))),
+		stSoft);
+	const auto done = Ui::CreateChild<Ui::RoundButton>(
+		buttons,
+		rpl::single(U(Mokagram::Lang::Tr("Готово"))),
+		stBig);
+	plugins->setClickedCallback([=] {
+		box->closeBox();
+		if (const auto strong = weak.get()) {
+			strong->show(Box(PluginsBox, strong));
+		}
+	});
+	more->setClickedCallback([=] {
+		box->closeBox();
+		Settings::ShowSettingsPage(weak.get(), u"chats"_q);
+	});
+	done->setClickedCallback([=] { box->closeBox(); });
+	buttons->widthValue() | rpl::on_next([=](int width) {
+		const auto gap = 8;
+		const auto each = (width - 2 * gap) / 3;
+		plugins->resizeToWidth(each);
+		more->resizeToWidth(each);
+		done->resizeToWidth(width - 2 * each - 2 * gap);
+		plugins->moveToLeft(0, 0);
+		more->moveToLeft(each + gap, 0);
+		done->moveToLeft(2 * (each + gap), 0);
+	}, buttons->lifetime());
+}
+
 
 void PluginsBox(
 		not_null<Ui::GenericBox*> box,
@@ -1077,7 +1331,7 @@ void PluginsBox(
 		result.textBgActive = searchClear.color();
 		result.textMargins = style::margins(0, 7, 0, 7);
 		result.placeholderFgActive = st::windowSubTextFg;
-		result.placeholderScale = 1.;
+		result.placeholderScale = 0.;
 		result.placeholderShift = 0;
 		result.placeholderFont = st::normalFont;
 		result.border = 0;
@@ -1220,6 +1474,9 @@ void PluginsBox(
 			st::popupMenuWithIcons);
 		(*menu)->addAction(U(Mokagram::Lang::Tr("Добавить плагин")), pickPlugin, &st::menuIconAdd);
 		(*menu)->addAction(U(Mokagram::Lang::Tr("Магазин плагинов")), openStore, &st::menuIconShop);
+		(*menu)->addAction(U(Mokagram::Lang::Tr("Создать плагин")), [=] {
+			OpenPluginBuilder(log);
+		}, &st::menuIconEdit);
 		(*menu)->popup(QCursor::pos());
 	});
 	Ui::AddSkip(content, 14);
@@ -1335,10 +1592,29 @@ void RestoreFromBackupDocument(
 
 } // namespace
 
+void ShowWelcome(Window::SessionController *controller) {
+	if (controller) {
+		controller->show(Box(WelcomeBox, controller));
+	}
+}
+
+void MaybeShowWelcome(not_null<Window::SessionController*> controller) {
+	if (Mokagram::Settings::Bool(u"misc.welcome_shown"_q)) {
+		return;
+	}
+	// Отмечаем сразу: окно показывается один раз, даже если его закрыли крестиком.
+	Mokagram::Settings::SetBool(u"misc.welcome_shown"_q, true);
+	const auto weak = base::make_weak(controller);
+	base::call_delayed(2500, controller, [=] {
+		ShowWelcome(weak.get());
+	});
+}
+
 void AddMessageMenuItems(
 		not_null<Ui::PopupMenu*> menu,
 		HistoryItem *item,
-		const QString &selected) {
+		const QString &selected,
+		const std::vector<not_null<HistoryItem*>> &selectedItems) {
 	if (!item) {
 		return;
 	}
@@ -1348,6 +1624,17 @@ void AddMessageMenuItems(
 	ctx.insert("text", item->originalText().text);
 	ctx.insert("out", item->out());
 	ctx.insert("selected", selected);
+	if (!selectedItems.empty()) {
+		// Выделено несколько сообщений: плагины получают их id и могут обработать пачкой.
+		auto ids = QJsonArray();
+		auto allOut = true;
+		for (const auto &one : selectedItems) {
+			ids.push_back(QString::number(one->id.bare));
+			allOut = allOut && one->out();
+		}
+		ctx.insert("selected_ids", ids);
+		ctx.insert("selected_all_out", allOut);
+	}
 	ctx.insert("has_media", item->media() != nullptr);
 	ctx.insert("date", double(item->date()));
 	const auto ctxJson = QJsonDocument(ctx).toJson(

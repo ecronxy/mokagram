@@ -1702,7 +1702,7 @@ void ShowMusicBox(
 			const auto pad = std::max(0, (44 - st::defaultInputField.style.font->height) / 2);
 			result.textMargins = style::margins(0, pad, 0, pad);
 			result.placeholderFgActive = st::windowSubTextFg;
-			result.placeholderScale = 1.;
+			result.placeholderScale = 0.;
 			result.placeholderShift = 0;
 			result.placeholderFont = st::normalFont;
 			result.border = 0;

@@ -1,6 +1,8 @@
 // Mokagram: окно «Кастомизация», строится из реестра настроек.
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
+#include "mokagram/plugins/mokagram_plugin_store.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
@@ -46,6 +48,7 @@
 #include "data/data_document.h"
 #include "api/api_common.h"
 #include "core/application.h"
+#include "data/data_changes.h"
 #include "mainwindow.h"
 #include "data/data_session.h"
 #include "main/main_session.h"
@@ -95,6 +98,8 @@
 
 namespace Mokagram::Settings {
 namespace {
+
+QString PendingQuery;
 
 constexpr auto kPad = 16;
 constexpr auto kPlate = 30;
@@ -235,6 +240,8 @@ struct Category {
 		{ "history.filters_enabled", "📑" },
 		{ "hide_blocked", "🚫" },
 		{ "lag.idle", "💤" },
+		{ "lag.autostart", "▶️" },
+		{ "lag.background", "🔽" },
 		{ "lag.toaster", "⚙️" },
 		{ "lag.emoji_cap", "😜" },
 		{ "plugins.prefix", "🔧" },
@@ -712,7 +719,8 @@ void PaintPlate(
 		const QString &name,
 		const QString &alt,
 		PackIcon &pack,
-		not_null<Ui::RpWidget*> widget) {
+		not_null<Ui::RpWidget*> widget,
+		bool plate = true) {
 	if (!pack.emoji && !pack.tried) {
 		pack.emoji = !alt.isEmpty()
 			? PackIcons::Instance().makeAlt(
@@ -793,6 +801,9 @@ void PaintPlate(
 				rect.x() + (rect.width() - kPackEmojiSize) / 2,
 				rect.y() + (rect.height() - kPackEmojiSize) / 2),
 		});
+		return;
+	}
+	if (!plate) {
 		return;
 	}
 	p.setPen(Qt::NoPen);
@@ -969,10 +980,14 @@ void ShowColorBox(const QString &title, const QString &key) {
 
 	const auto key = entry.key;
 	const auto kind = entry.kind;
-	const auto iconName = entry.icon.isEmpty()
+	// «alt:эмодзи» у плагинов: значок самого плагина из набора.
+	const auto altIcon = entry.icon.startsWith(u"alt:"_q);
+	const auto iconName = (entry.icon.isEmpty() || altIcon)
 		? entry.sectionIcon
 		: entry.icon;
-	const auto autoAlt = entry.icon.isEmpty() ? AutoAlt(entry.key) : QString();
+	const auto autoAlt = altIcon
+		? entry.icon.mid(4)
+		: entry.icon.isEmpty() ? AutoAlt(entry.key) : QString();
 	const auto &icon = IconByName(iconName);
 	auto description = entry.description;
 	if (const auto dot = description.indexOf(QStringLiteral(". ")); dot > 0) {
@@ -1529,7 +1544,7 @@ void CustomizeBox(
 		result.textBgActive = searchClear.color();
 		result.textMargins = style::margins(0, 7, 0, 7);
 		result.placeholderFgActive = st::windowSubTextFg;
-		result.placeholderScale = 1.;
+		result.placeholderScale = 0.;
 		result.placeholderShift = 0;
 		result.placeholderFont = st::normalFont;
 		result.border = 0;
@@ -2038,6 +2053,22 @@ void CustomizeBox(
 		applyFilter();
 	});
 
+	if (!PendingQuery.isEmpty()) {
+		const auto query = base::take(PendingQuery);
+		*searching = true;
+		headerTitle->hide();
+		pill->show();
+		field->show();
+		field->raise();
+		chipsWrap->toggle(false, anim::type::instant);
+		// Текст ставим уже после показа окна, иначе подсказка поля не гаснет.
+		crl::on_main(box, [=] {
+			field->setFocusFast();
+			field->setText(query);
+			applyFilter();
+		});
+	}
+
 	// Плавное появление окна: закрывающая плёнка постепенно тает.
 	const auto cover = Ui::CreateChild<Ui::RpWidget>(box.get());
 	MakeTransparent(cover);
@@ -2062,6 +2093,13 @@ void CustomizeBox(
 			cover->hide();
 		}
 	}, 1., 0., 380, anim::easeOutCubic);
+}
+
+void ShowCustomizeSearch(
+		Window::SessionController *controller,
+		const QString &query) {
+	PendingQuery = query;
+	ShowSettingsPage(controller, u"look"_q);
 }
 
 void ShowCustomizeBox(Window::SessionController *controller) {
@@ -2356,6 +2394,23 @@ void StartDebugCommands() {
 				message.textWithTags.text = cmd.mid(9);
 				history->session().api().sendMessage(std::move(message));
 			}
+		} else if (cmd == u"fakereact"_q) {
+			// Проверка цепочки события on_new_reaction в тестовом чате: настоящую реакцию может поставить только другой человек.
+			const auto history = controller->activeChatCurrent().history();
+			if (history && history->peer->id.value == 562954397233167ULL) {
+				if (const auto item = history->lastMessage()) {
+					history->session().changes().messageUpdated(
+						item,
+						Data::MessageUpdate::Flag::NewUnreadReaction);
+				}
+			}
+		} else if (cmd == u"welcome"_q) {
+			Mokagram::Plugins::ShowWelcome(controller);
+		} else if (cmd == u"pluginstore"_q) {
+			controller->show(Box(
+				Mokagram::Plugins::StoreBox,
+				controller,
+				Fn<void()>([] {})));
 		} else if (cmd == u"quit"_q) {
 			Core::Quit();
 		} else if (cmd == u"history"_q) {
@@ -2555,6 +2610,29 @@ void StartDebugCommands() {
 					Quote::ShowQuoteBox(controller, std::move(ids));
 				}
 			}
+		} else if (cmd.startsWith(u"setint:"_q)) {
+			const auto parts = cmd.mid(7).split('=');
+			if (parts.size() == 2) {
+				Mokagram::Settings::SetInt(parts[0], parts[1].toInt());
+			}
+		} else if (cmd.startsWith(u"wheel:"_q)) {
+			const auto parts = cmd.mid(6).split(',');
+			auto w = (QWidget*)controller->widget();
+			auto pt = QPoint(parts[0].toInt(), parts[1].toInt());
+			while (const auto child = w->childAt(pt)) {
+				pt = child->mapFrom(w, pt);
+				w = child;
+			}
+			auto e = QWheelEvent(
+				QPointF(pt),
+				QPointF(w->mapToGlobal(pt)),
+				QPoint(),
+				QPoint(0, parts[2].toInt()),
+				Qt::NoButton,
+				Qt::NoModifier,
+				Qt::NoScrollPhase,
+				false);
+			QCoreApplication::sendEvent(w, &e);
 		} else if (cmd.startsWith(u"mdrag:"_q)) {
 			const auto parts = cmd.mid(6).split(',');
 			auto w = (QWidget*)controller->widget();
@@ -2973,6 +3051,20 @@ std::unique_ptr<Ui::Text::CustomEmoji> AltIconEmoji(
 
 rpl::producer<> RowIconsUpdated() {
 	return PackIcons::Instance().updated();
+}
+
+bool PaintPackIcon(
+		QPainter &p,
+		const QRect &rect,
+		const QString &alt,
+		std::shared_ptr<void> &state,
+		not_null<Ui::RpWidget*> widget) {
+	if (!state) {
+		state = std::make_shared<PackIcon>();
+	}
+	const auto pack = static_cast<PackIcon*>(state.get());
+	PaintPlate(p, rect, QColor(), st::menuIconSettings, QString(), alt, *pack, widget, false);
+	return pack->emoji || !pack->normalized.isNull();
 }
 
 } // namespace Mokagram::Settings

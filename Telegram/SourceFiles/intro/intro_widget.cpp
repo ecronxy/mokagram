@@ -299,6 +299,13 @@ void Widget::createLanguageLink() {
 			Lang::GetOriginalValue(tr::lng_switch_to_this.base),
 			defaultId);
 	} else if (!suggested.isEmpty() && suggested != currentId && _api) {
+		// Первый запуск: сразу включаем язык системы, один раз за запуск.
+		static auto autoSwitched = false;
+		if (!autoSwitched) {
+			autoSwitched = true;
+			Lang::CurrentCloudManager().switchToLanguage(suggested);
+			return;
+		}
 		_api->request(MTPlangpack_GetStrings(
 			MTP_string(Lang::CloudLangPackName()),
 			MTP_string(suggested),

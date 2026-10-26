@@ -13,7 +13,7 @@
 ## Пункты интерфейса
 `self.add_menu_item(MenuItemData(menu_type=..., text, on_click(ctx), icon, priority, condition))` возвращает id, `remove_menu_item(id)`.
 Кнопки с иконкой: `HEADER_BUTTON` (шапка чата), `COMPOSER_BUTTON` (рядом с полем ввода), ctx: peer, title, kind, username.
-Места меню: `MESSAGE_CONTEXT_MENU` (ctx: id, peer, text, selected, out, has_media, date), `CHAT_ACTION_MENU` (меню чата и строки списка),
+Места меню: `MESSAGE_CONTEXT_MENU` (ctx: id, peer, text, selected, out, has_media, date; если выделено несколько сообщений, ещё `selected_ids` (список id) и `selected_all_out` (все свои)), `CHAT_ACTION_MENU` (меню чата и строки списка),
 `PROFILE_ACTION_MENU`, `ATTACH_MENU` (скрепка), `DRAWER_MENU`/`MAIN_MENU` (боковое меню). Для чатов ctx: peer, title, kind, username.
 Иконки по имени: copy, delete, edit, info, send, settings, search, translate, share, link, pin, forward, reply, bot, lock, palette, premium, timer и ещё ~70 (см. `MenuIconByName`).
 
@@ -25,14 +25,15 @@
 
 ## События (право messages.read)
 `on_new_message(m)`, `on_message_edited(m)`, `on_message_deleted(m)`, `on_new_reaction(m)`;
-m: id, peer, peer_title, peer_kind (user|bot|group|channel), from, text, entities, out, date, has_media, media (photo|video|voice|round|audio|sticker|gif|document), reply_to, buttons.
+m: id, peer, peer_title, peer_kind (user|bot|group|channel), from, text, entities, out, date, has_media, media (photo|video|voice|round|audio|sticker|gif|document), reply_to, buttons, views и forwards (если есть у сообщения, например у постов каналов).
+У сущностей `mention` и `mention_name` есть `user_id`, когда человек уже известен клиенту.
 `on_message_sent(info)`: ваше сообщение ушло, info: id (настоящий), old_id (локальный), peer, text. Только с настоящим id работают реакция, закреп, удаление.
 `on_chat_opened(peer)`, `on_peer_updated(peer)` (+changed: name, username, photo, about, blocked, emoji_status), `on_user_status(peer)` (+online), `on_typing(info)` (peer, from, from_title, action).
 `on_app_event(event)`: `AppEvent.START | STOP | PAUSE | RESUME`, права не нужны. Колбэки событий выполняются в отдельном потоке с таймаутом 5 с.
 
 ## Действия
 `send_message`, `send_file(peer, path, caption, as_photo)`, `edit_message(peer, id, text)`, `get_message(peer, id)`, `chat_info(peer)`,
-`open_chat(peer)`, `open_url(url)`, `copy_text(text)`.
+`open_chat(peer, msg_id=None)` (с msg_id прокручивает к сообщению), `open_url(url)`, `copy_text(text)`.
 `get_dialogs(limit)`, `get_history(peer, limit)` (только загруженные), `current_chat()`, `mark_read(peer)`.
 Остальное: `forward_messages(from, ids, to, cb)`, `react(peer, id, emoji, cb)` (число вместо эмодзи это premium-эмодзи), `pin_message(peer, id, pin)`,
 `delete_messages(peer, ids, revoke)` и `delete_message`, `get_me()`, `get_user_info(peer)` и `get_user`, `get_participants(peer, cb, limit)`,
@@ -106,6 +107,15 @@ m: id, peer, peer_title, peer_kind (user|bot|group|channel), from, text, entitie
 
 ## Замена текста
 `message_text_hook(m)` (m: id, peer, text, entities, date) возвращает новую строку, `{'text', 'entities'}` или None. Работает для входящих сообщений при показе, на сервере ничего не меняется; копирование и поиск видят уже новый текст. Форматирование (жирный, ссылки-сущности) в заменённом тексте теряется, обычные ссылки определяются заново. Нужно право `messages.read`.
+Только в этом хуке в `entities` можно добавить `{'type': 'userpic', 'offset': i, 'length': 1, 'user_id': '123'}`: на месте этого символа рисуется маленькая аватарка человека (он должен быть уже известен клиенту). Символом-заглушкой берите `\u200b`: пробел в начале текста клиент обрезает, и аватарка пропадёт. Видно только у вас, на сервер не уходит; в `send_message` такая сущность игнорируется.
+
+## Настройки и конструктор
+Настройки плагина (`create_settings`) лежат в «Кастомизация», раздел «Плагины», а в окне «Плагины» у карточки с настройками есть шестерёнка: она открывает их сразу. У строк настроек значок самого плагина (`__icon__`), если у элемента нет своего `icon`.
+Необязательное `__details__` (одна строка, `\n` для переносов) показывается в магазине и в списке плагинов под ссылкой «Подробнее».
+Меню «≡» в окне «Плагины» → «Создать плагин»: плагин без кода по шаблону (команда, автозамена, автоответ, скрытие сообщений). Получается обычный `.plugin` с переключателем и полями настроек, ставится через стандартное окно установки.
+
+## Значок плагина
+`__icon__` это обычный эмодзи. Если такой есть в наборе iOSTelegram, в магазине рисуется его анимированная версия, иначе обычный символ.
 
 ## Потоки и таймеры
 `set_timeout(fn, sec)`, `set_interval(fn, sec)`, `cancel_timer(id)`, `run_on_ui_thread(fn, delay_ms)`, `run_on_queue(fn, delay_ms)`.

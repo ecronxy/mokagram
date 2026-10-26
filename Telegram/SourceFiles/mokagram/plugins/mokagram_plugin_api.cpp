@@ -158,7 +158,8 @@ std::string ShowToast(const QJsonObject &args) {
 
 [[nodiscard]] EntitiesInText EntitiesFromJson(
 		const QJsonArray &list,
-		int textLength) {
+		int textLength,
+		bool localOnly = false) {
 	auto result = EntitiesInText();
 	for (const auto &value : list) {
 		const auto o = value.toObject();
@@ -193,6 +194,21 @@ std::string ShowToast(const QJsonObject &args) {
 			if (data.isEmpty()) {
 				continue;
 			}
+		} else if (type == u"userpic"_q) {
+			// Аватарка пользователя прямо в тексте: рисуется только у вас, на сервер не уходит.
+			if (!localOnly) {
+				continue;
+			}
+			const auto session = ActiveSession();
+			const auto id = PeerId(o.value("user_id").toString().toULongLong());
+			const auto peer = (session && id)
+				? session->data().peerLoaded(id)
+				: nullptr;
+			if (!peer) {
+				continue;
+			}
+			kind = EntityType::CustomEmoji;
+			data = session->data().customEmojiManager().peerUserpicEmojiData(peer);
 		} else if (type == u"custom_emoji"_q) {
 			kind = EntityType::CustomEmoji;
 			const auto id = o.value("document_id").toString().toULongLong();
@@ -241,7 +257,9 @@ std::string ShowToast(const QJsonObject &args) {
 	return result;
 }
 
-[[nodiscard]] QJsonArray EntitiesToJson(const EntitiesInText &list) {
+[[nodiscard]] QJsonArray EntitiesToJson(
+		const EntitiesInText &list,
+		const QString &text = QString()) {
 	auto result = QJsonArray();
 	for (const auto &entity : list) {
 		auto name = QString();
@@ -263,7 +281,21 @@ std::string ShowToast(const QJsonObject &args) {
 			o.insert("url", entity.data());
 			break;
 		case EntityType::Url: name = u"url"_q; break;
-		case EntityType::Mention: name = u"mention"_q; break;
+		case EntityType::Mention: {
+			name = u"mention"_q;
+			// Если пользователь уже известен клиенту, отдаём его id.
+			const auto session = ActiveSession();
+			const auto username = text.mid(entity.offset() + 1, entity.length() - 1);
+			if (session && !username.isEmpty()) {
+				if (const auto peer = session->data().peerByUsername(username)) {
+					o.insert("user_id", QString::number(peer->id.value));
+				}
+			}
+		} break;
+		case EntityType::MentionName: {
+			name = u"mention_name"_q;
+			o.insert("user_id", entity.data().section('.', 0, 0));
+		} break;
 		case EntityType::Hashtag: name = u"hashtag"_q; break;
 		case EntityType::BotCommand: name = u"bot_command"_q; break;
 		case EntityType::CustomEmoji:
@@ -364,6 +396,7 @@ std::string RegisterSettings(const QJsonObject &args) {
 			entry.section = item.value("section").toString();
 			entry.title = item.value("title").toString();
 			entry.description = item.value("description").toString();
+			entry.icon = item.value("icon").toString();
 			entry.defaultValue = item.value("default");
 			const auto kind = item.value("kind").toString();
 			if (kind == "bool") {
@@ -534,6 +567,7 @@ std::string ChatInfo(const QJsonObject &args) {
 
 std::string OpenChat(const QJsonObject &args) {
 	const auto peerId = PeerId(args.value("peer").toString().toULongLong());
+	const auto msgId = MsgId(args.value("msg_id").toString().toLongLong());
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		const auto peer = (session && peerId)
@@ -544,7 +578,14 @@ std::string OpenChat(const QJsonObject &args) {
 		if (!peer || !controller) {
 			return Reply(false, U("не удалось открыть чат"));
 		}
-		controller->showPeerHistory(peer);
+		if (msgId > 0) {
+			controller->showPeerHistory(
+				peer,
+				Window::SectionShow::Way::Forward,
+				msgId);
+		} else {
+			controller->showPeerHistory(peer);
+		}
 		return Reply(true);
 	});
 }
@@ -1109,7 +1150,9 @@ std::string SendFile(const QJsonObject &args) {
 	result.insert("out", item->out());
 	result.insert("date", double(item->date()));
 	result.insert("has_media", item->media() != nullptr);
-	result.insert("entities", EntitiesToJson(item->originalText().entities));
+	result.insert("entities", EntitiesToJson(
+		item->originalText().entities,
+		item->originalText().text));
 	result.insert("reply_to", QString::number(item->replyToId().bare));
 	if (const auto media = item->media()) {
 		result.insert("media", MediaKind(item));
@@ -1117,6 +1160,14 @@ std::string SendFile(const QJsonObject &args) {
 			result.insert("file_name", document->filename());
 			result.insert("mime", document->mimeString());
 			result.insert("size", double(document->size));
+		}
+	}
+	if (const auto views = item->Get<HistoryMessageViews>()) {
+		if (views->views.count >= 0) {
+			result.insert("views", views->views.count);
+		}
+		if (views->forwardsCount >= 0) {
+			result.insert("forwards", views->forwardsCount);
 		}
 	}
 	if (const auto buttons = ButtonsJson(item); !buttons.isEmpty()) {
@@ -1874,7 +1925,7 @@ void TransformMessageText(
 	message.insert("id", QString::number(item->id.bare));
 	message.insert("peer", QString::number(item->history()->peer->id.value));
 	message.insert("text", text.text);
-	message.insert("entities", EntitiesToJson(text.entities));
+	message.insert("entities", EntitiesToJson(text.entities, text.text));
 	message.insert("date", double(item->date()));
 	const auto answer = CallTextHook(Json(message), PluginLog);
 	if (answer.size() < 1) {
@@ -1892,7 +1943,7 @@ void TransformMessageText(
 		const auto changed = object.value("text").toString().left(8192);
 		text = TextWithEntities{
 			changed,
-			EntitiesFromJson(object.value("entities").toArray(), changed.size()),
+			EntitiesFromJson(object.value("entities").toArray(), changed.size(), true),
 		};
 	}
 }

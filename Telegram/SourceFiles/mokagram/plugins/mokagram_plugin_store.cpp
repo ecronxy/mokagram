@@ -9,12 +9,14 @@
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
+#include "ui/widgets/buttons.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/vertical_list.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "window/window_session_controller.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/settings/mokagram_settings_box.h"
 #include "window/window_controller.h"
 #include "core/application.h"
 #include "styles/style_boxes.h"
@@ -50,6 +52,7 @@ struct Entry {
 	QString id;
 	QString name;
 	QString description;
+	QString details;
 	QString author;
 	QString version;
 	QString icon;
@@ -111,6 +114,7 @@ struct Entry {
 			.id = object.value("id").toString(),
 			.name = object.value("name").toString(),
 			.description = object.value("description").toString(),
+			.details = object.value("details").toString().left(4000),
 			.author = object.value("author").toString(),
 			.version = object.value("version").toString(),
 			.icon = object.value("icon").toString(),
@@ -214,11 +218,31 @@ void StoreBox(
 			const auto letter = entry.icon.isEmpty()
 				? entry.name.left(1).toUpper()
 				: entry.icon.left(8);
+			// Эмодзи значка берём из набора iOSTelegram (анимированные), пока он не загрузился или эмодзи там нет, рисуем обычный.
+			auto packState = std::make_shared<std::shared_ptr<void>>();
+			if (controller) {
+				Settings::PreloadRowIcons(&controller->session());
+				Settings::RowIconsUpdated(
+				) | rpl::on_next([=] {
+					avatar->update();
+				}, avatar->lifetime());
+			}
+			const auto iconAlt = entry.icon;
 			avatar->paintOn([=](QPainter &p) {
-				auto hq = PainterHighQualityEnabler(p);
-				p.setPen(Qt::NoPen);
-				p.setBrush(st::windowBgRipple);
-				p.drawRoundedRect(avatar->rect(), 14, 14);
+				{
+					auto hq = PainterHighQualityEnabler(p);
+					p.setPen(Qt::NoPen);
+					p.setBrush(st::windowBgRipple);
+					p.drawRoundedRect(avatar->rect(), 14, 14);
+				}
+				if (!iconAlt.isEmpty() && Settings::PaintPackIcon(
+						p,
+						avatar->rect(),
+						iconAlt,
+						*packState,
+						avatar)) {
+					return;
+				}
 				p.setPen(st::windowFg);
 				p.setFont(style::font(24, 0, 0));
 				p.drawText(avatar->rect(), Qt::AlignCenter, letter);
@@ -239,6 +263,16 @@ void StoreBox(
 				wrap,
 				entry.description,
 				st::boxLabel);
+			// Подробное описание: под кнопкой «Подробнее», раскрывается в карточке.
+			const auto more = entry.details.isEmpty()
+				? nullptr
+				: Ui::CreateChild<Ui::LinkButton>(
+					wrap,
+					U(Mokagram::Lang::Tr("Подробнее")));
+			// Полный текст создаём только при раскрытии и убираем при сворачивании.
+			const auto moreText = std::make_shared<QPointer<Ui::FlatLabel>>();
+			const auto expanded = std::make_shared<bool>(false);
+			const auto relayout = std::make_shared<Fn<void()>>();
 			const auto access = entry.permissions.isEmpty()
 				? nullptr
 				: Ui::CreateChild<Ui::FlatLabel>(
@@ -273,7 +307,8 @@ void StoreBox(
 				p.setBrush(st::windowBg);
 				p.drawRoundedRect(wrap->rect(), 22, 22);
 			});
-			wrap->widthValue() | rpl::on_next([=](int width) {
+			*relayout = [=] {
+				const auto width = wrap->width();
 				const auto textLeft = kCardPad + kAvatar + 12;
 				avatar->move(kCardPad, kCardPad);
 				title->resizeToNaturalWidth(width - kCardPad - textLeft);
@@ -285,6 +320,15 @@ void StoreBox(
 				text->resizeToWidth(width - 2 * kCardPad);
 				text->move(kCardPad, bottom + 12);
 				bottom += 12 + text->height();
+				if (more) {
+					more->move(kCardPad, bottom + 4);
+					bottom += 4 + more->height();
+					if (*expanded && *moreText) {
+						(*moreText)->resizeToWidth(width - 2 * kCardPad);
+						(*moreText)->move(kCardPad, bottom + 6);
+						bottom += 6 + (*moreText)->height();
+					}
+				}
 				if (access) {
 					access->resizeToWidth(width - 2 * kCardPad);
 					access->move(kCardPad, bottom + 6);
@@ -292,6 +336,28 @@ void StoreBox(
 				}
 				button->move(width - kCardPad - button->width(), bottom + 12);
 				wrap->resize(width, bottom + 12 + button->height() + kCardPad);
+			};
+			if (more) {
+				more->setClickedCallback([=] {
+					*expanded = !*expanded;
+					if (*expanded) {
+						*moreText = Ui::CreateChild<Ui::FlatLabel>(
+							wrap,
+							entry.details,
+							st::boxLabel);
+						(*moreText)->show();
+					} else if (*moreText) {
+						(*moreText)->deleteLater();
+						*moreText = nullptr;
+					}
+					more->setText(*expanded
+						? U(Mokagram::Lang::Tr("Свернуть"))
+						: U(Mokagram::Lang::Tr("Подробнее")));
+					(*relayout)();
+				});
+			}
+			wrap->widthValue() | rpl::on_next([=](int) {
+				(*relayout)();
 			}, wrap->lifetime());
 			wrap->showChildren();
 			if (current) {
