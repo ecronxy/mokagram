@@ -539,15 +539,18 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 		}
 		const auto labelLeft = section.left
 			+ (section.width - section.contentWidth) / 2;
+		// Mokagram: подпись по центру пилюли (раньше была на labelTop и «улетала» вверх).
+		const auto labelTop = pillTop
+			+ (pillHeight - _st.labelStyle.font->height) / 2;
 		const auto rect = myrtlrect(
 			labelLeft,
-			_st.labelTop,
+			labelTop,
 			section.contentWidth,
 			_st.labelStyle.font->height);
 		if (rect.intersects(clip)) {
 			p.setPen(anim::pen(st::windowSubTextFg, st::windowFgActive, active));
 			section.label.draw(p, {
-				.position = QPoint(labelLeft, _st.labelTop),
+				.position = QPoint(labelLeft, labelTop),
 				.outerWidth = width(),
 				.availableWidth = section.label.maxWidth(),
 				.paused = paused(),
