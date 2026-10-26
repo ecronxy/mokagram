@@ -458,8 +458,10 @@ void PeerBadge::set(
 	}
 	if (details->iconId) {
 		const auto outer = st::emojiSize;
-		const auto inner = int(base::SafeRound(
-			st::emojiSize * kBotVerifiedScale));
+		// Значок mokaGram (botId = 0) такого же размера и на той же линии, что эмодзи-статус.
+		const auto inner = details->botId
+			? int(base::SafeRound(st::emojiSize * kBotVerifiedScale))
+			: int(base::SafeRound(Ui::Text::AdjustCustomEmojiSize(st::emojiSize) * 0.8));
 		_botVerifiedData->icon = MakeWrappedEmoji<ScaledBotVerifiedEmoji>(
 			factory(
 				Data::SerializeCustomEmojiId(details->iconId),

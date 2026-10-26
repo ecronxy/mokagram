@@ -308,8 +308,10 @@ namespace {
 struct State {
 	base::flat_set<quint64> users;
 	base::flat_set<quint64> remote;
-	DocumentId icon = 5402452264273094522ULL;
+	DocumentId icon = 5402618655601109041ULL;
 	bool loaded = false;
+	bool fresh = false; // список уже получен от бота в этом запуске
+	bool inFlight = false;
 };
 
 // Список выданных галочек лежит в репозитории, ветка badges, файл badges.json;
@@ -333,6 +335,20 @@ void Load() {
 	// По умолчанию галочка у владельца клиента; список можно подменить файлом
 	// tdata/moka_badges.json: {"emoji_id": "...", "users": [id, ...]}.
 	state.users.emplace(6612638154ULL);
+	// Последний полученный список: значки видны сразу при запуске, до ответа бота.
+	auto cache = QFile(cWorkingDir() + u"tdata/moka_badges_cache.json"_q);
+	if (cache.open(QIODevice::ReadOnly)) {
+		const auto object = QJsonDocument::fromJson(cache.readAll()).object();
+		const auto icon = object.value(u"emoji_id"_q).toVariant().toString().toULongLong();
+		if (icon) {
+			state.icon = icon;
+		}
+		for (const auto &value : object.value(u"users"_q).toArray()) {
+			if (const auto id = value.toVariant().toULongLong()) {
+				state.remote.emplace(id);
+			}
+		}
+	}
 	auto file = QFile(cWorkingDir() + u"tdata/moka_badges.json"_q);
 	if (!file.open(QIODevice::ReadOnly)) {
 		return;
@@ -435,12 +451,27 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 // Список выданных галочек пришёл (из бота или из файла): обновляем значки у уже загруженных людей.
 void ApplyRemote(const std::vector<quint64> &ids, quint64 icon) {
 	auto &state = Data();
+	state.fresh = true;
+	state.inFlight = false;
 	const auto old = base::take(state.remote);
 	if (icon) {
 		state.icon = icon;
 	}
 	for (const auto id : ids) {
 		state.remote.emplace(id);
+	}
+	{
+		auto users = QJsonArray();
+		for (const auto id : state.remote) {
+			users.append(QString::number(id));
+		}
+		auto file = QFile(cWorkingDir() + u"tdata/moka_badges_cache.json"_q);
+		if (file.open(QIODevice::WriteOnly)) {
+			file.write(QJsonDocument(QJsonObject{
+				{ u"emoji_id"_q, QString::number(state.icon) },
+				{ u"users"_q, users },
+			}).toJson(QJsonDocument::Compact));
+		}
 	}
 	auto all = old;
 	for (const auto id : state.remote) {
@@ -524,7 +555,17 @@ void RefreshInline(Fn<void()> fail) {
 void Refresh(int index = 0) {
 	Load();
 	if (index == 0) {
-		RefreshInline([] { Refresh(1); });
+		auto &state = Data();
+		if (state.inFlight) {
+			return;
+		}
+		state.inFlight = true;
+		// Запрос мог потеряться: через 15 с разрешаем новый.
+		QTimer::singleShot(15000, [] { Data().inFlight = false; });
+		RefreshInline([] {
+			Data().inFlight = false;
+			Refresh(1);
+		});
 		return;
 	}
 	index -= 1;
@@ -558,14 +599,31 @@ void Refresh(int index = 0) {
 }
 
 void Start() {
-	Refresh(0);
-	// При старте клиент ещё может быть не авторизован: пробуем ещё раз позже.
-	for (const auto delay : { 20000, 90000 }) {
-		QTimer::singleShot(delay, [] { Refresh(0); });
-	}
+	// Сначала кеш с диска (значки видны сразу), потом запрос к боту, как только появится сессия.
+	Load();
+	static auto lifetime = rpl::lifetime();
+	Core::App().domain().activeSessionValue(
+	) | rpl::filter([](Main::Session *session) {
+		return session != nullptr;
+	}) | rpl::on_next([](Main::Session *) {
+		Refresh(0);
+	}, lifetime);
+	// Вернулись в окно: свежий список сразу, не ждём минуту.
+	QObject::connect(qApp, &QGuiApplication::applicationStateChanged, [](Qt::ApplicationState state) {
+		if (state == Qt::ApplicationActive) {
+			Refresh(0);
+		}
+	});
 	static auto timer = new QTimer();
-	timer->setInterval(10 * 60 * 1000);
-	QObject::connect(timer, &QTimer::timeout, [] { Refresh(0); });
+	timer->setInterval(3000);
+	QObject::connect(timer, &QTimer::timeout, [] {
+		static auto ticks = 0;
+		// Пока список не получен, повторяем каждые 3 с, потом раз в минуту (20 тиков).
+		if (!Data().fresh || ++ticks >= 20) {
+			ticks = 0;
+			Refresh(0);
+		}
+	});
 	timer->start();
 }
 
