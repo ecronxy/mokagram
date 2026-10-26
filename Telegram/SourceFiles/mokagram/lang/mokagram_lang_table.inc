@@ -253,6 +253,7 @@
 	{ "Личная заметка о человеке: видна только тебе в его профиле", "A personal note about a person: visible only to you in their profile" },
 	{ "Люди", "People" },
 	{ "Магазин плагинов", "Plugin store" },
+	{ "Открыть магазин", "Open the store" },
 	{ "Майами", "Miami" },
 	{ "Максимум частиц", "Maximum particles" },
 	{ "Мало данных о вкусе: послушайте и полайкайте ещё несколько треков.", "Not enough taste data: listen to and like a few more tracks." },

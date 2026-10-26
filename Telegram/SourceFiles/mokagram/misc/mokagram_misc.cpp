@@ -302,6 +302,71 @@ QByteArray BrandRewrite(const QByteArray &value) {
 
 } // namespace Mokagram::Misc
 
+namespace Mokagram::Bot {
+
+void Ask(const QString &query, Fn<void(Results)> done, Fn<void()> fail) {
+	constexpr auto kBotId = 8687512401LL;
+	const auto failed = [fail] {
+		if (fail) {
+			fail();
+		}
+	};
+	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
+	const auto session = account ? account->maybeSession() : nullptr;
+	if (!session) {
+		failed();
+		return;
+	}
+	const auto ask = [=](not_null<UserData*> bot) {
+		session->api().request(MTPmessages_GetInlineBotResults(
+			MTP_flags(0),
+			bot->inputUser(),
+			MTP_inputPeerSelf(),
+			MTPInputGeoPoint(),
+			MTP_string(query),
+			MTP_string()
+		)).done([=](const MTPmessages_BotResults &result) {
+			auto out = Results();
+			result.match([&](const MTPDmessages_botResults &data) {
+				for (const auto &item : data.vresults().v) {
+					item.match([&](const MTPDbotInlineResult &r) {
+						out.emplace_back(
+							qs(r.vid()),
+							r.vtitle() ? qs(*r.vtitle()) : QString());
+					}, [](const auto &) {});
+				}
+			});
+			if (done) {
+				done(std::move(out));
+			}
+		}).fail([=] {
+			failed();
+		}).send();
+	};
+	if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
+		ask(bot);
+		return;
+	}
+	session->api().request(MTPcontacts_Search(
+		MTP_flags(0),
+		MTP_string(u"mokagent"_q),
+		MTP_int(5)
+	)).done([=](const MTPcontacts_Found &result) {
+		result.match([&](const MTPDcontacts_found &data) {
+			session->data().processUsers(data.vusers());
+		});
+		if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
+			ask(bot);
+		} else {
+			failed();
+		}
+	}).fail([=] {
+		failed();
+	}).send();
+}
+
+} // namespace Mokagram::Bot
+
 namespace Mokagram::Badges {
 namespace {
 
@@ -487,69 +552,24 @@ void ApplyRemote(const std::vector<quint64> &ids, quint64 icon) {
 	}
 }
 
-// Основной путь: inline-запрос «list» к @mokagent (без сообщений в чатах, нужна только сессия).
+// Основной путь: inline-запрос «list» к @mokagent.
 void RefreshInline(Fn<void()> fail) {
-	constexpr auto kBotId = 8687512401LL;
-	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
-	const auto session = account ? account->maybeSession() : nullptr;
-	if (!session) {
-		fail();
-		return;
-	}
-	const auto weak = base::make_weak(session);
-	const auto ask = [=](not_null<UserData*> bot) {
-		session->api().request(MTPmessages_GetInlineBotResults(
-			MTP_flags(0),
-			bot->inputUser(),
-			MTP_inputPeerSelf(),
-			MTPInputGeoPoint(),
-			MTP_string(u"list"_q),
-			MTP_string()
-		)).done([=](const MTPmessages_BotResults &result) {
-			auto ids = std::vector<quint64>();
-			auto icon = quint64();
-			result.match([&](const MTPDmessages_botResults &data) {
-				for (const auto &item : data.vresults().v) {
-					item.match([&](const MTPDbotInlineResult &r) {
-						const auto id = qs(r.vid());
-						const auto title = r.vtitle() ? qs(*r.vtitle()) : QString();
-						if (id == u"e"_q) {
-							icon = title.toULongLong();
-						} else if (id.startsWith('l')) {
-							for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
-								if (const auto value = part.toULongLong()) {
-									ids.push_back(value);
-								}
-							}
-						}
-					}, [](const auto &) {});
+	Mokagram::Bot::Ask(u"list"_q, [=](Mokagram::Bot::Results results) {
+		auto ids = std::vector<quint64>();
+		auto icon = quint64();
+		for (const auto &[id, title] : results) {
+			if (id == u"e"_q) {
+				icon = title.toULongLong();
+			} else if (id.startsWith('l')) {
+				for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
+					if (const auto value = part.toULongLong()) {
+						ids.push_back(value);
+					}
 				}
-			});
-			ApplyRemote(ids, icon);
-		}).fail([=] {
-			fail();
-		}).send();
-	};
-	if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
-		ask(bot);
-		return;
-	}
-	session->api().request(MTPcontacts_Search(
-		MTP_flags(0),
-		MTP_string(u"mokagent"_q),
-		MTP_int(5)
-	)).done([=](const MTPcontacts_Found &result) {
-		result.match([&](const MTPDcontacts_found &data) {
-			session->data().processUsers(data.vusers());
-		});
-		if (const auto bot = session->data().userLoaded(UserId(kBotId))) {
-			ask(bot);
-		} else {
-			fail();
+			}
 		}
-	}).fail([=] {
-		fail();
-	}).send();
+		ApplyRemote(ids, icon);
+	}, fail);
 }
 
 void Refresh(int index = 0) {

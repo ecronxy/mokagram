@@ -1,5 +1,6 @@
 // Mokagram: окно установки плагина при клике на файл .plugin в чате.
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/lang/mokagram_lang.h"
@@ -496,6 +497,10 @@ void ShowInstallBox(
 	controller->uiShow()->show(Box([=](not_null<Ui::GenericBox*> box) {
 		FillInstallBox(box, weak.get(), info, version, [=] {
 			Install(weak.get(), info, bytes);
+			// Бот считает установки: один человек один раз на плагин.
+			if (QRegularExpression(u"^[a-z0-9_.-]{1,48}$"_q).match(info.id).hasMatch()) {
+				Mokagram::Bot::Ask(u"inst:"_q + info.id, nullptr);
+			}
 			if (installed) {
 				installed();
 			}
@@ -1399,12 +1404,36 @@ void PluginsBox(
 
 	const auto list = QJsonDocument::fromJson(
 		QByteArray::fromStdString(ListJson())).array();
+	// Кнопку магазина показываем только когда плагинов ещё нет; иначе магазин в меню-бургере.
+	const auto openStoreRef = std::make_shared<Fn<void()>>();
 	if (list.isEmpty()) {
 		AddCenteredLabel(
 			content,
 			U(Mokagram::Lang::Tr("Плагинов пока нет. Добавьте файл .plugin кнопкой ниже или нажмите на него в чате.")),
 			st::boxDividerLabel,
 			QMargins(24, 16, 24, 8));
+		static const auto stStore = [] {
+			auto result = st::defaultActiveButton;
+			result.height = 36;
+			result.textTop = 8;
+			result.radius = 18;
+			result.fullRadius = true;
+			return result;
+		}();
+		const auto storeButton = content->add(
+			object_ptr<Ui::RoundButton>(
+				content,
+				rpl::single(U(Mokagram::Lang::Tr("Открыть магазин"))),
+				stStore),
+			QMargins(14, 6, 14, 8));
+		content->widthValue() | rpl::on_next([=](int width) {
+			storeButton->setFullWidth(width - 28);
+		}, storeButton->lifetime());
+		storeButton->setClickedCallback([=] {
+			if (*openStoreRef) {
+				(*openStoreRef)();
+			}
+		});
 	}
 	const auto cards = std::make_shared<std::vector<Card>>();
 	for (const auto &value : list) {
@@ -1467,6 +1496,7 @@ void PluginsBox(
 			strong->show(Box(StoreBox, strong, reopen));
 		}
 	};
+	*openStoreRef = openStore;
 	const auto menu = std::make_shared<base::unique_qptr<Ui::PopupMenu>>();
 	menuButton->setClickedCallback([=] {
 		*menu = base::make_unique_q<Ui::PopupMenu>(

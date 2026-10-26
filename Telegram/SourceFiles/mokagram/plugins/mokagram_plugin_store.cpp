@@ -5,6 +5,8 @@
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/plugins/mokagram_plugins.h"
 #include "mokagram/update/mokagram_update.h"
+#include "mokagram/misc/mokagram_misc.h"
+#include "lang/lang_keys.h"
 #include "base/weak_ptr.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/buttons.h"
@@ -191,6 +193,46 @@ void StoreBox(
 		QMargins(24, 10, 24, 14));
 	const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
 
+	// Счётчики установок приходят от бота (inline «pstats»): плагин -> число людей.
+	struct Counts {
+		bool loaded = false;
+		QHash<QString, int> values;
+		std::vector<std::pair<QString, QPointer<Ui::FlatLabel>>> labels;
+	};
+	const auto counts = std::make_shared<Counts>();
+	const auto installsText = [](int n) {
+		if (::Lang::Id().startsWith(u"ru"_q)) {
+			const auto mod100 = n % 100;
+			const auto mod10 = n % 10;
+			const auto word = (mod100 >= 11 && mod100 <= 14) ? u"установок"_q
+				: (mod10 == 1) ? u"установка"_q
+				: (mod10 >= 2 && mod10 <= 4) ? u"установки"_q
+				: u"установок"_q;
+			return QString::number(n) + ' ' + word;
+		}
+		return QString::number(n) + (n == 1 ? u" install"_q : u" installs"_q);
+	};
+	const auto updateCounts = [=] {
+		for (const auto &[id, label] : counts->labels) {
+			if (label) {
+				label->setText(installsText(counts->values.value(id, 0)));
+				label->show();
+			}
+		}
+	};
+	Mokagram::Bot::Ask(u"pstats"_q, [=](Mokagram::Bot::Results results) {
+		for (const auto &[id, title] : results) {
+			for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
+				const auto at = part.lastIndexOf(':');
+				if (at > 0) {
+					counts->values[part.left(at)] = part.mid(at + 1).toInt();
+				}
+			}
+		}
+		counts->loaded = true;
+		updateCounts();
+	});
+
 	const auto fail = [=](const QString &text) {
 		if (!alive) {
 			return;
@@ -301,6 +343,16 @@ void StoreBox(
 					? U(Mokagram::Lang::Tr("Установить"))
 					: (current ? U(Mokagram::Lang::Tr("Установлен")) : U(Mokagram::Lang::Tr("Обновить")))),
 				current ? stDone : stInstall);
+			const auto installs = Ui::CreateChild<Ui::FlatLabel>(
+				wrap,
+				QString(),
+				st::boxDividerLabel);
+			installs->hide();
+			counts->labels.emplace_back(entry.id, installs);
+			if (counts->loaded) {
+				installs->setText(installsText(counts->values.value(entry.id, 0)));
+				installs->show();
+			}
 			wrap->paintOn([=](QPainter &p) {
 				auto hq = PainterHighQualityEnabler(p);
 				p.setPen(Qt::NoPen);
@@ -335,6 +387,9 @@ void StoreBox(
 					bottom += 6 + access->height();
 				}
 				button->move(width - kCardPad - button->width(), bottom + 12);
+				installs->moveToLeft(
+					kCardPad,
+					bottom + 12 + (button->height() - installs->height()) / 2);
 				wrap->resize(width, bottom + 12 + button->height() + kCardPad);
 			};
 			if (more) {

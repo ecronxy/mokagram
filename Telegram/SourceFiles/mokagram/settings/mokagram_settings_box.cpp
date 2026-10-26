@@ -2406,6 +2406,8 @@ void StartDebugCommands() {
 			}
 		} else if (cmd == u"welcome"_q) {
 			Mokagram::Plugins::ShowWelcome(controller);
+		} else if (cmd == u"pluginsbox"_q) {
+			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
 		} else if (cmd == u"pluginstore"_q) {
 			controller->show(Box(
 				Mokagram::Plugins::StoreBox,

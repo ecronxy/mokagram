@@ -5,6 +5,8 @@
 
 #include <QtCore/QByteArray>
 #include <memory>
+#include <vector>
+#include <QtCore/QString>
 
 class PhotoData;
 class PeerData;
@@ -39,6 +41,17 @@ void ShowStickerSetOwner(
 [[nodiscard]] QByteArray BrandRewrite(const QByteArray &value);
 
 } // namespace Mokagram::Misc
+
+namespace Mokagram::Bot {
+
+// Ответ бота на inline-запрос: пары (id результата, заголовок).
+using Results = std::vector<std::pair<QString, QString>>;
+
+// Спрашивает @mokagent inline-запросом (без сообщений в чатах, нужна только сессия).
+// fail вызывается, если нет сессии, бот не нашёлся или запрос не прошёл.
+void Ask(const QString &query, Fn<void(Results)> done, Fn<void()> fail = nullptr);
+
+} // namespace Mokagram::Bot
 
 namespace Mokagram::Guard {
 
