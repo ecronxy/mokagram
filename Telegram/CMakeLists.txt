@@ -148,7 +148,31 @@ PRIVATE
 set_source_files_properties(
     ${src_loc}/mokagram/plugins/mokagram_plugins.cpp
     PROPERTIES INCLUDE_DIRECTORIES "${Python3_INCLUDE_DIRS}")
-target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES} sqlite3)
+target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES})
+# sqlite3: системная, а если заголовков нет (docker-сборка Linux, Windows), качаем amalgamation и собираем сами
+find_package(SQLite3 QUIET)
+if (SQLite3_FOUND)
+    target_link_libraries(Telegram PRIVATE SQLite::SQLite3)
+else()
+    set(moka_sqlite_dir ${CMAKE_BINARY_DIR}/moka_sqlite)
+    if (NOT EXISTS ${moka_sqlite_dir}/sqlite-amalgamation-3460100/sqlite3.c)
+        file(MAKE_DIRECTORY ${moka_sqlite_dir})
+        file(DOWNLOAD
+            https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip
+            ${moka_sqlite_dir}/sqlite.zip
+            EXPECTED_HASH SHA3_256=af6aae8d3eccc608857c63cf56efbadc70da48b5c719446b353ed88dded1e288
+            STATUS moka_sqlite_status)
+        list(GET moka_sqlite_status 0 moka_sqlite_code)
+        if (NOT moka_sqlite_code EQUAL 0)
+            message(FATAL_ERROR "mokagram: не скачался sqlite: ${moka_sqlite_status}")
+        endif()
+        file(ARCHIVE_EXTRACT INPUT ${moka_sqlite_dir}/sqlite.zip DESTINATION ${moka_sqlite_dir})
+    endif()
+    add_library(moka_sqlite3 STATIC ${moka_sqlite_dir}/sqlite-amalgamation-3460100/sqlite3.c)
+    target_include_directories(moka_sqlite3 PUBLIC ${moka_sqlite_dir}/sqlite-amalgamation-3460100)
+    set_target_properties(moka_sqlite3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(Telegram PRIVATE moka_sqlite3)
+endif()
 find_package(LibLZMA REQUIRED)
 target_link_libraries(Telegram PRIVATE LibLZMA::LibLZMA)
 
