@@ -111,7 +111,7 @@ rpl::producer<QString> NameValue(not_null<PeerData*> peer) {
 		UpdateFlag::Name
 	) | rpl::map([=] { return peer->name(); });
 	if (!peer->isSelf()) {
-		return std::move(name);
+		return name;
 	}
 	// Режим стримера: маска только на своё имя.
 	return Mokagram::Streamer::Wrap(

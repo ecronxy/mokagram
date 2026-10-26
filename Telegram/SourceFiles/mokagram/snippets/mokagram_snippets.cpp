@@ -164,8 +164,8 @@ void Expand(TextWithTags &text) {
 		const auto found = Data().items.find(match.captured(2).toLower());
 		if (found != Data().items.end()) {
 			list.push_back({
-				match.capturedStart(),
-				match.capturedEnd(),
+				int(match.capturedStart()),
+				int(match.capturedEnd()),
 				&found->second,
 			});
 		}

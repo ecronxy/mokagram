@@ -142,7 +142,7 @@ def resource_content(path):
 
 
 def assemble(builds, destination, toolchain, target, configuration):
-    binary_name = 'Telegram Lite' if target == 'macstore' else 'Telegram'
+    binary_name = 'Telegram Lite' if target == 'macstore' else 'mokaGram'
     app_name = binary_name + '.app'
     apps = {arch: folder / app_name for arch, folder in builds.items()}
     swift_runtime = pathlib.Path('Contents/Frameworks')
@@ -234,6 +234,18 @@ def assemble(builds, destination, toolchain, target, configuration):
     print('Universal app ready: ' + str(destination / app_name), flush=True)
 
 
+def local_environment():
+    toolchain = pathlib.Path(output(['xcrun', '--find', 'clang'])).parents[2]
+    sdk = pathlib.Path(output(['xcrun', '--sdk', 'macosx', '--show-sdk-path']))
+    output(['xcrun', '--find', 'actool'])
+    environment = os.environ.copy()
+    environment.pop('TOOLCHAINS', None)
+    environment['SDKROOT'] = str(sdk)
+    environment['MACOSX_DEPLOYMENT_TARGET'] = '10.13'
+    print('Using the active toolchain at ' + str(toolchain) + ', SDK ' + str(sdk) + ', deployment target 10.13.', flush=True)
+    return toolchain, environment, sdk
+
+
 def main():
     root = pathlib.Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description='Build the universal macOS app with the preserved 26.6 toolchain.')
@@ -244,12 +256,17 @@ def main():
     parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 12))
     parser.add_argument('--configure-only', action='store_true')
     parser.add_argument('--check', action='store_true')
+    parser.add_argument('--local', action='store_true',
+        help='Build with the active Xcode / Command Line Tools instead of the preserved 26.6 toolchain.')
     args = parser.parse_args()
     target = (root / 'Telegram/build/target').read_text().strip()
     if target not in ('mac', 'macstore'):
         raise RuntimeError('Telegram/build/target must contain mac or macstore.')
-    toolchain = args.toolchain.resolve()
-    environment, sdk = toolchain_environment(toolchain)
+    if args.local:
+        toolchain, environment, sdk = local_environment()
+    else:
+        toolchain = args.toolchain.resolve()
+        environment, sdk = toolchain_environment(toolchain)
     if args.check:
         return
     base = root / 'out' / (target + '-26.6') / args.configuration

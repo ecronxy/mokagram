@@ -166,7 +166,7 @@ elif [ "$BuildTarget" == "mac" ] ; then
   fi
   ProjectPath="$HomePath/../out"
   ReleasePath="$ProjectPath/Release"
-  BinaryName="Telegram"
+  BinaryName="mokaGram"
   if [ "$MacArch" != "" ]; then
     BundleName="$BinaryName.$MacArch.app"
     if [ "$MacArch" == "arm64" ]; then
@@ -512,10 +512,10 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
       UpdatePackPath="$ReleasePath/update_pack_${MacArch}"
       rm -rf "$UpdatePackPath"
       mkdir "$UpdatePackPath"
-      mv "$ReleasePath/$BundleName" "$UpdatePackPath/$BinaryName.app"
+      mv "$ReleasePath/$BundleName" "$UpdatePackPath/Telegram.app"
       cp "$ReleasePath/Packer" "$UpdatePackPath/"
       cd "$UpdatePackPath"
-      PackUpdate -path "$BinaryName.app" -target "$BuildTarget" -arch $MacArch
+      PackUpdate -path "Telegram.app" -target "$BuildTarget" -arch $MacArch
       echo "Packer done!"
       mv "$UpdateFile" "$ReleasePath/"
       cd "$ReleasePath"

@@ -144,7 +144,7 @@ struct CardParts {
 }
 
 // Круглый переключатель выбора в правом верхнем углу карточки.
-[[nodiscard]] not_null<Ui::AbstractButton*> AddCheck(
+not_null<Ui::AbstractButton*> AddCheck(
 		not_null<Ui::RpWidget*> card,
 		bool initial,
 		Fn<void(bool)> changed,
@@ -193,7 +193,7 @@ struct CardParts {
 }
 
 // Ряд кнопок равной ширины.
-[[nodiscard]] not_null<Ui::RpWidget*> AddButtonsRow(
+not_null<Ui::RpWidget*> AddButtonsRow(
 		not_null<Ui::VerticalLayout*> parent,
 		std::vector<not_null<Ui::RoundButton*>> buttons) {
 	const auto row = parent->add(

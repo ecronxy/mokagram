@@ -84,9 +84,19 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 	return result;
 }
 
+// Название без любых скобок: пометки вроде "(slowed + reverb)" ищут хуже всего.
+[[nodiscard]] QString WithoutBrackets(const QString &text) {
+	static const auto brackets = QRegularExpression(uR"(\s*[\(\[][^\)\]]*[\)\]])"_q);
+	auto result = text;
+	result.remove(brackets);
+	result = result.trimmed();
+	return result.isEmpty() ? text : result;
+}
+
 [[nodiscard]] Lyrics Pick(
 		const QJsonArray &list,
-		qint64 durationMs) {
+		qint64 durationMs,
+		const QString &matchingTitle = {}) {
 	auto best = QJsonObject();
 	auto bestScore = -1e9;
 	auto bestSynced = false;
@@ -103,6 +113,17 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 			? durationMs / source
 			: 1.;
 		const auto diff = std::abs(source - durationMs);
+		if (!matchingTitle.isEmpty()) {
+			const auto title = WithoutBrackets(CleanTitle(
+				item.value("trackName").toString(),
+				item.value("artistName").toString()));
+			if (title.compare(matchingTitle, Qt::CaseInsensitive) != 0
+				|| durationMs <= 0
+				|| source <= 0.
+				|| diff > 3000.) {
+				continue;
+			}
+		}
 		auto useSynced = false;
 		auto score = 10. - std::min(diff / 1000., 9.);
 		if (!synced.isEmpty() && (durationMs <= 0 || diff <= 12000.)) {
@@ -141,7 +162,8 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 void Request(
 		QUrlQuery query,
 		qint64 durationMs,
-		Fn<void(Lyrics)> done) {
+		Fn<void(Lyrics)> done,
+		QString matchingTitle = {}) {
 	// '+' и скобки кодируем сами: QUrlQuery оставляет '+' как есть, и сервис читает его пробелом.
 	auto parts = QStringList();
 	for (const auto &[key, value] : query.queryItems()) {
@@ -157,7 +179,7 @@ void Request(
 		LOG(("[lyrics] %1: error %2").arg(url.toString()).arg(reply->errorString()));
 		if (reply->error() == QNetworkReply::NoError) {
 			const auto doc = QJsonDocument::fromJson(reply->readAll());
-			result = Pick(doc.array(), durationMs);
+			result = Pick(doc.array(), durationMs, matchingTitle);
 		}
 		done(std::move(result));
 	});
@@ -245,10 +267,42 @@ void RequestNetease(
 	});
 }
 
+void RequestFallback(
+		const QString &trackName,
+		const QString &artistName,
+		qint64 durationMs,
+		Fn<void(Lyrics)> done) {
+	const auto netease = [=] {
+		RequestNetease(
+			artistName + u" "_q + trackName,
+			trackName,
+			durationMs,
+			done);
+	};
+	if (durationMs <= 0) {
+		netease();
+		return;
+	}
+	auto query = QUrlQuery();
+	query.addQueryItem(u"track_name"_q, trackName);
+	Request(query, durationMs, [=](Lyrics result) {
+		if (result.found) {
+			done(std::move(result));
+		} else {
+			netease();
+		}
+	}, trackName);
+}
+
 } // namespace
 
 QString CleanTitle(const QString &title, const QString &artist) {
-	auto result = title;
+	auto result = title.trimmed();
+	static const auto extension = QRegularExpression(
+		uR"(\.(mp3|m4a|flac|ogg|oga|opus|wav|aac|aiff|aif|wma|alac)$)"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	result.remove(extension);
+	result.replace(QChar('_'), QChar(' '));
 	static const auto tail = QRegularExpression(
 		uR"(\s*[\(\[][^\)\]]*(official|video|audio|lyrics|clip|прем|клип|visualizer|hd|4k)[^\)\]]*[\)\]])"_q,
 		QRegularExpression::CaseInsensitiveOption);
@@ -257,21 +311,8 @@ QString CleanTitle(const QString &title, const QString &artist) {
 	if (!artist.isEmpty() && result.startsWith(prefix, Qt::CaseInsensitive)) {
 		result = result.mid(prefix.size());
 	}
-	return result.trimmed();
+	return result.simplified();
 }
-
-namespace {
-
-// Название без любых скобок: пометки вроде "(slowed + reverb)" ищут хуже всего.
-[[nodiscard]] QString WithoutBrackets(const QString &text) {
-	static const auto brackets = QRegularExpression(uR"(\s*[\(\[][^\)\]]*[\)\]])"_q);
-	auto result = text;
-	result.remove(brackets);
-	result = result.trimmed();
-	return result.isEmpty() ? text : result;
-}
-
-} // namespace
 
 void FetchLyrics(
 		const QString &cacheKey,
@@ -284,14 +325,15 @@ void FetchLyrics(
 		done(i->second);
 		return;
 	}
-	const auto clean = CleanTitle(title, artist);
+	const auto clean = CleanTitle(title, QString());
 	// "Исполнитель - Название" внутри заголовка: у загрузчика чужое имя.
 	auto trackName = clean;
-	auto artistName = artist;
-	const auto dash = title.indexOf(u" - "_q);
-	if (dash > 0) {
-		artistName = title.left(dash).trimmed();
-		trackName = CleanTitle(title.mid(dash + 3), artistName);
+	auto artistName = artist.trimmed();
+	static const auto separator = QRegularExpression(uR"(\s+[-–—]\s+)"_q);
+	const auto dash = separator.match(clean);
+	if (dash.hasMatch() && dash.capturedStart() > 0) {
+		artistName = clean.left(dash.capturedStart()).trimmed();
+		trackName = CleanTitle(clean.mid(dash.capturedEnd()), artistName);
 	}
 	trackName = WithoutBrackets(trackName);
 	const auto finish = [=](Lyrics result) {
@@ -317,7 +359,7 @@ void FetchLyrics(
 				return;
 			}
 			if (artistName == artist) {
-				RequestNetease(artistName + u" "_q + trackName, trackName, durationMs, finish);
+				RequestFallback(trackName, artistName, durationMs, finish);
 				return;
 			}
 			auto third = QUrlQuery();
@@ -327,7 +369,7 @@ void FetchLyrics(
 					finish(std::move(result));
 					return;
 				}
-				RequestNetease(artistName + u" "_q + trackName, trackName, durationMs, finish);
+				RequestFallback(trackName, artistName, durationMs, finish);
 			});
 		});
 	});

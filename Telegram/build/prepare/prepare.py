@@ -2071,6 +2071,10 @@ win_mac:
 # revisions ride in the version for that, and the counter in front of them
 # flushes a cache whose generated source the CI prune had already deleted.
 # The wallet-engine patch rewrites those sources, so it is a dependency here.
+# On macOS nothing is stripped: with a deployment target of 12.0 or newer the
+# objcopy rustc strips with leaves the proc-macro dylibs a misaligned string
+# pool that the macOS 27 loader refuses, and rustc then reports the macro
+# crate as missing. Stripping never touched the archive anyway.
 stage('tdesktop_rust', """
 version: 2.""" + tlottieRevision + '.' + walletEngineRevision + """
 depends:patches/wallet-engine.patch
@@ -2134,6 +2138,7 @@ mac:
             --config "profile.release.codegen-units=1" \\
             --config "profile.release.panic='unwind'" \\
             --config "profile.release.package.tlottie.opt-level=3" \\
+            --config "profile.release.strip=false" \\
             -- --print native-static-libs
     }
     buildOneArch aarch64-apple-darwin

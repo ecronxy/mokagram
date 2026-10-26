@@ -13,7 +13,13 @@
 #include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
 
+#ifdef Q_OS_MAC
+#include <crl/crl_async.h>
+#include <malloc/malloc.h>
+#include <atomic>
+#else // Q_OS_MAC
 #include <malloc.h>
+#endif // Q_OS_MAC
 
 namespace Mokagram::Perf {
 namespace {
@@ -45,7 +51,19 @@ void Apply() {
 
 // Мелкие блоки возвращаем системе: glibc иначе держит их в арене и память растёт.
 void Trim() {
+#if defined Q_OS_MAC
+	static auto trimming = std::atomic_flag();
+	if (!trimming.test_and_set()) {
+		crl::async([] {
+			malloc_zone_pressure_relief(nullptr, 0);
+			trimming.clear();
+		});
+	}
+#elif defined Q_OS_WIN
+	_heapmin();
+#else
 	malloc_trim(0);
+#endif
 }
 
 } // namespace
@@ -59,10 +77,12 @@ bool UserIsLooking() {
 }
 
 void Start() {
+#ifdef Q_OS_LINUX
 	// Меньше арен и раньше отдаём память: заметно для долго работающего клиента.
 	mallopt(M_ARENA_MAX, 2);
 	mallopt(M_TRIM_THRESHOLD, 128 * 1024);
 	mallopt(M_MMAP_THRESHOLD, 256 * 1024);
+#endif // Q_OS_LINUX
 
 	static auto idleTimer = QTimer();
 	idleTimer.setSingleShot(true);
