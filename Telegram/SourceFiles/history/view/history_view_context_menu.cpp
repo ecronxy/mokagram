@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/lang/mokagram_lang.h"
 #include "history/view/history_view_context_menu.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
@@ -1932,7 +1933,7 @@ void FillContextMenuItems(
 						}
 					}
 				}, &st::menuIconCopy);
-				result->addAction(QString::fromUtf8("Копировать с датой и автором"), [=] {
+				result->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Копировать с датой и автором")), [=] {
 					if (const auto item = owner->message(itemId)) {
 						if (!list->showCopyRestriction(item)) {
 							Mokagram::Misc::CopyWithAuthor(item);

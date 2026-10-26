@@ -50,7 +50,9 @@ constexpr Pair kTable[] = {
 	}
 	const auto id = ::Lang::Id();
 	if (id.isEmpty()) {
-		return 1;
+		// Встроенный английский (языковой пакет не выбран): id пустой, но интерфейс английский.
+		// Не запоминаем, чтобы выбор языка позже подхватился.
+		return 2;
 	}
 	cached = (id.startsWith(u"ru") || id.startsWith(u"uk") || id.startsWith(u"be"))
 		? 1

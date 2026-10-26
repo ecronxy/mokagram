@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/lang/mokagram_lang.h"
 #include "dialogs/dialogs_widget.h"
 
 #include "base/call_delayed.h"
@@ -681,9 +682,9 @@ Widget::Widget(
 				}
 			}
 			this->controller()->showToast(started
-				? QString::fromUtf8("Скачиваю файлов: ")
+				? QString::fromUtf8(Mokagram::Lang::Tr("Скачиваю файлов: "))
 					+ QString::number(started)
-				: QString::fromUtf8("В выбранных сообщениях нет файлов"));
+				: QString::fromUtf8(Mokagram::Lang::Tr("В выбранных сообщениях нет файлов")));
 			_inner->clearPicked();
 		});
 		cancel->setClickedCallback([=] { _inner->clearPicked(); });

@@ -796,7 +796,7 @@ void ChooseBox(
 	wrap->finishAnimating();
 	Ui::AddSkip(content, BoxParts::kOuterSide);
 
-	box->addButton(rpl::single(QString::fromUtf8("Скачать")), [=] {
+	box->addButton(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Скачать"))), [=] {
 		Settings::SetInt(QString::fromLatin1(kMediaKey), mediaValue());
 		Settings::SetInt(QString::fromLatin1(kQualityKey), quality->current());
 		const auto choice = MakeChoice(mediaValue(), quality->current());
@@ -813,7 +813,7 @@ void ChooseBox(
 				SendingAsText = false;
 			});
 	} else {
-		box->addButton(rpl::single(QString::fromUtf8("Отмена")), [=] {
+		box->addButton(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отмена"))), [=] {
 			box->closeBox();
 		});
 	}

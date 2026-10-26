@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "mokagram/lang/mokagram_lang.h"
 #include "boxes/sticker_set_box.h"
 #include "mokagram/misc/mokagram_misc.h"
 
@@ -1101,7 +1102,7 @@ void StickerSetBox::updateButtons() {
 				if (!_inner->amSetCreator()) {
 					// Mokagram: вероятный владелец набора по его id.
 					raw->addAction(
-						QString::fromUtf8("Владелец пака"),
+						QString::fromUtf8(Mokagram::Lang::Tr("Владелец пака")),
 						[show = _show, setId = _inner->setId()] {
 							Mokagram::Misc::ShowStickerSetOwner(show, setId);
 						},
