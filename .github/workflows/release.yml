@@ -444,7 +444,7 @@ jobs:
   macos:
     name: macOS
     if: inputs.macos
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 360
 
     env:
@@ -475,20 +475,38 @@ jobs:
           sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake
 
       - name: Libraries cache.
-        uses: actions/cache@v6
+        id: cache-libs
+        uses: actions/cache/restore@v6
         with:
           path: |
             Libraries
             ThirdParty
-          key: ${{ runner.OS }}-release-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}
+          key: ${{ runner.OS }}-release-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-release-libs-
 
       - name: Libraries.
+        id: libs
+        continue-on-error: true
+        timeout-minutes: 300
         run: |
           ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
 
       - name: Free up some disk space.
         run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
+
+      # Кэш сохраняем даже если библиотеки не доехали: следующий запуск продолжит с места падения.
+      - name: Save libraries cache.
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: ${{ steps.cache-libs.outputs.cache-primary-key }}
+
+      - name: Fail if libraries failed.
+        if: steps.libs.outcome == 'failure'
+        run: exit 1
 
       - name: Telegram Desktop build.
         run: |
