@@ -515,6 +515,10 @@ bool IsOwner(UserData *user) {
 	return user && (peerToUser(user->id).bare == kOwnerId);
 }
 
+bool HasProfileVerification(UserData *user) {
+	return user && TeamRole(user);
+}
+
 Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	Load();
 	const auto &state = Data();
