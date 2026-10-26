@@ -293,7 +293,7 @@ jobs:
         run: |
           Get-PSDrive -PSProvider FileSystem | Format-Table Name,@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
           # Сборка библиотек занимает десятки ГБ: убираем то, что нам не нужно (Android SDK, лишние тулчейны).
-          foreach ($p in 'C:\Android','C:\Program Files (x86)\Android','C:\Program Files\Android','C:\Program Files\Azure Cosmos DB Emulator','C:\Program Files\MongoDB','C:\Program Files\PostgreSQL','C:\Program Files (x86)\Microsoft SDKs\Azure','C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk','C:\hostedtoolcache\windows\Python','C:\hostedtoolcache\windows\node','C:\hostedtoolcache\windows\go','C:\hostedtoolcache\windows\Ruby','C:\hostedtoolcache\windows\CodeQL','C:\Julia','C:\Strawberry') {
+          foreach ($p in 'C:\Android','C:\Program Files (x86)\Android','C:\Program Files\Android','C:\Program Files\Azure Cosmos DB Emulator','C:\Program Files\MongoDB','C:\Program Files\PostgreSQL','C:\Program Files (x86)\Microsoft SDKs\Azure','C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk','C:\hostedtoolcache\windows\go','C:\hostedtoolcache\windows\Ruby','C:\hostedtoolcache\windows\CodeQL','C:\Julia','C:\Strawberry') {
             if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
           }
           Get-PSDrive -PSProvider FileSystem | Format-Table Name,@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
