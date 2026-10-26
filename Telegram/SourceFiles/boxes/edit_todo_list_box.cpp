@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h" // defaultComposeFiles.
 #include "styles/style_layers.h"
 #include "styles/style_polls.h"
+#include "styles/style_settings.h"
 
 namespace {
 
@@ -962,14 +963,8 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 	const auto container = result.data();
 
 	const auto title = setupTitle(container);
-	Ui::AddDivider(container);
-	Ui::AddSkip(container);
-	container->add(
-		object_ptr<Ui::FlatLabel>(
-			container,
-			tr::lng_todo_create_list(),
-			st::defaultSubsectionTitle),
-		st::createPollFieldTitlePadding);
+	Ui::AddSkip(container, 12);
+	Ui::AddSubsectionTitle(container, tr::lng_todo_create_list());
 	const auto media = _editingItem ? _editingItem->media() : nullptr;
 	const auto todolist = media ? media->todolist() : nullptr;
 	const auto tasks = lifetime().make_state<Tasks>(
@@ -1013,19 +1008,17 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 	Ui::AddSubsectionTitle(container, tr::lng_todo_create_settings());
 
 	const auto allowAdd = container->add(
-		object_ptr<Ui::Checkbox>(
+		object_ptr<Ui::SettingsButton>(
 			container,
-			tr::lng_todo_create_allow_add(tr::now),
-			!todolist || todolist->othersCanAppend(),
-			st::defaultCheckbox),
-		st::createPollCheckboxMargin);
+			tr::lng_todo_create_allow_add(),
+			st::settingsButtonNoIcon)
+	)->toggleOn(rpl::single(!todolist || todolist->othersCanAppend()));
 	const auto allowMark = container->add(
-		object_ptr<Ui::Checkbox>(
+		object_ptr<Ui::SettingsButton>(
 			container,
-			tr::lng_todo_create_allow_mark(tr::now),
-			!todolist || todolist->othersCanComplete(),
-			st::defaultCheckbox),
-		st::createPollCheckboxMargin);
+			tr::lng_todo_create_allow_mark(),
+			st::settingsButtonNoIcon)
+	)->toggleOn(rpl::single(!todolist || todolist->othersCanComplete()));
 
 	tasks->tabbed(
 	) | rpl::on_next([=] {
@@ -1056,8 +1049,8 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 			textWithTags.tags);
 		TextUtilities::Trim(result.title);
 		result.items = tasks->toTodoListItems();
-		const auto allowAddTasks = allowAdd->checked();
-		const auto allowMarkTasks = allowMark->checked();
+		const auto allowAddTasks = allowAdd->toggled();
+		const auto allowMarkTasks = allowMark->toggled();
 		result.setFlags(Flag(0)
 			| (allowAddTasks ? Flag::OthersCanAppend : Flag(0))
 			| (allowMarkTasks ? Flag::OthersCanComplete : Flag(0)));
@@ -1151,7 +1144,7 @@ void EditTodoListBox::prepare() {
 
 	const auto inner = setInnerWidget(setupContent());
 
-	setDimensionsToContent(st::boxWideWidth, inner);
+	setDimensionsToContent(st::createPollWidth, inner);
 }
 
 AddTodoListTasksBox::AddTodoListTasksBox(
@@ -1174,7 +1167,7 @@ void AddTodoListTasksBox::prepare() {
 
 	const auto inner = setInnerWidget(setupContent());
 
-	setDimensionsToContent(st::boxWideWidth, inner);
+	setDimensionsToContent(st::createPollWidth, inner);
 
 	scrollToY(ScrollMax);
 }
