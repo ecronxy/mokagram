@@ -1392,6 +1392,28 @@ protected:
 	void showEvent(QShowEvent *e) override;
 	void hideEvent(QHideEvent *e) override;
 	void resizeEvent(QResizeEvent *e) override;
+	void wheelEvent(QWheelEvent *e) override {
+		if (!_lyrics.found || _lyrics.lines.empty()) {
+			e->ignore();
+			return;
+		}
+		const auto delta = e->pixelDelta().isNull()
+			? -e->angleDelta().y() / 120. * 48.
+			: -double(e->pixelDelta().y());
+		if (_lyrics.synced) {
+			const auto last = int(_lyrics.lines.size()) - 1;
+			_scroll = std::clamp(_scroll + delta, centerOf(0), centerOf(last));
+			_manualUntil = _clock.elapsed() + 3000;
+		} else {
+			auto total = 24.;
+			for (auto i = 0; i != int(_lyrics.lines.size()); ++i) {
+				total += heightOf(i);
+			}
+			_plainScroll = std::clamp(_plainScroll + delta, 0., std::max(total - height(), 0.));
+		}
+		e->accept();
+		update();
+	}
 	void mouseMoveEvent(QMouseEvent *e) override {
 		setCursor((lineAt(e->pos().y()) >= 0) ? style::cur_pointer : style::cur_default);
 	}
@@ -1429,6 +1451,8 @@ private:
 		_lyrics = {};
 		_current = -1;
 		_scroll = 0.;
+		_plainScroll = 0.;
+		_manualUntil = 0;
 		_scrollReady = false;
 		_heights.clear();
 		_weights.clear();
@@ -1469,9 +1493,12 @@ private:
 				_scrollReady = true;
 			}
 			// Пружина без рывков: чем дальше строка, тем быстрее догоняем.
-			changed |= (std::abs(target - _scroll) > 0.1);
-			_scroll += (target - _scroll)
-				* (_timer.isActive() ? (1. - std::exp(-dt * 6.5)) : 1.);
+			// Пока пользователь листает текст сам (и 3 с после), автопрокрутка к строке не работает.
+			if (now >= _manualUntil) {
+				changed |= (std::abs(target - _scroll) > 0.1);
+				_scroll += (target - _scroll)
+					* (_timer.isActive() ? (1. - std::exp(-dt * 6.5)) : 1.);
+			}
 			const auto fade = _timer.isActive()
 				? float(1. - std::exp(-dt * 9.))
 				: 1.f;
@@ -1557,7 +1584,7 @@ private:
 			return;
 		}
 		const auto count = int(_lyrics.lines.size());
-		auto top = _lyrics.synced ? (height() / 2. - _scroll) : 12.;
+		auto top = _lyrics.synced ? (height() / 2. - _scroll) : (12. - _plainScroll);
 		p.setFont(lineFont());
 		for (auto i = 0; i != count; ++i) {
 			const auto lineHeight = heightOf(i);
@@ -1610,6 +1637,8 @@ private:
 	qint64 _positionAt = 0;
 	qint64 _last = 0;
 	double _scroll = 0.;
+	double _plainScroll = 0.;
+	qint64 _manualUntil = 0;
 	double _phase = 0.;
 	int _current = -1;
 	bool _scrollReady = false;
