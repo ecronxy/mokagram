@@ -383,6 +383,10 @@ jobs:
             rm -f "$LP"/cache_keys/tlottie "$LP"/cache_keys/wallet-engine "$LP"/cache_keys/tdesktop_rust
             echo "ключи tlottie, wallet-engine, tdesktop_rust сброшены"
           fi
+          if [ ! -f "$LP/win64/tg_angle/out/Release/tg_angle.lib" ]; then
+            rm -f "$LP"/cache_keys/tg_angle
+            echo "ключ tg_angle сброшен"
+          fi
 
       - name: Libraries.
         id: libs
