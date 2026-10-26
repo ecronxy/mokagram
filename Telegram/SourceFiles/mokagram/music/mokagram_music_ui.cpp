@@ -1338,6 +1338,7 @@ public:
 	explicit LyricsView(QWidget *parent)
 	: RpWidget(parent) {
 		resize(width(), 280);
+		setMouseTracking(true);
 		_clock.start();
 		_timer.setInterval(16);
 		_timer.setTimerType(Qt::PreciseTimer);
@@ -1382,12 +1383,47 @@ public:
 		}
 	}
 
+	// Нажали на строку синхронного текста: время строки в мс (как в Spotify, перемотка к этой строке).
+	[[nodiscard]] rpl::producer<qint64> lineClicked() const {
+		return _lineClicked.events();
+	}
+
 protected:
 	void showEvent(QShowEvent *e) override;
 	void hideEvent(QHideEvent *e) override;
 	void resizeEvent(QResizeEvent *e) override;
+	void mouseMoveEvent(QMouseEvent *e) override {
+		setCursor((lineAt(e->pos().y()) >= 0) ? style::cur_pointer : style::cur_default);
+	}
+	void mousePressEvent(QMouseEvent *e) override {
+		if (e->button() != Qt::LeftButton) {
+			return;
+		}
+		if (const auto index = lineAt(e->pos().y()); index >= 0) {
+			_lineClicked.fire_copy(_lyrics.lines[index].timeMs);
+		}
+	}
 
 private:
+	// Номер строки под точкой по вертикали (-1 нет), считается так же, как рисуется.
+	[[nodiscard]] int lineAt(int y) {
+		if (!_lyrics.found || !_lyrics.synced || _lyrics.lines.empty()) {
+			return -1;
+		}
+		auto top = height() / 2. - _scroll;
+		for (auto i = 0; i != int(_lyrics.lines.size()); ++i) {
+			const auto lineHeight = heightOf(i);
+			if (y >= top && y < top + lineHeight) {
+				return i;
+			}
+			top += lineHeight;
+			if (top > height()) {
+				break;
+			}
+		}
+		return -1;
+	}
+	rpl::event_stream<qint64> _lineClicked;
 	void updateTimer();
 	void reset() {
 		_lyrics = {};
@@ -2062,6 +2098,19 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		QueueState().changes.events(
 		) | rpl::on_next(refreshLyrics, lyricsView->lifetime());
 		refreshLyrics();
+		// Нажатие на строку текста перематывает трек на её время.
+		lyricsView->lineClicked(
+		) | rpl::on_next([=](qint64 ms) {
+			const auto state = instance->getState(AudioMsgId::Type::Song);
+			const auto lengthMs = state.length * 1000 / std::max<int64>(state.frequency, 1);
+			if (lengthMs <= 0) {
+				return;
+			}
+			instance->startSeeking(AudioMsgId::Type::Song);
+			instance->finishSeeking(
+				AudioMsgId::Type::Song,
+				std::clamp(float64(ms) / float64(lengthMs), 0., 1.));
+		}, lyricsView->lifetime());
 
 		// Очередь: живой список, меняется при добавлении, перемещении и смене трека.
 		Ui::AddSubsectionTitle(content, rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Очередь"))));
