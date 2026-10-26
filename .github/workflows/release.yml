@@ -288,6 +288,16 @@ jobs:
           echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
           echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
 
+      - name: Free up disk space.
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name,@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
+          # Сборка библиотек занимает десятки ГБ: убираем то, что нам не нужно (Android SDK, лишние тулчейны).
+          foreach ($p in 'C:\Android','C:\Program Files (x86)\Android','C:\Program Files\Android','C:\Program Files\Azure Cosmos DB Emulator','C:\Program Files\MongoDB','C:\Program Files\PostgreSQL','C:\Program Files (x86)\Microsoft SDKs\Azure','C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk','C:\hostedtoolcache\windows\Python','C:\hostedtoolcache\windows\node','C:\hostedtoolcache\windows\go','C:\hostedtoolcache\windows\Ruby','C:\hostedtoolcache\windows\CodeQL','C:\Julia','C:\Strawberry') {
+            if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+          }
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name,@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
+
       - name: Get repository name.
         shell: bash
         run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
@@ -327,14 +337,16 @@ jobs:
           nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
 
       - name: ThirdParty cache.
-        uses: actions/cache@v6
+        id: cache-third-party
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.TBUILD }}\ThirdParty
-          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-${{ runner.arch }}-third-party-
 
       - name: Libraries cache.
-        uses: actions/cache@v6
+        id: cache-libs
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ env.LibrariesPath }}\*
@@ -342,25 +354,63 @@ jobs:
             !${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\*
             !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-libs-v2-${{ env.CACHE_KEY }}
+          key: ${{ runner.OS }}-x64-libs-v2-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-x64-libs-v2-
 
       - name: Qt cache.
-        uses: actions/cache@v6
+        id: cache-qt
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}
+          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-x64-qt6-
 
       - name: Libraries.
+        id: libs
+        continue-on-error: true
+        timeout-minutes: 300
         run: |
           %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent qt6
 
-      - name: Free up some disk space.
+      - name: Trim libraries (кэш лимит 10 ГБ на репозиторий).
         shell: bash
         run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+
+      # Сохраняем кэши даже если библиотеки не доехали: следующий запуск продолжит с места падения.
+      - name: Save Qt cache.
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ steps.cache-qt.outputs.cache-primary-key }}
+
+      - name: Save libraries cache.
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ steps.cache-libs.outputs.cache-primary-key }}
+
+      - name: Save ThirdParty cache.
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ steps.cache-third-party.outputs.cache-primary-key }}
+
+      - name: Fail if libraries failed.
+        if: steps.libs.outcome == 'failure'
+        shell: bash
+        run: exit 1
 
       - name: Telegram Desktop build.
         run: |
@@ -498,6 +548,10 @@ jobs:
           ls -la assets
           FLAGS=""
           if [ "${{ inputs.prerelease }}" = "true" ]; then FLAGS="--prerelease"; fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --repo "${{ github.repository }}" --clobber
+            exit 0
+          fi
           gh release create "$TAG" assets/* --repo "${{ github.repository }}" $FLAGS \
             --title "mokaGram $TAG" \
             --notes "Сборки mokaGram $TAG: Linux (tar.xz, AppImage, deb, rpm, pacman), Windows (zip), macOS (dmg, zip). macOS и Windows без подписи разработчика: система может предупредить при первом запуске."
