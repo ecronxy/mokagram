@@ -143,7 +143,11 @@ void Drain(const LogFn &log) {
 std::string NowIso() {
 	const auto now = std::time(nullptr);
 	auto parts = std::tm();
+#ifdef _WIN32
+	localtime_s(&parts, &now);
+#else
 	localtime_r(&now, &parts);
+#endif
 	char buffer[32];
 	std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &parts);
 	return buffer;
