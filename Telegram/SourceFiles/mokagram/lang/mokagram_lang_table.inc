@@ -797,3 +797,4 @@
 	{ "Выберите чат с музыкой", "Choose a chat with music" },
 	{ "Трек больше недоступен", "This track is no longer available" },
 	{ "Показать в чате", "Show in chat" },
+	{ "Отправить плагин", "Send plugin" },

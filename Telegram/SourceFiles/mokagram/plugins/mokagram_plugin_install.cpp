@@ -16,6 +16,12 @@
 #include "data/data_session.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "apiwrap.h"
+#include "storage/localimageloader.h"
+#include "ui/chat/attach/attach_prepare.h"
+#include "data/data_thread.h"
+#include "api/api_common.h"
+#include "storage/storage_media_prepare.h"
+#include "window/window_peer_menu.h"
 #include "mtproto/sender.h"
 #include "ui/text/text_custom_emoji.h"
 #include "main/main_session.h"
@@ -983,12 +989,28 @@ Card AddPluginCard(
 	const auto path = QString::fromStdString(PluginsDir())
 		+ '/' + fileName;
 	const auto share = MakeIconButton(panel, st::menuIconShare, [=] {
-		auto *mime = new QMimeData();
-		mime->setUrls({ QUrl::fromLocalFile(path) });
-		QGuiApplication::clipboard()->setMimeData(mime);
-		if (const auto strong = controller) {
-			strong->showToast(U(Mokagram::Lang::Tr("Файл плагина скопирован, вставьте его в чат")));
+		// Как «Переслать»: выбор получателя, файл плагина уходит туда сразу.
+		const auto strong = controller;
+		if (!strong) {
+			return;
 		}
+		Window::ShowChooseRecipientBox(strong, [=](not_null<Data::Thread*> thread) {
+			auto list = Storage::PrepareMediaList(
+				QStringList{ path },
+				st::sendMediaPreviewSize,
+				thread->session().user()->isPremium());
+			if (list.files.empty() && list.filesToProcess.empty()) {
+				return false;
+			}
+			auto action = Api::SendAction(thread);
+			action.clearDraft = false;
+			thread->session().api().sendFiles(
+				std::move(list),
+				SendMediaType::File,
+				nullptr,
+				action);
+			return true;
+		}, rpl::single(U(Mokagram::Lang::Tr("Отправить плагин"))));
 	});
 	const auto open = MakeIconButton(panel, st::menuIconShowInFolder, [=] {
 		File::ShowInFolder(path);
