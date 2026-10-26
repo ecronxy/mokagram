@@ -375,12 +375,12 @@ jobs:
           key: ${{ runner.OS }}-x64-qt6r-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-x64-qt6r-
 
-      - name: ATL для breakpad (на образе его может не быть).
+      - name: ATL для breakpad (нужен для того тулсета, которым собирает prepare, 14.44).
         shell: pwsh
         run: |
           $inst = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          if (-not (Get-ChildItem "$inst\VC\Tools\MSVC\*\atlmfc\include\atlbase.h" -ErrorAction SilentlyContinue)) {
-            Start-Process -Wait -FilePath "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe" -ArgumentList "modify --installPath `"$inst`" --add Microsoft.VisualStudio.Component.VC.ATL --quiet --norestart --noUpdateInstaller"
+          if (-not (Test-Path "$inst\VC\Tools\MSVC\14.44*\atlmfc\include\atlbase.h")) {
+            Start-Process -Wait -FilePath "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe" -ArgumentList "modify --installPath `"$inst`" --add Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL --quiet --norestart --noUpdateInstaller"
           }
           Get-ChildItem "$inst\VC\Tools\MSVC\*\atlmfc\include\atlbase.h"
 
