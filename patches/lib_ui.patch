@@ -1,4 +1,4 @@
-diff --git i/ui/effects/panel_animation.cpp w/ui/effects/panel_animation.cpp
+diff --git w/ui/effects/panel_animation.cpp w/ui/effects/panel_animation.cpp
 index fd2a4d4..755fbb2 100644
 --- i/ui/effects/panel_animation.cpp
 +++ w/ui/effects/panel_animation.cpp
@@ -26,7 +26,7 @@ index fd2a4d4..755fbb2 100644
  	auto checkCorner = [this](const Corner &corner) {
  		if (!corner.valid()) return;
  		if (_startWidth >= 0) Assert(corner.width <= _startWidth);
-diff --git i/ui/layers/box_content.cpp w/ui/layers/box_content.cpp
+diff --git w/ui/layers/box_content.cpp w/ui/layers/box_content.cpp
 index b255ca0..929a404 100644
 --- i/ui/layers/box_content.cpp
 +++ w/ui/layers/box_content.cpp
@@ -48,7 +48,7 @@ index b255ca0..929a404 100644
  	}
  }
  
-diff --git i/ui/layers/box_layer_widget.cpp w/ui/layers/box_layer_widget.cpp
+diff --git w/ui/layers/box_layer_widget.cpp w/ui/layers/box_layer_widget.cpp
 index 7a9c2b7..3b17cec 100644
 --- i/ui/layers/box_layer_widget.cpp
 +++ w/ui/layers/box_layer_widget.cpp
@@ -71,19 +71,96 @@ index 7a9c2b7..3b17cec 100644
  	const auto clip = e->rect();
  	const auto paintTopRounded = !(_customCornersFilling & RectPart::FullTop)
  		&& clip.intersects(QRect(0, 0, width(), st::boxRadius));
-diff --git i/ui/layers/layer_widget.cpp w/ui/layers/layer_widget.cpp
-index ec3171e..ee18c18 100644
+diff --git w/ui/layers/layer_widget.cpp w/ui/layers/layer_widget.cpp
+index ec3171e..36273ab 100644
 --- i/ui/layers/layer_widget.cpp
 +++ w/ui/layers/layer_widget.cpp
-@@ -20,6 +20,7 @@
- #include "styles/palette.h"
+@@ -6,7 +6,6 @@
+ //
+ #include "ui/layers/layer_widget.h"
  
+-#include "ui/cached_special_layer_shadow_corners.h"
+ #include "ui/layers/box_layer_widget.h"
+ #include "ui/widgets/shadow.h"
+ #include "ui/image/image_prepare.h"
+@@ -22,6 +21,52 @@
  #include <QtGui/QtEvents>
-+#include <QtGui/QPainterPath>
  
  namespace Ui {
++namespace {
++
++void PaintSpecialLayerShadow(QPainter &p, const QRect &box) {
++	static const auto topShadow = BoxShadow(st::defaultBoxShadow);
++	static const auto bottomShadow = BoxShadow(st::defaultBoxShadow);
++	const auto outer = box.marginsAdded(topShadow.extend());
++	const auto middle = box.y() + box.height() / 2;
++	p.save();
++	p.setClipRect(
++		QRect(outer.x(), outer.y(), outer.width(), middle - outer.y()),
++		Qt::IntersectClip);
++	topShadow.paint(p, box, 32);
++	p.restore();
++	p.save();
++	p.setClipRect(
++		QRect(outer.x(), middle, outer.width(), outer.bottom() - middle + 1),
++		Qt::IntersectClip);
++	bottomShadow.paint(p, box, 20);
++	p.restore();
++}
++
++QPixmap GrabSpecialLayerShadow(
++		not_null<RpWidget*> target,
++		RectParts sides) {
++	const auto &shadow = st::boxRoundShadow;
++	const auto extend = QMargins(
++		(sides & RectPart::Left) ? shadow.extend.left() : 0,
++		(sides & RectPart::Top) ? shadow.extend.top() : 0,
++		(sides & RectPart::Right) ? shadow.extend.right() : 0,
++		(sides & RectPart::Bottom) ? shadow.extend.bottom() : 0);
++	const auto box = target->rect().translated(
++		extend.left(),
++		extend.top());
++	const auto size = target->rect().marginsAdded(extend).size();
++	auto result = QPixmap(size * style::DevicePixelRatio());
++	result.setDevicePixelRatio(style::DevicePixelRatio());
++	result.fill(Qt::transparent);
++	{
++		auto p = QPainter(&result);
++		PaintSpecialLayerShadow(p, box);
++		RenderWidget(p, target, box.topLeft());
++	}
++	return result;
++}
++
++} // namespace
  
-@@ -299,17 +300,50 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
+ class LayerStackWidget::BackgroundWidget : public RpWidget {
+ public:
+@@ -275,22 +320,7 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
+ 	if (_specialLayerCache.isNull() && !specialLayerBox.isEmpty()) {
+ 		// All cache images are taken together with their shadows,
+ 		// so we paint shadow only when there is no cache.
+-		auto sides = RectPart::Left | RectPart::Right;
+-		auto topCorners = (specialLayerBox.y() > 0);
+-		auto bottomCorners = (specialLayerBox.y() + specialLayerBox.height() < height());
+-		if (topCorners) {
+-			sides |= RectPart::Top;
+-		}
+-		if (bottomCorners) {
+-			sides |= RectPart::Bottom;
+-		}
+-		if (topCorners || bottomCorners) {
+-			p.setClipRegion(QRegion(rect()) - specialLayerBox.marginsRemoved(QMargins(st::boxRadius, 0, st::boxRadius, 0)) - specialLayerBox.marginsRemoved(QMargins(0, st::boxRadius, 0, st::boxRadius)));
+-		}
+-		Ui::Shadow::paint(p, specialLayerBox, width(), st::boxRoundShadow, Ui::SpecialLayerShadowCorners(), sides);
+-		if (topCorners || bottomCorners) {
+-			p.setClipping(false);
+-		}
++		PaintSpecialLayerShadow(p, specialLayerBox);
+ 	}
+ 
+ 	if (!layerBox.isEmpty() && !_specialLayerCache.isNull() && overSpecialOpacity < bgOpacity) {
+@@ -299,12 +329,18 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
  		// (alpha_final - alpha_current) / (1 - alpha_current) so we won't get glitches
  		// in the transparent special layer cache corners after filling special layer
  		// rect above its cache with alpha_current opacity.
@@ -104,39 +181,16 @@ index ec3171e..ee18c18 100644
  		p.setOpacity(bgOpacity);
  	} else {
  		p.fillRect(bg, st::layerBg);
+@@ -557,7 +593,7 @@ void LayerStackWidget::setCacheImages() {
+ 		if (_specialLayer->y() + _specialLayer->height() < height()) {
+ 			sides |= RectPart::Bottom;
+ 		}
+-		specialLayerCache = Ui::Shadow::grab(_specialLayer, st::boxRoundShadow, sides);
++		specialLayerCache = GrabSpecialLayerShadow(_specialLayer, sides);
  	}
- 
-+	if (!specialLayerBox.isEmpty() && _specialLayerCache.isNull()) {
-+		// Mokagram: в скруглённых углах окна нет тени, и они выглядят светлее
-+		// окружения: подтемняем их под цвет тени вокруг.
-+		auto hq = PainterHighQualityEnabler(p);
-+		p.setOpacity(bgOpacity);
-+		p.setPen(Qt::NoPen);
-+		p.setBrush(QColor(0, 0, 0, 107));
-+		const auto wedge = [&](int x, int y, int r, bool right, bool bottom) {
-+			auto path = QPainterPath();
-+			path.addRect(QRectF(x, y, r, r));
-+			auto circle = QPainterPath();
-+			circle.addEllipse(
-+				QPointF(right ? x : x + r, bottom ? y : y + r),
-+				r,
-+				r);
-+			p.drawPath(path.subtracted(circle));
-+		};
-+		const auto &b = specialLayerBox;
-+		wedge(b.x(), b.y(), 32, false, false);
-+		wedge(b.x() + b.width() - 32, b.y(), 32, true, false);
-+		if (b.y() + b.height() < height()) {
-+			wedge(b.x(), b.y() + b.height() - 20, 20, false, true);
-+			wedge(b.x() + b.width() - 20, b.y() + b.height() - 20, 20, true, true);
-+		}
-+		p.setOpacity(1.);
-+	}
-+
- 	if (!_specialLayerCache.isNull() && specialLayerOpacity > 0) {
- 		p.setOpacity(specialLayerOpacity);
- 		auto cacheLeft = specialLayerBox.x() - st::boxRoundShadow.extend.left();
-diff --git i/ui/text/custom_emoji_instance.cpp w/ui/text/custom_emoji_instance.cpp
+ 	auto layerCache = QPixmap();
+ 	if (auto layer = currentLayer()) {
+diff --git w/ui/text/custom_emoji_instance.cpp w/ui/text/custom_emoji_instance.cpp
 index 256b889..cf0b5c0 100644
 --- i/ui/text/custom_emoji_instance.cpp
 +++ w/ui/text/custom_emoji_instance.cpp
@@ -161,7 +215,7 @@ index 256b889..cf0b5c0 100644
  	const auto rect = QRect(context.position, QSize(size, size));
  	PaintScaledImage(p, rect, info, context);
  	const auto next = first ? 0 : currentFrameFinishes();
-diff --git i/ui/text/custom_emoji_instance.h w/ui/text/custom_emoji_instance.h
+diff --git w/ui/text/custom_emoji_instance.h w/ui/text/custom_emoji_instance.h
 index 6b6e97d..ddfa7df 100644
 --- i/ui/text/custom_emoji_instance.h
 +++ w/ui/text/custom_emoji_instance.h
@@ -175,7 +229,7 @@ index 6b6e97d..ddfa7df 100644
  using Context = Ui::Text::CustomEmoji::Context;
  
  [[nodiscard]] QColor PreviewColorFromTextColor(QColor color);
-diff --git i/ui/text/text_emoji_budget.h w/ui/text/text_emoji_budget.h
+diff --git w/ui/text/text_emoji_budget.h w/ui/text/text_emoji_budget.h
 new file mode 100644
 index 0000000..fc47787
 --- /dev/null
@@ -197,7 +251,7 @@ index 0000000..fc47787
 +[[nodiscard]] bool TakeStickerBudget();
 +
 +} // namespace Ui::Text
-diff --git i/ui/text/text_renderer.cpp w/ui/text/text_renderer.cpp
+diff --git w/ui/text/text_renderer.cpp w/ui/text/text_renderer.cpp
 index 8ad5f61..3a3158f 100644
 --- i/ui/text/text_renderer.cpp
 +++ w/ui/text/text_renderer.cpp
@@ -270,7 +324,7 @@ index 8ad5f61..3a3158f 100644
  							custom->paint(*_p, *_customEmojiContext);
  						}
  						if (showFallbackText) {
-diff --git i/ui/widgets/box_content_divider.cpp w/ui/widgets/box_content_divider.cpp
+diff --git w/ui/widgets/box_content_divider.cpp w/ui/widgets/box_content_divider.cpp
 index 948271f..f7b7b24 100644
 --- i/ui/widgets/box_content_divider.cpp
 +++ w/ui/widgets/box_content_divider.cpp
@@ -288,7 +342,7 @@ index 948271f..f7b7b24 100644
  	QPainter p(this);
  
  	p.fillRect(e->rect(), _st.bg);
-diff --git i/ui/widgets/buttons.cpp w/ui/widgets/buttons.cpp
+diff --git w/ui/widgets/buttons.cpp w/ui/widgets/buttons.cpp
 index 690ba6f..f813eab 100644
 --- i/ui/widgets/buttons.cpp
 +++ w/ui/widgets/buttons.cpp
@@ -354,7 +408,7 @@ index 690ba6f..f813eab 100644
  }
  
  void SettingsButton::paintText(Painter &p, bool over, int outerw) const {
-diff --git i/ui/widgets/buttons.h w/ui/widgets/buttons.h
+diff --git w/ui/widgets/buttons.h w/ui/widgets/buttons.h
 index 0801610..0bfab98 100644
 --- i/ui/widgets/buttons.h
 +++ w/ui/widgets/buttons.h
@@ -366,7 +420,7 @@ index 0801610..0bfab98 100644
  	void paintBg(Painter &p, const QRect &rect, bool over) const;
  	void paintText(Painter &p, bool over, int outerw) const;
  	void paintToggle(Painter &p, int outerw) const;
-diff --git i/ui/widgets/checkbox.cpp w/ui/widgets/checkbox.cpp
+diff --git w/ui/widgets/checkbox.cpp w/ui/widgets/checkbox.cpp
 index df0dc58..ceadaf2 100644
 --- i/ui/widgets/checkbox.cpp
 +++ w/ui/widgets/checkbox.cpp
@@ -430,7 +484,7 @@ index df0dc58..ceadaf2 100644
  	auto fullWidth = _st->diameter + _st->width;
  	auto innerDiameter = _st->diameter - 2 * _st->shift;
  	auto innerRadius = float64(innerDiameter) / 2.;
-diff --git i/ui/widgets/fields/input_field.cpp w/ui/widgets/fields/input_field.cpp
+diff --git w/ui/widgets/fields/input_field.cpp w/ui/widgets/fields/input_field.cpp
 index d57ac56..7226abd 100644
 --- i/ui/widgets/fields/input_field.cpp
 +++ w/ui/widgets/fields/input_field.cpp
@@ -477,7 +531,7 @@ index d57ac56..7226abd 100644
  	p.setBrush(anim::brush(_st.textBg, _st.textBgActive, focusedDegree));
  
  	PainterHighQualityEnabler hq(p);
-diff --git i/ui/widgets/fields/masked_input_field.cpp w/ui/widgets/fields/masked_input_field.cpp
+diff --git w/ui/widgets/fields/masked_input_field.cpp w/ui/widgets/fields/masked_input_field.cpp
 index ef96309..a082ef9 100644
 --- i/ui/widgets/fields/masked_input_field.cpp
 +++ w/ui/widgets/fields/masked_input_field.cpp
@@ -537,7 +591,7 @@ index ef96309..a082ef9 100644
  	p.setClipRect(r);
  	if (_st.placeholderScale > 0. && !_placeholderPath.isEmpty()) {
  		auto placeholderShiftDegree = _a_placeholderShifted.value(_placeholderShifted ? 1. : 0.);
-diff --git i/ui/widgets/labels.cpp w/ui/widgets/labels.cpp
+diff --git w/ui/widgets/labels.cpp w/ui/widgets/labels.cpp
 index ceed27c..8bfe1c6 100644
 --- i/ui/widgets/labels.cpp
 +++ w/ui/widgets/labels.cpp
@@ -549,7 +603,7 @@ index ceed27c..8bfe1c6 100644
  	setNaturalWidth(-1);
  }
  
-diff --git i/ui/widgets/menu/menu.cpp w/ui/widgets/menu/menu.cpp
+diff --git w/ui/widgets/menu/menu.cpp w/ui/widgets/menu/menu.cpp
 index 5421134..2b236a9 100644
 --- i/ui/widgets/menu/menu.cpp
 +++ w/ui/widgets/menu/menu.cpp
@@ -584,7 +638,7 @@ index 5421134..2b236a9 100644
  	}, lifetime());
  
  	positionValue(
-diff --git i/ui/widgets/menu/menu_action.cpp w/ui/widgets/menu/menu_action.cpp
+diff --git w/ui/widgets/menu/menu_action.cpp w/ui/widgets/menu/menu_action.cpp
 index 4c16b67..2ded2eb 100644
 --- i/ui/widgets/menu/menu_action.cpp
 +++ w/ui/widgets/menu/menu_action.cpp
@@ -611,7 +665,7 @@ index 4c16b67..2ded2eb 100644
  }
  
  int Action::contentHeight() const {
-diff --git i/ui/widgets/menu/menu_item_base.h w/ui/widgets/menu/menu_item_base.h
+diff --git w/ui/widgets/menu/menu_item_base.h w/ui/widgets/menu/menu_item_base.h
 index 7b329a1..56155d0 100644
 --- i/ui/widgets/menu/menu_item_base.h
 +++ w/ui/widgets/menu/menu_item_base.h
@@ -650,7 +704,7 @@ index 7b329a1..56155d0 100644
 +}
 +
  } // namespace Ui::Menu
-diff --git i/ui/widgets/menu/menu_multiline_action.cpp w/ui/widgets/menu/menu_multiline_action.cpp
+diff --git w/ui/widgets/menu/menu_multiline_action.cpp w/ui/widgets/menu/menu_multiline_action.cpp
 index db27772..a105815 100644
 --- i/ui/widgets/menu/menu_multiline_action.cpp
 +++ w/ui/widgets/menu/menu_multiline_action.cpp
@@ -663,7 +717,7 @@ index db27772..a105815 100644
  	RippleButton::paintRipple(p, 0, 0);
  	if (const auto icon = (selected ? _iconOver : _icon)) {
  		icon->paint(p, _st.itemIconPosition, width());
-diff --git i/ui/widgets/scroll_area.cpp w/ui/widgets/scroll_area.cpp
+diff --git w/ui/widgets/scroll_area.cpp w/ui/widgets/scroll_area.cpp
 index 36af139..425ecbb 100644
 --- i/ui/widgets/scroll_area.cpp
 +++ w/ui/widgets/scroll_area.cpp
@@ -676,7 +730,7 @@ index 36af139..425ecbb 100644
  	if (!_bar.width() && !_bar.height()) {
  		hide();
  		return;
-diff --git i/ui/widgets/side_bar_button.cpp w/ui/widgets/side_bar_button.cpp
+diff --git w/ui/widgets/side_bar_button.cpp w/ui/widgets/side_bar_button.cpp
 index 7633972..d697404 100644
 --- i/ui/widgets/side_bar_button.cpp
 +++ w/ui/widgets/side_bar_button.cpp
@@ -696,7 +750,7 @@ index 7633972..d697404 100644
  
  	RippleButton::paintRipple(p, 0, 0);
  
-diff --git i/ui/widgets/time_input.cpp w/ui/widgets/time_input.cpp
+diff --git w/ui/widgets/time_input.cpp w/ui/widgets/time_input.cpp
 index 7be4b1e..bd5bc20 100644
 --- i/ui/widgets/time_input.cpp
 +++ w/ui/widgets/time_input.cpp
@@ -711,7 +765,7 @@ index 7be4b1e..bd5bc20 100644
  	const auto height = _st.heightMin;
  	if (_st.border) {
  		p.fillRect(0, height - _st.border, width(), _st.border, _st.borderFg);
-diff --git i/ui/widgets/widgets.style w/ui/widgets/widgets.style
+diff --git w/ui/widgets/widgets.style w/ui/widgets/widgets.style
 index 8b8df7d..e5687e6 100644
 --- i/ui/widgets/widgets.style
 +++ w/ui/widgets/widgets.style

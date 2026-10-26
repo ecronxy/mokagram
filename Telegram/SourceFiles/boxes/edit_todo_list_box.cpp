@@ -39,7 +39,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/labels.h"
-#include "ui/widgets/shadow.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
@@ -48,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h" // defaultComposeFiles.
 #include "styles/style_layers.h"
 #include "styles/style_polls.h"
+#include "styles/style_settings.h"
 
 namespace {
 
@@ -95,10 +95,6 @@ private:
 		void show(anim::type animated);
 		void destroy(FnMut<void()> done);
 
-		[[nodiscard]] bool hasShadow() const;
-		void createShadow();
-		void destroyShadow();
-
 		[[nodiscard]] int id() const;
 		[[nodiscard]] bool locked() const;
 		[[nodiscard]] bool isEmpty() const;
@@ -126,7 +122,6 @@ private:
 		base::unique_qptr<Ui::SlideWrap<Ui::RpWidget>> _wrap;
 		not_null<Ui::RpWidget*> _content;
 		Ui::InputField *_field = nullptr;
-		base::unique_qptr<Ui::PlainShadow> _shadow;
 		base::unique_qptr<Ui::CrossButton> _remove;
 		rpl::variable<bool> *_removeAlways = nullptr;
 		int _limit = 0;
@@ -134,8 +129,6 @@ private:
 	};
 
 	[[nodiscard]] bool full() const;
-	[[nodiscard]] bool correctShadows() const;
-	void fixShadows();
 	void removeEmptyTail();
 	void addEmptyTask();
 	void addTask(
@@ -284,14 +277,15 @@ Tasks::Task::Task(
 	position,
 	object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
 		container,
-		object_ptr<Ui::RpWidget>(container))))
+		object_ptr<Ui::RpWidget>(container),
+		st::createTodoOptionPadding)))
 , _content(_wrap->entity())
 , _field(
 	Ui::CreateChild<Ui::InputField>(
 		_content.get(),
 		session->user()->isPremium()
 			? st::createTodoOptionField
-			: st::createPollOptionField,
+			: st::createTodoOptionFieldPlain,
 		Ui::InputField::Mode::MultiLine,
 		tr::lng_todo_create_list_add()))
 , _limit(session->appConfig().todoListItemTextLimit()) {
@@ -317,39 +311,11 @@ Tasks::Task::Task(
 		_content->resize(_content->width(), height);
 	}, _field->lifetime());
 
-	createShadow();
 	if (!locked) {
 		createRemove();
 		createWarning();
 	}
 	updateFieldGeometry();
-}
-
-bool Tasks::Task::hasShadow() const {
-	return (_shadow != nullptr);
-}
-
-void Tasks::Task::createShadow() {
-	Expects(_content != nullptr);
-
-	if (_shadow) {
-		return;
-	}
-	_shadow.reset(Ui::CreateChild<Ui::PlainShadow>(field().get()));
-	_shadow->show();
-	field()->sizeValue(
-	) | rpl::on_next([=](QSize size) {
-		const auto left = st::createPollFieldPadding.left();
-		_shadow->setGeometry(
-			left,
-			size.height() - st::lineWidth,
-			size.width() - left,
-			st::lineWidth);
-	}, _shadow->lifetime());
-}
-
-void Tasks::Task::destroyShadow() {
-	_shadow = nullptr;
 }
 
 void Tasks::Task::createRemove() {
@@ -371,7 +337,6 @@ void Tasks::Task::createRemove() {
 		// Don't capture 'this'! Because Option is a value type.
 		*toggle = !field->getLastText().isEmpty();
 	}, field->lifetime());
-#if 0
 	rpl::combine(
 		toggle->value(),
 		_removeAlways->value(),
@@ -379,7 +344,6 @@ void Tasks::Task::createRemove() {
 	) | rpl::on_next([=](bool shown) {
 		remove->toggle(shown, anim::type::normal);
 	}, remove->lifetime());
-#endif
 
 	field->widthValue(
 	) | rpl::on_next([=](int width) {
@@ -586,25 +550,6 @@ void Tasks::focusLast() {
 	_list.back()->setFocus();
 }
 
-bool Tasks::correctShadows() const {
-	// Last one should be without shadow.
-	const auto noShadow = ranges::find(
-		_list,
-		true,
-		ranges::not_fn(&Task::hasShadow));
-	return (noShadow == end(_list) - 1);
-}
-
-void Tasks::fixShadows() {
-	if (correctShadows()) {
-		return;
-	}
-	for (auto &option : _list) {
-		option->createShadow();
-	}
-	_list.back()->destroyShadow();
-}
-
 void Tasks::removeEmptyTail() {
 	// Only one option at the end of options list can be empty.
 	// Remove all other trailing empty options.
@@ -647,7 +592,6 @@ void Tasks::fixAfterErase() {
 		(*(last - 1))->setPlaceholder();
 		(*(last - 1))->toggleRemoveAlways(false);
 	}
-	fixShadows();
 }
 
 void Tasks::addEmptyTask() {
@@ -707,7 +651,6 @@ void Tasks::insertTask(
 	}
 	field->finishAnimating();
 	i->get()->show(animated);
-	fixShadows();
 }
 
 void Tasks::initTaskField(not_null<Task*> task, TextWithEntities text) {
@@ -939,13 +882,12 @@ not_null<Ui::InputField*> EditTodoListBox::setupTitle(
 	const auto title = container->add(
 		object_ptr<Ui::InputField>(
 			container,
-			st::createPollField,
+			isPremium
+				? st::createTodoTitleFieldPremium
+				: st::createTodoTitleField,
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_todo_create_title_placeholder()),
-		st::createPollFieldPadding
-			+ (isPremium
-				? QMargins(0, 0, st::defaultComposeFiles.emoji.inner.width, 0)
-				: QMargins()));
+		st::createPollFieldPadding);
 	InitField(getDelegate()->outerContainer(), title, session);
 	title->setMaxLength(_titleLimit + kErrorLimit);
 	title->setSubmitSettings(Ui::InputField::SubmitSettings::Both);
@@ -959,7 +901,7 @@ not_null<Ui::InputField*> EditTodoListBox::setupTitle(
 			this,
 			_controller,
 			_emojiPanel.get(),
-			st::createTodoOptionFieldEmojiPosition);
+			st::createTodoTitleEmojiPosition);
 		_emojiPanel->selector()->emojiChosen(
 		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
 			if (title->hasFocus()) {
@@ -1021,14 +963,8 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 	const auto container = result.data();
 
 	const auto title = setupTitle(container);
-	Ui::AddDivider(container);
-	Ui::AddSkip(container);
-	container->add(
-		object_ptr<Ui::FlatLabel>(
-			container,
-			tr::lng_todo_create_list(),
-			st::defaultSubsectionTitle),
-		st::createPollFieldTitlePadding);
+	Ui::AddSkip(container, 12);
+	Ui::AddSubsectionTitle(container, tr::lng_todo_create_list());
 	const auto media = _editingItem ? _editingItem->media() : nullptr;
 	const auto todolist = media ? media->todolist() : nullptr;
 	const auto tasks = lifetime().make_state<Tasks>(
@@ -1072,19 +1008,17 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 	Ui::AddSubsectionTitle(container, tr::lng_todo_create_settings());
 
 	const auto allowAdd = container->add(
-		object_ptr<Ui::Checkbox>(
+		object_ptr<Ui::SettingsButton>(
 			container,
-			tr::lng_todo_create_allow_add(tr::now),
-			!todolist || todolist->othersCanAppend(),
-			st::defaultCheckbox),
-		st::createPollCheckboxMargin);
+			tr::lng_todo_create_allow_add(),
+			st::settingsButtonNoIcon)
+	)->toggleOn(rpl::single(!todolist || todolist->othersCanAppend()));
 	const auto allowMark = container->add(
-		object_ptr<Ui::Checkbox>(
+		object_ptr<Ui::SettingsButton>(
 			container,
-			tr::lng_todo_create_allow_mark(tr::now),
-			!todolist || todolist->othersCanComplete(),
-			st::defaultCheckbox),
-		st::createPollCheckboxMargin);
+			tr::lng_todo_create_allow_mark(),
+			st::settingsButtonNoIcon)
+	)->toggleOn(rpl::single(!todolist || todolist->othersCanComplete()));
 
 	tasks->tabbed(
 	) | rpl::on_next([=] {
@@ -1115,8 +1049,8 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 			textWithTags.tags);
 		TextUtilities::Trim(result.title);
 		result.items = tasks->toTodoListItems();
-		const auto allowAddTasks = allowAdd->checked();
-		const auto allowMarkTasks = allowMark->checked();
+		const auto allowAddTasks = allowAdd->toggled();
+		const auto allowMarkTasks = allowMark->toggled();
 		result.setFlags(Flag(0)
 			| (allowAddTasks ? Flag::OthersCanAppend : Flag(0))
 			| (allowMarkTasks ? Flag::OthersCanComplete : Flag(0)));
@@ -1210,7 +1144,7 @@ void EditTodoListBox::prepare() {
 
 	const auto inner = setInnerWidget(setupContent());
 
-	setDimensionsToContent(st::boxWideWidth, inner);
+	setDimensionsToContent(st::createPollWidth, inner);
 }
 
 AddTodoListTasksBox::AddTodoListTasksBox(
@@ -1233,7 +1167,7 @@ void AddTodoListTasksBox::prepare() {
 
 	const auto inner = setInnerWidget(setupContent());
 
-	setDimensionsToContent(st::boxWideWidth, inner);
+	setDimensionsToContent(st::createPollWidth, inner);
 
 	scrollToY(ScrollMax);
 }

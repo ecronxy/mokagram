@@ -47,6 +47,22 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Media {
 namespace Player {
+namespace {
+
+Ui::Text::FormatSongName::ComposedName SongNameForPlayback(
+		const AudioMsgId &id) {
+	auto result = Ui::Text::FormatSongName::ComposedName();
+	if (Mokagram::Music::OwnsTrack(id)
+		&& Mokagram::Music::CurrentTrackInfo(result.title, result.performer)) {
+		return result;
+	}
+	const auto document = id.audio();
+	return document
+		? Ui::Text::FormatSongNameFor(document).composedName()
+		: result;
+}
+
+} // namespace
 
 Widget::Widget(
 	QWidget *parent,
@@ -523,11 +539,8 @@ void Widget::paintEvent(QPaintEvent *e) {
 			p.drawPath(path);
 			st::menuIconSoundOn.paintInCenter(p, art);
 		}
-		auto title = QString();
-		auto artist = QString();
-		if (Mokagram::Music::OwnsTrack(current)
-			&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
-			// Вторая строка с исполнителем.
+		const auto name = SongNameForPlayback(current);
+		if (!name.performer.isEmpty()) {
 			p.setFont(st::normalFont);
 			p.setPen(st::windowSubTextFg);
 			const auto left = getNameLeft();
@@ -535,7 +548,7 @@ void Widget::paintEvent(QPaintEvent *e) {
 			p.drawText(
 				QRect(left, st::mediaPlayerNameTop - 4, std::max(room, 40), 20),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				st::normalFont->elided(artist, std::max(room, 40)));
+				st::normalFont->elided(name.performer, std::max(room, 40)));
 		}
 	}
 }
@@ -668,12 +681,8 @@ int Widget::songTextWidth() const {
 		- buttonsBlockWidth()
 		- 12;
 	auto natural = _nameLabel->naturalWidth();
-	auto title = QString();
-	auto artist = QString();
-	if (Mokagram::Music::OwnsTrack(_lastSongId)
-		&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
-		natural = std::max(natural, st::normalFont->width(artist));
-	}
+	const auto name = SongNameForPlayback(_lastSongId);
+	natural = std::max(natural, st::normalFont->width(name.performer));
 	return std::clamp(natural, 40, std::max(available, 40));
 }
 
@@ -763,8 +772,12 @@ void Widget::updateLabelsGeometry() {
 		- left
 		- getNameRight();
 	_nameLabel->resizeToNaturalWidth(widthForName);
-	const auto owned = Mokagram::Music::OwnsTrack(_lastSongId);
-	_nameLabel->moveToLeft(left, st::mediaPlayerNameTop - (owned ? 6 : 0) - st::mediaPlayerName.style.font->ascent);
+	const auto song = (_type == AudioMsgId::Type::Song);
+	_nameLabel->moveToLeft(
+		left,
+		st::mediaPlayerNameTop
+			- (song ? 6 : 0)
+			- st::mediaPlayerName.style.font->ascent);
 
 	const auto right = getTimeRight();
 	_timeLabel->moveToRight(right, st::mediaPlayerNameTop - st::mediaPlayerPlayTop - st::mediaPlayerTime.font->ascent);
@@ -934,14 +947,7 @@ void Widget::handleSongChange() {
 			document,
 			current.contextId()).textWithEntities(true);
 	} else {
-		textWithEntities = Ui::Text::FormatSongNameFor(document)
-			.textWithEntities(true);
-		auto title = QString();
-		auto artist = QString();
-		if (Mokagram::Music::OwnsTrack(current)
-			&& Mokagram::Music::CurrentTrackInfo(title, artist)) {
-			textWithEntities = TextWithEntities{ title };
-		}
+		textWithEntities = tr::marked(SongNameForPlayback(current).title);
 	}
 	_nameLabel->setMarkedText(textWithEntities);
 	handlePlaylistUpdate();

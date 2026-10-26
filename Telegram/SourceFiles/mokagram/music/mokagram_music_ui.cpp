@@ -66,6 +66,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtCore/QPointer>
 #include <array>
+#include <cmath>
 
 namespace Mokagram::Music {
 namespace {
@@ -113,6 +114,14 @@ Queue &QueueState() {
 	return (session && i != queue.messages.end())
 		? session->data().message(i->second)
 		: nullptr;
+}
+
+[[nodiscard]] bool CanForwardTrack(const Track &track) {
+	if (!IsTelegramTrack(track)) {
+		return true;
+	}
+	const auto item = TrackMessage(track);
+	return item && item->allowsForward();
 }
 
 void BindController(not_null<Window::SessionController*> controller) {
@@ -306,6 +315,9 @@ void ChatMusicSearch::searchMore() {
 		&& !track.id.isEmpty()
 		&& document->id == DocumentIdForTrack(track.id)) {
 		return track;
+	}
+	if (const auto item = document->session().data().message(current.contextId())) {
+		return TrackFromMessage(item);
 	}
 	const auto name = Ui::Text::FormatSongNameFor(document).composedName();
 	auto result = Track();
@@ -546,18 +558,41 @@ void EnsureFile(
 	}
 }
 
-void SendTrack(
+void UploadTrack(
 		not_null<History*> history,
 		const Track &track,
-		const QString &path) {
+		const QString &path,
+		const QImage &cover) {
 	const auto session = &history->session();
 	auto list = Storage::PrepareMediaList(
 		QStringList{ NamedCopy(track, path) },
 		st::sendMediaPreviewSize,
 		session->user()->isPremium());
-	if (list.files.empty() && list.filesToProcess.empty()) {
+	if (list.error != Ui::PreparedList::Error::None || list.files.empty()) {
 		return;
 	}
+	auto &file = list.files.front();
+	auto &information = *file.information;
+	auto song = std::get_if<Ui::PreparedFileInformation::Song>(
+		&information.media);
+	if (!song) {
+		information.media = Ui::PreparedFileInformation::Song();
+		song = std::get_if<Ui::PreparedFileInformation::Song>(
+			&information.media);
+	}
+	if (song->duration <= 0) {
+		song->duration = track.durationMs;
+	}
+	if (!track.title.isEmpty()) {
+		song->title = track.title;
+	}
+	if (!track.artist.isEmpty()) {
+		song->performer = track.artist;
+	}
+	if (!cover.isNull()) {
+		song->cover = cover;
+	}
+	file.type = Ui::PreparedFile::Type::Music;
 	auto action = Api::SendAction(history);
 	action.clearDraft = false;
 	session->api().sendFiles(
@@ -565,6 +600,23 @@ void SendTrack(
 		SendMediaType::File,
 		nullptr,
 		std::move(action));
+}
+
+void SendTrack(
+		not_null<History*> history,
+		const Track &track,
+		const QString &path) {
+	const auto cover = CoverForDocument(DocumentIdForTrack(track.id));
+	if (!cover.isNull() || track.artworkUrl.isEmpty()) {
+		UploadTrack(history, track, path, cover);
+		return;
+	}
+	const auto weak = base::make_weak(history.get());
+	LoadImage(ArtUrl(track.artworkUrl, u"t500x500"_q), [=](QImage image) {
+		if (const auto history = weak.get()) {
+			UploadTrack(history, track, path, image);
+		}
+	});
 }
 
 void SaveToDisk(const Track &track) {
@@ -590,12 +642,23 @@ void SaveToDisk(const Track &track) {
 void ForwardTrack(
 		not_null<Window::SessionController*> controller,
 		const Track &track) {
+	if (IsTelegramTrack(track)) {
+		const auto item = TrackMessage(track);
+		if (item && item->allowsForward()) {
+			Window::ShowForwardMessagesBox(
+				controller,
+				MessageIdsList{ item->fullId() });
+		}
+		return;
+	}
 	Window::ShowChooseRecipientBox(
 		controller,
 		[=](not_null<Data::Thread*> thread) {
-			const auto history = thread->owningHistory();
+			const auto weak = base::make_weak(thread->owningHistory().get());
 			EnsureFile(track, [=](const QString &path, const Track &track) {
-				SendTrack(history, track, path);
+				if (const auto history = weak.get()) {
+					SendTrack(history, track, path);
+				}
 			});
 			return true;
 		},
@@ -909,6 +972,18 @@ public:
 	, _mode(mode) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
+		_equalizerTimer.setInterval(33);
+		connect(&_equalizerTimer, &QTimer::timeout, this, [=] {
+			_equalizerPhase += _equalizerClock.restart() / 1000.;
+			update(QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize));
+		});
+		Media::Player::instance()->updatedNotifier(
+		) | rpl::on_next([=] { updateAnimation(); }, lifetime());
+		PowerSaving::Changes(
+		) | rpl::on_next([=] { updateAnimation(); }, lifetime());
+		connect(qApp, &QGuiApplication::applicationStateChanged, this, [=] {
+			updateAnimation();
+		});
 		if (const auto item = TrackMessage(track)) {
 			const auto document = item->media()->document();
 			_media = document->createMediaView();
@@ -923,6 +998,7 @@ public:
 		}
 		QueueState().changes.events(
 		) | rpl::on_next([=] {
+			updateAnimation();
 			update();
 		}, lifetime());
 		LikesChanged(
@@ -953,7 +1029,13 @@ public:
 		}, lifetime());
 	}
 
+protected:
+	void showEvent(QShowEvent *e) override;
+	void hideEvent(QHideEvent *e) override;
+
 private:
+	void updateAnimation();
+
 	[[nodiscard]] QRect heartRect() const {
 		const auto durationWidth = st::normalFont->width(FormatDuration(_track.durationMs));
 		return QRect(
@@ -993,6 +1075,11 @@ private:
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Ниже")), [=] { QueueMove(index, 1); }, &st::menuIconBelow);
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Убрать из очереди")), [=] { QueueRemove(index); }, &st::menuIconDelete);
 		}
+		if (CanForwardTrack(track)) {
+			add(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")), [=] {
+				ForwardTrack(controller, track);
+			}, &st::menuIconForward);
+		}
 		if (IsTelegramTrack(track)) {
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Показать в чате")), [=] {
 				if (const auto item = TrackMessage(track)) {
@@ -1001,7 +1088,6 @@ private:
 			}, &st::menuIconChats);
 		} else {
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Скачать")), [=] { SaveToDisk(track); }, &st::menuIconDownload);
-			add(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Добавить в профиль")), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Копировать ссылку")), [=] {
 				QGuiApplication::clipboard()->setText(track.permalink);
@@ -1050,9 +1136,13 @@ private:
 			p.setBrush(Qt::white);
 			const auto base = art.center().y() + 9;
 			const auto left = art.center().x() - 10;
-			const int heights[] = { 12, 20, 15 };
 			for (auto i = 0; i != 3; ++i) {
-				p.drawRoundedRect(QRect(left + i * 8, base - heights[i], 4, heights[i]), 2, 2);
+				const auto wave = std::sin(_equalizerPhase * (5. + i) + i * 2.1);
+				const auto barHeight = 6. + 7. * (wave + 1.);
+				p.drawRoundedRect(
+					QRectF(left + i * 8, base - barHeight, 4, barHeight),
+					2,
+					2);
 			}
 		}
 		const auto left = art.right() + 16;
@@ -1095,6 +1185,9 @@ private:
 			st::normalFont->elided(subtitle, textWidth));
 	}
 
+	QTimer _equalizerTimer;
+	QElapsedTimer _equalizerClock;
+	double _equalizerPhase = 0.;
 	Track _track;
 	RowMode _mode;
 	QImage _art;
@@ -1103,6 +1196,34 @@ private:
 
 };
 
+void Row::updateAnimation() {
+	const auto instance = Media::Player::instance();
+	const auto state = instance->getState(AudioMsgId::Type::Song);
+	const auto animate = isVisible()
+		&& QGuiApplication::applicationState() == Qt::ApplicationActive
+		&& QueueState().currentId == _track.id
+		&& UsesQueue(state.id)
+		&& (state.state == Media::Player::State::Playing
+			|| state.state == Media::Player::State::Starting
+			|| state.state == Media::Player::State::Resuming)
+		&& !PowerSaving::On(PowerSaving::kAnimations);
+	if (animate && !_equalizerTimer.isActive()) {
+		_equalizerClock.start();
+		_equalizerTimer.start();
+	} else if (!animate) {
+		_equalizerTimer.stop();
+	}
+}
+
+void Row::showEvent(QShowEvent *e) {
+	AbstractButton::showEvent(e);
+	updateAnimation();
+}
+
+void Row::hideEvent(QHideEvent *e) {
+	_equalizerTimer.stop();
+	AbstractButton::hideEvent(e);
+}
 
 // ---- полноценный плеер ----
 
@@ -1115,15 +1236,15 @@ public:
 		) | rpl::on_next([=](QRect) {
 			auto p = QPainter(this);
 			auto hq = PainterHighQualityEnabler(p);
-			const auto line = QRectF(0, height() / 2. - 3, width(), 6);
+			const auto line = QRectF(8, height() / 2. - 2, width() - 16, 4);
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBgOver);
 			p.drawRoundedRect(line, 3, 3);
 			const auto progress = _dragging ? _drag : _progress;
 			auto fill = line;
-			fill.setWidth(std::max(6., line.width() * progress));
-			p.setBrush(st::windowActiveTextFg);
-			p.drawRoundedRect(fill, 3, 3);
+			fill.setWidth(line.width() * progress);
+			p.setBrush(st::windowFg);
+			p.drawRoundedRect(fill, 2, 2);
 			const auto knob = QPointF(fill.right(), line.center().y());
 			p.setBrush(Qt::white);
 			p.drawEllipse(knob, _dragging ? 8. : 6., _dragging ? 8. : 6.);
@@ -1165,7 +1286,7 @@ protected:
 
 private:
 	void moveTo(int x) {
-		_drag = std::clamp(x / float64(std::max(width(), 1)), 0., 1.);
+		_drag = std::clamp((x - 8) / float64(std::max(width() - 16, 1)), 0., 1.);
 		update();
 	}
 
@@ -1176,7 +1297,7 @@ private:
 
 };
 
-enum class Glyph { Previous, Next, Play, Heart };
+enum class Glyph { Previous, Next, Play, Add, Shuffle, Repeat };
 
 class RoundGlyph final : public Ui::AbstractButton {
 public:
@@ -1211,22 +1332,62 @@ private:
 		const auto r = QRectF(rect());
 		const auto c = r.center();
 		p.setPen(Qt::NoPen);
-		if (_glyph == Glyph::Heart) {
-			if (isOver()) {
-				p.setBrush(st::windowBgOver);
-				p.drawEllipse(r);
+		if (_glyph == Glyph::Add) {
+			const auto color = QColor(st::windowFg->c);
+			p.setPen(_liked
+				? QPen(Qt::NoPen)
+				: QPen(color, 2., Qt::SolidLine, Qt::RoundCap));
+			p.setBrush(_liked
+				? QBrush(st::activeButtonBg->c)
+				: QBrush(Qt::NoBrush));
+			p.drawEllipse(r.adjusted(8, 8, -8, -8));
+			if (_liked) {
+				p.setPen(QPen(
+					st::activeButtonFg->c,
+					3.,
+					Qt::SolidLine,
+					Qt::RoundCap,
+					Qt::RoundJoin));
+				auto path = QPainterPath();
+				path.moveTo(c + QPointF(-6, 0));
+				path.lineTo(c + QPointF(-1, 5));
+				path.lineTo(c + QPointF(7, -5));
+				p.drawPath(path);
+			} else {
+				p.drawLine(c + QPointF(-7, 0), c + QPointF(7, 0));
+				p.drawLine(c + QPointF(0, -7), c + QPointF(0, 7));
 			}
-			DrawHeart(
-				p,
-				r.adjusted(r.width() * 0.22, r.height() * 0.24, -r.width() * 0.22, -r.height() * 0.2),
-				_liked,
-				_liked ? HeartColor() : QColor(st::windowSubTextFg->c));
+			return;
+		}
+		if (_glyph == Glyph::Shuffle || _glyph == Glyph::Repeat) {
+			const auto &settings = Core::App().settings();
+			const auto shuffle = (_glyph == Glyph::Shuffle);
+			const auto mode = settings.playerRepeatMode();
+			const auto active = shuffle
+				? settings.playerOrderMode() == Media::OrderMode::Shuffle
+				: mode != Media::RepeatMode::None;
+			const auto &icon = shuffle
+				? st::mediaPlayerOrderIconShuffle
+				: mode == Media::RepeatMode::One
+				? st::mediaPlayerRepeatOneIcon
+				: st::mediaPlayerRepeatDisabledIcon;
+			const auto scale = 22. / std::max(icon.width(), icon.height());
+			p.translate(
+				c.x() - icon.width() * scale / 2.,
+				c.y() - icon.height() * scale / 2.);
+			p.scale(scale, scale);
+			icon.paint(p, QPoint(), icon.width(), active
+				? QColor(st::windowActiveTextFg->c)
+				: QColor(st::windowFg->c));
 			return;
 		}
 		if (_glyph == Glyph::Play) {
-			// Без подложки: белая пауза или треугольник.
-			p.setBrush(isOver() ? QColor(st::windowFg->c).darker(115) : st::windowFg->c);
-			const auto u = r.width() / 64.;
+			p.setBrush(isOver()
+				? QColor(st::windowFg->c).darker(110)
+				: st::windowFg->c);
+			p.drawEllipse(r.adjusted(2, 2, -2, -2));
+			p.setBrush(st::windowBg);
+			const auto u = r.width() / 100.;
 			if (_playing) {
 				p.drawRoundedRect(QRectF(c.x() - 14 * u, c.y() - 17 * u, 10 * u, 34 * u), 3 * u, 3 * u);
 				p.drawRoundedRect(QRectF(c.x() + 4 * u, c.y() - 17 * u, 10 * u, 34 * u), 3 * u, 3 * u);
@@ -1797,8 +1958,9 @@ bool CurrentTrackInfo(QString &title, QString &artist) {
 void ShowCurrentTrackMenu(
 		not_null<Window::SessionController*> controller,
 		QPoint globalPosition) {
-	const auto &queue = QueueState();
-	if (queue.index < 0 || queue.index >= int(queue.tracks.size())) {
+	BindController(controller);
+	const auto track = PlayingTrack();
+	if (track.id.isEmpty()) {
 		return;
 	}
 	QueueState().controller = base::make_weak(controller);
@@ -1807,7 +1969,6 @@ void ShowCurrentTrackMenu(
 	menu = base::make_unique_q<Ui::PopupMenu>(
 		parent,
 		st::popupMenuWithIcons);
-	const auto track = queue.tracks[queue.index];
 	const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
 		menu->addAction(text, std::move(callback), icon);
 	};
@@ -1815,25 +1976,41 @@ void ShowCurrentTrackMenu(
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Пауза / играть")), [=] {
 		instance->playPause(AudioMsgId::Type::Song);
 	}, &st::menuIconSoundOn);
-	if (PreviousAvailable()) {
+	if (UsesQueue(instance->current(AudioMsgId::Type::Song))
+		&& PreviousAvailable()) {
 		add(QString::fromUtf8(Mokagram::Lang::Tr("Предыдущий")), [] { Step(-1); }, &st::menuIconAbove);
 	}
-	if (NextAvailable()) {
+	if (UsesQueue(instance->current(AudioMsgId::Type::Song))
+		&& NextAvailable()) {
 		add(QString::fromUtf8(Mokagram::Lang::Tr("Следующий")), [] { Step(1); }, &st::menuIconBelow);
 	}
 	menu->addSeparator();
-	add(IsLiked(track.id)
-		? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
-		: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
-		SetLiked(track, !IsLiked(track.id));
-	}, &st::menuIconFave);
-	add(QString::fromUtf8(Mokagram::Lang::Tr("Скачать")), [=] { SaveToDisk(track); }, &st::menuIconDownload);
-	add(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
-	add(QString::fromUtf8(Mokagram::Lang::Tr("Добавить в профиль")), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
-	add(QString::fromUtf8(Mokagram::Lang::Tr("Копировать ссылку")), [=] {
-		QGuiApplication::clipboard()->setText(track.permalink);
-		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Ссылка скопирована")));
-	}, &st::menuIconLink);
+	if (!IsTelegramTrack(track)) {
+		add(IsLiked(track.id)
+			? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
+			: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
+			SetLiked(track, !IsLiked(track.id));
+		}, &st::menuIconFave);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Скачать")), [=] { SaveToDisk(track); }, &st::menuIconDownload);
+	}
+	if (CanForwardTrack(track)) {
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")), [=] {
+			ForwardTrack(controller, track);
+		}, &st::menuIconForward);
+	}
+	if (TrackMessage(track)) {
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Показать в чате")), [=] {
+			if (const auto message = TrackMessage(track)) {
+				controller->showPeerHistory(message->history(), {}, message->id);
+			}
+		}, &st::menuIconChats);
+	} else if (!IsTelegramTrack(track)) {
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Добавить в профиль")), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Копировать ссылку")), [=] {
+			QGuiApplication::clipboard()->setText(track.permalink);
+			controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Ссылка скопирована")));
+		}, &st::menuIconLink);
+	}
 	menu->addSeparator();
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Поиск музыки")), [=] { ShowMusicBox(controller); }, &st::menuIconSearch);
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Очередь")), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
@@ -1846,6 +2023,13 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		Mokagram::Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();
 		const auto instance = Media::Player::instance();
+		content->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::ContextMenu;
+		}) | rpl::on_next([=](not_null<QEvent*> e) {
+			e->accept();
+			ShowCurrentTrackMenu(controller, QCursor::pos());
+		}, box->lifetime());
 
 		// Цвет обложки: мягкий градиент сверху, под всем содержимым.
 		const auto tint = Ui::CreateChild<Ui::RpWidget>(box.get());
@@ -1865,7 +2049,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			path.addRoundedRect(QRectF(tint->rect()), 26, 26);
 			p.setClipPath(path);
 			auto top = accent;
-			top.setAlpha(150);
+			top.setAlpha(80);
 			auto bottom = accent;
 			bottom.setAlpha(0);
 			auto gradient = QLinearGradient(0, 0, 0, tint->height() * 0.7);
@@ -1908,23 +2092,31 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		const auto info = content->add(
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(0, 8, 0, 0));
+		const auto coverRect = [=] {
+			const auto side = std::min(info->width() - 48, 300);
+			return QRect((info->width() - side) / 2, 8, side, side);
+		};
 		info->widthValue(
 		) | rpl::on_next([=](int width) {
-			const auto side = std::min(width - 64, 340);
-			info->resize(width, side + st::mokagramMusicPlayerInfoTextHeight);
+			info->resize(width, coverRect().height()
+				+ st::mokagramMusicPlayerInfoTextHeight + 12);
 		}, info->lifetime());
 		info->paintOn([=](QPainter &p) {
 			auto hq = PainterHighQualityEnabler(p);
-			const auto side = std::min(info->width() - 64, 340);
-			const auto art = QRect((info->width() - side) / 2, 8, side, side);
+			const auto art = coverRect();
 			const auto current = instance->current(AudioMsgId::Type::Song);
 			const auto cover = CoverForPlayback(current);
 			auto path = QPainterPath();
-			path.addRoundedRect(art, 20, 20);
+			path.addRoundedRect(art, 8, 8);
 			if (!cover.isNull()) {
 				p.save();
 				p.setClipPath(path);
-				p.drawImage(art, cover);
+				const auto crop = std::min(cover.width(), cover.height());
+				p.drawImage(art, cover, QRect(
+					(cover.width() - crop) / 2,
+					(cover.height() - crop) / 2,
+					crop,
+					crop));
 				p.restore();
 			} else {
 				p.setPen(Qt::NoPen);
@@ -1934,40 +2126,85 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			}
 			const auto track = PlayingTrack();
 			auto big = st::semiboldFont->f;
-			big.setPixelSize(22);
+			big.setPixelSize(20);
 			p.setFont(big);
 			p.setPen(st::windowFg);
-			const auto textWidth = info->width() - 64
+			const auto textWidth = info->width() - 48 - 48
 				- (OwnsTrack(current) ? 56 : 0);
 			const auto metrics = QFontMetrics(big);
 			p.drawText(
-				QRect(32, art.bottom() + 24, textWidth, 30),
+				QRect(24, art.bottom() + 28, textWidth, 30),
 				Qt::AlignLeft | Qt::AlignVCenter,
 				metrics.elidedText(track.title, Qt::ElideRight, textWidth));
-			auto mid = st::normalFont->f;
-			mid.setPixelSize(16);
-			p.setFont(mid);
-			p.setPen(st::windowSubTextFg);
-			p.drawText(
-				QRect(32, art.bottom() + 56, textWidth, 24),
-				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(mid).elidedText(track.artist, Qt::ElideRight, textWidth));
 		});
 
-		const auto heart = Ui::CreateChild<RoundGlyph>(info, Glyph::Heart, 48);
+		const auto artistButton = Ui::CreateChild<Ui::AbstractButton>(info);
+		const auto artistHint = QString::fromUtf8(
+			Mokagram::Lang::Tr("Найти исполнителя на SoundCloud"));
+		artistButton->setToolTip(artistHint);
+		artistButton->setAccessibleName(artistHint);
+		artistButton->paintOn([=](QPainter &p) {
+			auto font = st::normalFont->f;
+			font.setPixelSize(16);
+			const auto active = artistButton->isOver() || artistButton->isDown();
+			font.setUnderline(active);
+			p.setFont(font);
+			p.setPen(active
+				? st::windowFg
+				: st::windowSubTextFg);
+			p.drawText(
+				artistButton->rect(),
+				Qt::AlignLeft | Qt::AlignVCenter,
+				QFontMetrics(font).elidedText(
+					PlayingTrack().artist,
+					Qt::ElideRight,
+					artistButton->width()));
+		});
+		const auto updateArtistButton = [=] {
+			const auto current = instance->current(AudioMsgId::Type::Song);
+			const auto textWidth = info->width() - 48 - 48
+				- (OwnsTrack(current) ? 56 : 0);
+			auto font = st::normalFont->f;
+			font.setPixelSize(16);
+			const auto artistWidth = std::min(
+				textWidth,
+				QFontMetrics(font).horizontalAdvance(PlayingTrack().artist) + 2);
+			artistButton->setGeometry(
+				24,
+				coverRect().bottom() + 56,
+				artistWidth,
+				28);
+			const auto hasArtist = !PlayingTrack().artist.trimmed().isEmpty();
+			artistButton->setDisabled(!hasArtist);
+			artistButton->setPointerCursor(hasArtist);
+			artistButton->update();
+		};
+		info->widthValue(
+		) | rpl::on_next(updateArtistButton, artistButton->lifetime());
+		artistButton->setClickedCallback([=] {
+			const auto artist = PlayingTrack().artist.trimmed();
+			if (artist.isEmpty()) {
+				return;
+			}
+			QueueState().telegramSearch = false;
+			QueueState().tab = 0;
+			box->closeBox();
+			ShowMusicBox(controller, artist);
+		});
+
+		const auto heart = Ui::CreateChild<RoundGlyph>(info, Glyph::Add, 48);
 		info->widthValue(
 		) | rpl::on_next([=](int width) {
-			const auto side = std::min(width - 64, 340);
-			heart->move(width - 32 - 48 + 8, 8 + side + 24 + 4);
+			heart->move(width - 24 - 40 - 8 - 48, coverRect().bottom() + 30);
 		}, heart->lifetime());
 
 		// Перемотка и время.
 		const auto seek = content->add(
 			object_ptr<SeekBar>(content),
-			QMargins(32, 4, 32, 0));
+			QMargins(16, 8, 16, 0));
 		const auto times = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(32, 0, 32, 0));
+			QMargins(24, 0, 24, 0));
 		times->resize(times->width(), 20);
 		const auto position = std::make_shared<std::pair<QString, QString>>();
 		times->paintOn([=](QPainter &p) {
@@ -1980,18 +2217,76 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		// Кнопки.
 		const auto controls = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(0, 10, 0, 6));
-		controls->resize(controls->width(), 84);
-		const auto previous = Ui::CreateChild<RoundGlyph>(controls, Glyph::Previous, 56);
+			QMargins(16, 12, 16, 12));
+		controls->resize(controls->width(), 80);
+		const auto previous = Ui::CreateChild<RoundGlyph>(controls, Glyph::Previous, 44);
 		const auto play = Ui::CreateChild<RoundGlyph>(controls, Glyph::Play, 72);
-		const auto next = Ui::CreateChild<RoundGlyph>(controls, Glyph::Next, 56);
+		const auto next = Ui::CreateChild<RoundGlyph>(controls, Glyph::Next, 44);
+		const auto shuffle = Ui::CreateChild<RoundGlyph>(controls, Glyph::Shuffle, 44);
+		const auto repeat = Ui::CreateChild<RoundGlyph>(controls, Glyph::Repeat, 44);
+		previous->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Предыдущий")));
+		play->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Пауза / играть")));
+		next->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Следующий")));
+		shuffle->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Перемешать")));
+		repeat->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Повтор")));
 		controls->widthValue(
 		) | rpl::on_next([=](int width) {
-			const auto top = (controls->height() - 72) / 2;
-			play->move((width - 72) / 2, top);
-			previous->move(play->x() - 28 - 56, top + 8);
-			next->move(play->x() + 72 + 28, top + 8);
+			const auto center = width / 2;
+			const auto step = (width - 44) / 4;
+			play->move(center - 36, 4);
+			previous->move(center - step - 22, 18);
+			next->move(center + step - 22, 18);
+			shuffle->move(0, 18);
+			repeat->move(width - 44, 18);
 		}, controls->lifetime());
+		shuffle->setClickedCallback([=] {
+			auto &settings = Core::App().settings();
+			settings.setPlayerOrderMode(
+				settings.playerOrderMode() == Media::OrderMode::Shuffle
+					? Media::OrderMode::Default
+					: Media::OrderMode::Shuffle);
+			Core::App().saveSettingsDelayed();
+		});
+		repeat->setClickedCallback([=] {
+			auto &settings = Core::App().settings();
+			const auto mode = settings.playerRepeatMode();
+			settings.setPlayerRepeatMode(mode == Media::RepeatMode::None
+				? Media::RepeatMode::All
+				: mode == Media::RepeatMode::All
+				? Media::RepeatMode::One
+				: Media::RepeatMode::None);
+			Core::App().saveSettingsDelayed();
+		});
+		Core::App().settings().playerOrderModeValue(
+		) | rpl::on_next([=] { shuffle->update(); }, shuffle->lifetime());
+		Core::App().settings().playerRepeatModeValue(
+		) | rpl::on_next([=] { repeat->update(); }, repeat->lifetime());
+
+		const auto share = Ui::CreateChild<Ui::AbstractButton>(info);
+		share->resize(40, 40);
+		share->setPointerCursor(true);
+		const auto shareHint = QString::fromUtf8(Mokagram::Lang::Tr("Переслать"));
+		share->setToolTip(shareHint);
+		share->setAccessibleName(shareHint);
+		share->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			if (share->isOver() || share->isDown()) {
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBgOver);
+				p.drawEllipse(share->rect());
+			}
+			st::menuIconForward.paintInCenter(p, share->rect());
+		});
+		info->widthValue(
+		) | rpl::on_next([=](int width) {
+			share->move(width - 24 - share->width(), coverRect().bottom() + 34);
+		}, share->lifetime());
+		share->setClickedCallback([=] {
+			const auto track = PlayingTrack();
+			if (!track.id.isEmpty() && CanForwardTrack(track)) {
+				ForwardTrack(controller, track);
+			}
+		});
 
 		const auto step = [=](int delta) {
 			if (OwnsTrack(instance->current(AudioMsgId::Type::Song))) {
@@ -2067,6 +2362,10 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 				tint->update();
 			}
 			const auto own = OwnsTrack(current);
+			updateArtistButton();
+			const auto track = PlayingTrack();
+			share->setVisible(!track.id.isEmpty());
+			share->setDisabled(!CanForwardTrack(track));
 			heart->setVisible(own);
 			heart->setLiked(own && IsLiked(PlayingTrack().id));
 			play->setPlaying(state.state == Media::Player::State::Playing

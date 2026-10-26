@@ -91,7 +91,8 @@ ContentWidget::ContentWidget(
 		if (value != Wrap::Layer) {
 			applyAdditionalScroll(0);
 		}
-		_bg = (value == Wrap::Layer)
+		_bg = (value == Wrap::Layer
+			&& _controller->section().type() != Section::Type::Profile)
 			? st::boxBg
 			: st::dialogsBg;
 		// Mokagram: в окне углы скруглены, так что подложка не может быть квадратной.
