@@ -1,0 +1,503 @@
+name: Release.
+
+# Релизные сборки mokaGram: Linux (tar.xz, AppImage, deb, rpm, pacman), Windows (zip), macOS (dmg, zip).
+# Запуск вручную: Actions -> Release -> Run workflow, указать тег (например v0.1.0).
+# Нужны секреты репозитория API_ID и API_HASH (свои ключи Telegram API).
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Тег релиза на GitHub (например v0.1.0)'
+        required: true
+      linux:
+        description: 'Собрать Linux'
+        type: boolean
+        default: true
+      windows:
+        description: 'Собрать Windows'
+        type: boolean
+        default: true
+      macos:
+        description: 'Собрать macOS'
+        type: boolean
+        default: true
+      prerelease:
+        description: 'Пометить как пре-релиз'
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+
+  linux:
+    name: Linux build
+    if: inputs.linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    env:
+      IMAGE_TAG: tdesktop:centos_env
+
+    steps:
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: First set up.
+        run: |
+          sudo apt update
+          curl -sSL https://install.python-poetry.org | python3 -
+          curl -sSL https://github.com/ccache/ccache/releases/download/v4.13.6/ccache-4.13.6-linux-x86_64-glibc.tar.xz \
+          | sudo tar xJ -C /usr/local/bin --strip-components=1 ccache-4.13.6-linux-x86_64-glibc/ccache
+          echo "CCACHE_DIR=$RUNNER_TEMP/.tdesktop-cache" >> $GITHUB_ENV
+          cd Telegram/build/docker/centos_env
+          poetry install
+          DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile)
+          echo "$DOCKERFILE" > Dockerfile
+          rm -rf __pycache__
+
+      - name: Free up some disk space.
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6
+        with:
+          tool-cache: true
+
+      - name: Set up Docker Buildx.
+        id: setup-buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Libraries cache.
+        id: cache-libs
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/.buildx-cache
+            ${{ runner.temp }}/.mount-cache
+          key: ${{ runner.OS }}-libs-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
+          restore-keys: ${{ runner.OS }}-libs-
+
+      - name: Restore Docker cache mounts.
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723
+        with:
+          builder: ${{ steps.setup-buildx.outputs.name }}
+          cache-dir: ${{ runner.temp }}/.mount-cache
+          dockerfile: Telegram/build/docker/centos_env/Dockerfile
+          skip-extraction: ${{ steps.cache-libs.outputs.cache-hit }}
+
+      - name: Libraries.
+        id: libs
+        timeout-minutes: 300
+        uses: docker/build-push-action@v7
+        with:
+          context: Telegram/build/docker/centos_env
+          load: true
+          tags: ${{ env.IMAGE_TAG }}
+          cache-from: type=local,src=${{ runner.temp }}/.buildx-cache
+          cache-to: type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
+
+      - name: Move cache.
+        if: always() && steps.libs.outcome != 'skipped'
+        run: |
+          rm -rf ${{ runner.temp }}/.buildx-cache
+          mv ${{ runner.temp }}/.buildx-cache{-new,} || true
+
+      - name: Save libraries cache.
+        if: always() && steps.libs.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ runner.temp }}/.buildx-cache
+            ${{ runner.temp }}/.mount-cache
+          key: ${{ runner.OS }}-libs-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
+
+      - name: Restore Telegram Desktop cache.
+        id: cache-tdesktop
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.OS }}-tdesktop-release-${{ github.run_id }}
+          restore-keys: ${{ runner.OS }}-tdesktop-release-
+
+      - name: Telegram Desktop build.
+        id: build
+        timeout-minutes: 300
+        run: |
+          ccache -z
+          docker run --rm \
+          -u $(id -u) \
+          -v $PWD:/usr/src/tdesktop \
+          -v ${{ env.CCACHE_DIR }}:/var/cache/ccache \
+          -e CONFIG=Release \
+          -e CCACHE_SLOPPINESS=pch_defines,time_macros \
+          $IMAGE_TAG \
+          env -u CCACHE_DISABLE /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
+          -D TDESKTOP_API_ID=${{ secrets.API_ID }} \
+          -D TDESKTOP_API_HASH=${{ secrets.API_HASH }} \
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF \
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+
+      - name: Save Telegram Desktop cache.
+        if: always() && steps.build.outcome != 'skipped'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cache-tdesktop.outputs.cache-primary-key }}
+
+      - name: Check.
+        run: |
+          test -f out/Release/Telegram && test -f out/Release/Updater
+          ls -la out/Release/Telegram out/Release/Updater
+          mkdir artifact
+          cp out/Release/Telegram out/Release/Updater artifact/
+
+      - uses: actions/upload-artifact@v7
+        name: Upload binaries.
+        with:
+          name: linux-bin
+          path: artifact/
+          retention-days: 2
+
+  linux-package:
+    name: Linux packages
+    needs: linux
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone.
+        uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-bin
+          path: bin
+
+      - name: Packages.
+        env:
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -e
+          VERSION="${TAG#v}"
+          chmod +x bin/Telegram bin/Updater
+          mkdir -p dist
+
+          # Значки и файл рабочего стола (общие для всех форматов).
+          mkdir -p pkg/icons
+          for s in 16 32 48 64 128 256 512; do
+            cp Telegram/Resources/art/icon$s.png pkg/icons/mokagram-$s.png
+          done
+          cat > pkg/mokagram.desktop <<'EOF'
+          [Desktop Entry]
+          Name=mokaGram
+          Comment=Telegram client with plugins
+          Exec=/opt/mokagram/Telegram -- %U
+          Icon=mokagram
+          Terminal=false
+          StartupWMClass=TelegramDesktop
+          Type=Application
+          Categories=Chat;Network;InstantMessaging;Qt;
+          MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;x-scheme-handler/ton;
+          Keywords=tg;chat;im;messaging;messenger;mokagram;
+          EOF
+          sed -i 's/^          //' pkg/mokagram.desktop
+
+          # tar.xz
+          mkdir -p tarball/mokaGram
+          cp bin/Telegram bin/Updater tarball/mokaGram/
+          tar -C tarball -cJf dist/mokagram-linux-x64.tar.xz mokaGram
+
+          # AppImage
+          mkdir -p AppDir/usr/bin
+          cp bin/Telegram bin/Updater AppDir/usr/bin/
+          sed 's#^Exec=.*#Exec=Telegram -- %U#' pkg/mokagram.desktop > AppDir/mokagram.desktop
+          cp pkg/icons/mokagram-512.png AppDir/mokagram.png
+          ln -s usr/bin/Telegram AppDir/AppRun
+          curl -sSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir dist/mokagram-x86_64.AppImage
+
+          # deb, rpm, pacman через nfpm
+          curl -sSL https://github.com/goreleaser/nfpm/releases/download/v2.43.0/nfpm_2.43.0_Linux_x86_64.tar.gz | tar xz nfpm
+          cat > nfpm.yaml <<EOF
+          name: mokagram
+          arch: amd64
+          platform: linux
+          version: ${VERSION}
+          section: net
+          maintainer: ecronx <noreply@github.com>
+          description: mokaGram, клиент Telegram с плагинами
+          homepage: https://github.com/ecronxy/mokagram
+          license: GPL-3.0-or-later
+          contents:
+            - src: bin/Telegram
+              dst: /opt/mokagram/Telegram
+              file_info: { mode: 0755 }
+            - src: bin/Updater
+              dst: /opt/mokagram/Updater
+              file_info: { mode: 0755 }
+            - src: /opt/mokagram/Telegram
+              dst: /usr/bin/mokagram
+              type: symlink
+            - src: pkg/mokagram.desktop
+              dst: /usr/share/applications/mokagram.desktop
+          EOF
+          for s in 16 32 48 64 128 256 512; do
+            cat >> nfpm.yaml <<EOF
+            - src: pkg/icons/mokagram-$s.png
+              dst: /usr/share/icons/hicolor/${s}x${s}/apps/mokagram.png
+          EOF
+          done
+          sed -i 's/^          //' nfpm.yaml
+          ./nfpm package -p deb -t dist/
+          ./nfpm package -p rpm -t dist/
+          ./nfpm package -p archlinux -t dist/
+          ls -la dist
+
+      - name: Check packages.
+        run: |
+          dpkg-deb -I dist/*.deb | head -12
+          dpkg-deb -c dist/*.deb | head -15
+          test "$(stat -c %s dist/mokagram-x86_64.AppImage)" -gt 1000000
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-packages
+          path: dist/
+          retention-days: 3
+
+  windows:
+    name: Windows
+    if: inputs.windows
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    env:
+      PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Get repository name.
+        shell: bash
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
+
+      - name: First set up.
+        shell: bash
+        run: |
+          DOCPATH=$TBUILD/$REPO_NAME/docs/building-win.md
+          SDK="$(grep "SDK version" $DOCPATH | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+
+          sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake
+
+          echo "$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+
+          git config --global user.email "you@example.com"
+          git config --global user.name "Sample"
+
+      - uses: Eden-CI/msvc-dev-cmd@master
+        name: Native Tools Command Prompt.
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+          toolset: '14.44'
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: ThirdParty cache.
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-${{ runner.arch }}-third-party-
+
+      - name: Libraries cache.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-libs-v2-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-libs-v2-
+
+      - name: Qt cache.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-qt6-
+
+      - name: Libraries.
+        run: |
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent qt6
+
+      - name: Free up some disk space.
+        shell: bash
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+
+      - name: Telegram Desktop build.
+        run: |
+          cd %TBUILD%\%REPO_NAME%\Telegram
+
+          call configure.bat ^
+          -G "Ninja Multi-Config" ^
+          qt6 ^
+          -D TDESKTOP_API_ID=${{ secrets.API_ID }} ^
+          -D TDESKTOP_API_HASH=${{ secrets.API_HASH }} ^
+          -D CMAKE_CONFIGURATION_TYPES=Release ^
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+
+          cmake --build ..\out --config Release --parallel
+
+      - name: Package.
+        shell: pwsh
+        run: |
+          $out = "$env:TBUILD\$env:REPO_NAME\out\Release"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "$out\Telegram.exe","$out\Updater.exe" -DestinationPath dist\mokagram-win-x64.zip
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-packages
+          path: dist\
+          retention-days: 3
+
+  macos:
+    name: macOS
+    if: inputs.macos
+    runs-on: macos-14
+    timeout-minutes: 360
+
+    env:
+      PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          path: ${{ env.REPO_NAME }}
+
+      - name: First set up.
+        run: |
+          sudo chown -R `whoami`:admin /usr/local/share
+
+          brew update
+          brew upgrade || true
+          brew install automake libtool meson nasm ninja pkg-config
+
+          sudo mdutil -a -i off
+
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+          sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake
+
+      - name: Libraries cache.
+        uses: actions/cache@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: ${{ runner.OS }}-release-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}
+          restore-keys: ${{ runner.OS }}-release-libs-
+
+      - name: Libraries.
+        run: |
+          ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
+
+      - name: Free up some disk space.
+        run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
+
+      - name: Telegram Desktop build.
+        run: |
+          cd $REPO_NAME/Telegram
+
+          ./configure.sh \
+          -D CMAKE_CONFIGURATION_TYPES=Release \
+          -D CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+          -D TDESKTOP_API_ID=${{ secrets.API_ID }} \
+          -D TDESKTOP_API_HASH=${{ secrets.API_HASH }} \
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF \
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+
+          cmake --build ../out --config Release --parallel
+
+      - name: Package.
+        run: |
+          set -e
+          cd $REPO_NAME/out/Release
+          ls
+          # Подпись «ad hoc»: без неё приложение на arm64 не запустится. Это не нотаризация,
+          # при первом запуске macOS спросит подтверждение (ПКМ -> Открыть).
+          codesign --force --deep -s - mokaGram.app
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          ditto -c -k --keepParent mokaGram.app "$GITHUB_WORKSPACE/dist/mokagram-macos-arm64.zip"
+          mkdir dmgroot
+          cp -R mokaGram.app dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname mokaGram -srcfolder dmgroot -ov -format UDZO "$GITHUB_WORKSPACE/dist/mokagram-macos-arm64.dmg"
+          ls -la "$GITHUB_WORKSPACE/dist"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-packages
+          path: dist/
+          retention-days: 3
+
+  release:
+    name: Publish release
+    needs: [linux-package, windows, macos]
+    if: always() && !cancelled() && (needs.linux-package.result == 'success' || needs.windows.result == 'success' || needs.macos.result == 'success')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          pattern: '*-packages'
+          merge-multiple: true
+
+      - name: Release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          ls -la assets
+          FLAGS=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then FLAGS="--prerelease"; fi
+          gh release create "$TAG" assets/* --repo "${{ github.repository }}" $FLAGS \
+            --title "mokaGram $TAG" \
+            --notes "Сборки mokaGram $TAG: Linux (tar.xz, AppImage, deb, rpm, pacman), Windows (zip), macOS (dmg, zip). macOS и Windows без подписи разработчика: система может предупредить при первом запуске."
