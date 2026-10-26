@@ -173,8 +173,22 @@ else()
     set_target_properties(moka_sqlite3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(Telegram PRIVATE moka_sqlite3)
 endif()
-find_package(LibLZMA REQUIRED)
-target_link_libraries(Telegram PRIVATE LibLZMA::LibLZMA)
+# lzma: системная, а если нет (Windows) собираем xz 5.4.7 из исходников
+find_package(LibLZMA QUIET)
+if (LibLZMA_FOUND)
+    target_link_libraries(Telegram PRIVATE LibLZMA::LibLZMA)
+else()
+    include(FetchContent)
+    FetchContent_Declare(moka_xz
+        URL https://github.com/tukaani-project/xz/archive/refs/tags/v5.4.7.zip
+        URL_HASH SHA256=f004774e7fdf254b07bb36227e9fe0fa0ae364f760ccf932574c3f75dc19aeea
+        EXCLUDE_FROM_ALL)
+    set(moka_shared_backup ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF)
+    FetchContent_MakeAvailable(moka_xz)
+    set(BUILD_SHARED_LIBS ${moka_shared_backup})
+    target_link_libraries(Telegram PRIVATE liblzma)
+endif()
 
 target_link_libraries(Telegram
 PRIVATE
