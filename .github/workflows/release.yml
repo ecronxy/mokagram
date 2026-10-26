@@ -375,6 +375,15 @@ jobs:
           key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-x64-qt6-
 
+      - name: Пересобрать rust-стадии, если из кэша вырезаны их исходники.
+        shell: bash
+        run: |
+          LP="${LibrariesPath//\\//}"
+          if [ ! -f "$LP/wallet-engine/Cargo.toml" ]; then
+            rm -f "$LP"/cache_keys/tlottie "$LP"/cache_keys/wallet-engine "$LP"/cache_keys/tdesktop_rust
+            echo "ключи tlottie, wallet-engine, tdesktop_rust сброшены"
+          fi
+
       - name: Libraries.
         id: libs
         continue-on-error: true
@@ -384,7 +393,7 @@ jobs:
 
       - name: Trim libraries (кэш лимит 10 ГБ на репозиторий).
         shell: bash
-        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' -o -path '*/src/wallet_engine/*' -o '(' '(' -path '*/tlottie/*' -o -path '*/wallet-engine/*' ')' ! -path '*/target/*' ')' ')' -type f ')' -o '(' -empty ! -path '*/tlottie/*' ! -path '*/wallet-engine/*' ')' ')' -delete
 
       # Сохраняем кэши даже если библиотеки не доехали: следующий запуск продолжит с места падения.
       - name: Save Qt cache.
@@ -495,6 +504,13 @@ jobs:
           key: ${{ runner.OS }}-release-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-release-libs-
 
+      - name: Пересобрать rust-стадии, если из кэша вырезаны их исходники.
+        run: |
+          if [ ! -f Libraries/wallet-engine/Cargo.toml ]; then
+            rm -f Libraries/cache_keys/tlottie Libraries/cache_keys/wallet-engine Libraries/cache_keys/tdesktop_rust
+            echo "ключи tlottie, wallet-engine, tdesktop_rust сброшены"
+          fi
+
       - name: Libraries.
         id: libs
         continue-on-error: true
@@ -503,7 +519,7 @@ jobs:
           ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
 
       - name: Free up some disk space.
-        run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
+        run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -name 'macos_toolchain.json' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/src/wallet_engine/*' -o '(' '(' -path '*/tlottie/*' -o -path '*/wallet-engine/*' ')' ! -path '*/target/*' ')' -o -perm +111 ')' -type f ')' -o '(' -empty ! -path '*/tlottie/*' ! -path '*/wallet-engine/*' ')' ')' -delete
 
       # Кэш сохраняем даже если библиотеки не доехали: следующий запуск продолжит с места падения.
       - name: Save libraries cache.
