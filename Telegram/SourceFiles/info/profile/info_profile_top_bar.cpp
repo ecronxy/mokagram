@@ -2982,25 +2982,23 @@ void TopBar::paintEvent(QPaintEvent *e) {
 
 	paintTabSubtitle(p);
 
-	// Mokagram: нижние углы шапки скруглены как у остальных таблеток,
-	// а под музыкой остаются прямыми: плашка продолжает шапку.
 	if (MusicShown()) {
-		constexpr auto kRadius = 32;
+		const auto radius = std::min({ 32, width() / 2, height() / 2 });
 		p.setClipping(false);
 		auto hq = PainterHighQualityEnabler(p);
 		for (const auto right : { false, true }) {
 			const auto left = right
-				? width() - kHeaderInset - kRadius
+				? width() - kHeaderInset - radius
 				: kHeaderInset;
-			const auto top = height() - kRadius;
+			const auto top = height() - radius;
 			auto path = QPainterPath();
-			path.addRect(QRectF(left, top, kRadius, kRadius));
+			path.addRect(QRectF(left, top, radius, radius));
 			auto circle = QPainterPath();
 			circle.addEllipse(QRectF(
-				right ? left - kRadius : left,
-				top - kRadius,
-				2 * kRadius,
-				2 * kRadius));
+				right ? left - radius : left,
+				top - radius,
+				2 * radius,
+				2 * radius));
 			p.fillPath(
 				path.subtracted(circle),
 				MusicBandColor().value_or(st::dialogsBg->c));

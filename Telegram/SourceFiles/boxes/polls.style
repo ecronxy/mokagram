@@ -167,11 +167,16 @@ pollAttachCancel: icon {{ "history_audio_cancel", historyFileThumbIconFg }};
 pollAttachView: icon {{ "mediaview/views", historyFileThumbIconFg }};
 pollAttachLink: icon {{ "menu/link", historyFileThumbIconFg }};
 
+createPollWidth: 440px;
+
 createPollField: InputField(defaultInputField) {
-	textMargins: margins(0px, 4px, 0px, 4px);
+	textBg: windowBgOver;
+	textBgActive: windowBgOver;
+	borderRadius: 12px;
+	textMargins: margins(14px, 10px, 48px, 10px);
 	textAlign: align(left);
-	heightMin: 36px;
-	heightMax: 86px;
+	heightMin: 44px;
+	heightMax: 106px;
 	placeholderFg: placeholderFg;
 	placeholderFgActive: placeholderFgActive;
 	placeholderFgError: placeholderFgActive;
@@ -184,20 +189,18 @@ createPollField: InputField(defaultInputField) {
 	borderActive: 2px;
 	duration: 100;
 }
-createPollFieldPadding: margins(22px, 5px, 22px, 5px);
+createPollFieldPadding: margins(22px, 6px, 22px, 6px);
 createPollOptionField: InputField(createPollField) {
-	textMargins: margins(22px, 11px, 40px, 11px);
+	textMargins: margins(14px, 10px, 40px, 10px);
 	placeholderMargins: margins(2px, 0px, 2px, 0px);
 	heightMax: 68px;
 }
 createPollOptionFieldPremium: InputField(createPollOptionField) {
-	textMargins: margins(22px, 11px, 72px, 11px);
+	textMargins: margins(14px, 10px, 72px, 10px);
 }
 createPollOptionFieldPremiumEmojiPosition: point(13px, -1px);
 createPollSolutionField: InputField(createPollField) {
-	textMargins: margins(0px, 4px, 0px, 4px);
-	border: 1px;
-	borderActive: 2px;
+	textMargins: margins(14px, 10px, 48px, 10px);
 }
 createPollLimitPadding: margins(22px, 10px, 22px, 16px);
 createPollOptionRemove: CrossButton {
@@ -218,7 +221,7 @@ createPollOptionRemove: CrossButton {
 	loadingPeriod: 1000;
 	ripple: defaultRippleAnimationBgOver;
 }
-createPollAttachPosition: point(0px, 0px);
+createPollAttachPosition: point(8px, 8px);
 createPollOptionRemovePosition: point(11px, 9px);
 createPollOptionEmojiPositionSkip: 6px;
 createPollWarning: FlatLabel(defaultFlatLabel) {
@@ -238,10 +241,24 @@ createPollLinkUrlField: InputField(dialogsFilter) {
 	heightMin: 36px;
 }
 
-createTodoOptionField: InputField(createPollOptionField) {
-	textMargins: margins(22px, 11px, 68px, 11px);
+createTodoTitleField: InputField(createPollField) {
+	textMargins: margins(14px, 11px, 14px, 11px);
+	placeholderMargins: margins(0px, 0px, 0px, 0px);
+	heightMin: 44px;
+	borderRadius: 18px;
 }
-createTodoOptionFieldEmojiPosition: point(13px, -1px);
+createTodoTitleFieldPremium: InputField(createTodoTitleField) {
+	textMargins: margins(14px, 11px, 48px, 11px);
+}
+createTodoOptionFieldPlain: InputField(createTodoTitleField) {
+	textMargins: margins(14px, 11px, 40px, 11px);
+	heightMax: 68px;
+}
+createTodoOptionField: InputField(createTodoOptionFieldPlain) {
+	textMargins: margins(14px, 11px, 68px, 11px);
+}
+createTodoOptionPadding: margins(22px, 4px, 22px, 4px);
+createTodoTitleEmojiPosition: point(-48px, -1px);
 
 pollResultsQuestion: FlatLabel(defaultFlatLabel) {
 	minWidth: 320px;
@@ -289,17 +306,13 @@ createPollDurationIconSize: 20px;
 createPollDurationIconPosition: point(1px, 5px);
 createPollDurationIconMargins: margins(2px, 2px, 2px, 2px);
 
-pollDescriptionFieldPadding: margins(22px, 5px, 11px, 5px);
+pollDescriptionFieldPadding: margins(22px, 6px, 22px, 6px);
 pollDescriptionField: InputField(createPollField) {
-	textMargins: margins(0px, 4px, pollAttachTextSkip + pollAttachTextSkip + 1px, 4px);
-	border: 0px;
-	borderActive: 0px;
+	textMargins: margins(14px, 10px, 80px, 10px);
 }
 
 pollMediaField: InputField(createPollSolutionField) {
-	textMargins: margins(0px, 4px, pollAttachTextSkip, 4px);
-	border: 0px;
-	borderActive: 0px;
+	textMargins: margins(14px, 10px, pollAttachTextSkip + 16px, 10px);
 }
 
 infoPollsNewButtonBottom: 19px;

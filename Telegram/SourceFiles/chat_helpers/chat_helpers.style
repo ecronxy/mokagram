@@ -896,6 +896,12 @@ defaultEmojiSuggestions: EmojiSuggestions {
 	fadeRight: icon {{ "fade_horizontal", menuBg }};
 }
 
+commandMenuWidthMax: 576px;
+commandMenuMargin: margins(8px, 4px, 8px, 4px);
+commandMenuPadding: margins(14px, 12px, 14px, 12px);
+commandMenuRadius: 18px;
+commandMenuRowSkip: 2px;
+
 mentionHeight: 40px;
 mentionPadding: margins(8px, 5px, 8px, 5px);
 mentionTop: 11px;
