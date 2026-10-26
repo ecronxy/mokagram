@@ -362,8 +362,8 @@ jobs:
             !${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\*
             !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-libs-v2-${{ env.CACHE_KEY }}-${{ github.run_id }}
-          restore-keys: ${{ runner.OS }}-x64-libs-v2-
+          key: ${{ runner.OS }}-x64-libs-v3-${{ env.CACHE_KEY }}-${{ github.run_id }}
+          restore-keys: ${{ runner.OS }}-x64-libs-v3-
 
       - name: Qt cache.
         id: cache-qt
@@ -372,8 +372,8 @@ jobs:
           path: |
             ${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}-${{ github.run_id }}
-          restore-keys: ${{ runner.OS }}-x64-qt6-
+          key: ${{ runner.OS }}-x64-qt6r-${{ env.CACHE_KEY }}-${{ github.run_id }}
+          restore-keys: ${{ runner.OS }}-x64-qt6r-
 
       - name: Пересобрать rust-стадии, если из кэша вырезаны их исходники.
         shell: bash
@@ -393,7 +393,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 300
         run: |
-          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent qt6
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent qt6
 
       - name: Trim libraries (кэш лимит 10 ГБ на репозиторий).
         shell: bash
