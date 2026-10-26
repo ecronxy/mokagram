@@ -13,6 +13,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class AudioMsgId;
 
+namespace Data {
+class DocumentMedia;
+} // namespace Data
+
 namespace Ui {
 class FlatLabel;
 class LabelSimple;
@@ -112,6 +116,7 @@ private:
 	void setType(AudioMsgId::Type type);
 	void handleSongUpdate(const TrackState &state);
 	void handleSongChange();
+	void refreshSongCover();
 	void handlePlaylistUpdate();
 
 	void updateTimeText(const TrackState &state);
@@ -166,6 +171,8 @@ private:
 	std::unique_ptr<OrderController> _orderController;
 	std::unique_ptr<SpeedController> _speedController;
 
+	std::shared_ptr<Data::DocumentMedia> _songMedia;
+	rpl::lifetime _songMediaLifetime;
 	rpl::lifetime _playlistChangesLifetime;
 
 };

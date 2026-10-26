@@ -912,10 +912,10 @@ jobs:
           cd $REPO_NAME/out/Release
           DUMP=../../../Libraries/breakpad/src/tools/mac/dump_syms/build/Release/dump_syms
           mkdir -p symbols
-          for MODULE in Telegram Updater; do
-            BINARY=Telegram.app/Contents/MacOS/Telegram
+          for MODULE in mokaGram Updater; do
+            BINARY=mokaGram.app/Contents/MacOS/mokaGram
             if [ "$MODULE" = "Updater" ]; then
-              BINARY=Telegram.app/Contents/Frameworks/Updater
+              BINARY=mokaGram.app/Contents/Frameworks/Updater
             fi
             "$DUMP" -a ${{ matrix.arch }} "$BINARY" > $MODULE.sym 2>/dev/null
             DEBUG_ID=$(head -n 1 $MODULE.sym | awk '{ print $4 }')
@@ -927,7 +927,7 @@ jobs:
       - name: Pack the half for transport.
         run: |
           cd $REPO_NAME/out/Release
-          for ENTRY in Telegram.app Packer; do
+          for ENTRY in mokaGram.app Packer; do
             if [ ! -e "$ENTRY" ]; then
               echo "::error::$ENTRY not found after the build."
               exit 1
@@ -935,15 +935,15 @@ jobs:
           done
 
           # Stripped here: the universal app is lipo'd from these.
-          for BINARY in MacOS/Telegram Frameworks/Updater Helpers/crashpad_handler; do
-            strip Telegram.app/Contents/$BINARY
+          for BINARY in MacOS/mokaGram Frameworks/Updater Helpers/crashpad_handler; do
+            strip mokaGram.app/Contents/$BINARY
           done
 
           # A tar, because upload-artifact resolves symlinks and drops
           # the executable bit, and an .app bundle survives neither.
           mkdir -p transport
           cp ../../../MACOS_TOOLCHAIN.txt macos-toolchain.txt
-          tar -cf transport/mac-${{ matrix.arch }}.tar Telegram.app Packer macos-toolchain.txt
+          tar -cf transport/mac-${{ matrix.arch }}.tar mokaGram.app Packer macos-toolchain.txt
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         name: Upload the half.
@@ -1016,10 +1016,10 @@ jobs:
           # universal app installs, the thin ones become the updates.
           cd $REPO_NAME/out/Release
           for ARCH in x86_64 arm64; do
-            rm -rf unpack.$ARCH Telegram.$ARCH.app
+            rm -rf unpack.$ARCH mokaGram.$ARCH.app
             mkdir unpack.$ARCH
             tar -xf transport/mac-$ARCH.tar -C unpack.$ARCH
-            mv unpack.$ARCH/Telegram.app Telegram.$ARCH.app
+            mv unpack.$ARCH/mokaGram.app mokaGram.$ARCH.app
           done
           if ! cmp -s unpack.arm64/macos-toolchain.txt unpack.x86_64/macos-toolchain.txt; then
             echo "::error::The architecture builds used different Xcode/SDK versions or deployment targets."
@@ -1033,17 +1033,17 @@ jobs:
 
           # Use the arm64 bundle as the template and include Intel-only
           # Swift runtimes below for older macOS versions.
-          BINARIES="MacOS/Telegram Frameworks/Updater Helpers/crashpad_handler"
-          rm -rf Telegram.app
-          cp -R Telegram.arm64.app Telegram.app
+          BINARIES="MacOS/mokaGram Frameworks/Updater Helpers/crashpad_handler"
+          rm -rf mokaGram.app
+          cp -R mokaGram.arm64.app mokaGram.app
           for BINARY in $BINARIES; do
-            lipo -create Telegram.arm64.app/Contents/$BINARY \
-              Telegram.x86_64.app/Contents/$BINARY \
-              -output Telegram.app/Contents/$BINARY
+            lipo -create mokaGram.arm64.app/Contents/$BINARY \
+              mokaGram.x86_64.app/Contents/$BINARY \
+              -output mokaGram.app/Contents/$BINARY
           done
-          for FILE in Telegram.x86_64.app/Contents/Frameworks/libswift*.dylib; do
+          for FILE in mokaGram.x86_64.app/Contents/Frameworks/libswift*.dylib; do
             [ -f "$FILE" ] || continue
-            DESTINATION="Telegram.app/Contents/Frameworks/${FILE##*/}"
+            DESTINATION="mokaGram.app/Contents/Frameworks/${FILE##*/}"
             if [ -f "$DESTINATION" ]; then
               if ! cmp -s "$FILE" "$DESTINATION"; then
                 echo "::error::Swift runtime differs between architecture builds: ${FILE##*/}"
@@ -1065,7 +1065,7 @@ jobs:
                 exit 1
                 ;;
             esac
-          done < <(find Telegram.app -type f -perm +111 -print0)
+          done < <(find mokaGram.app -type f -perm +111 -print0)
 
       - name: Sign and notarize.
         id: sign
@@ -1098,7 +1098,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
-          for BUNDLE in Telegram.x86_64.app Telegram.arm64.app Telegram.app; do
+          for BUNDLE in mokaGram.x86_64.app mokaGram.arm64.app mokaGram.app; do
             codesign --force --deep --timestamp --options runtime \
               --sign "$SIGN_IDENTITY" \
               --entitlements ../../Telegram/Telegram/Telegram.entitlements \
@@ -1136,7 +1136,7 @@ jobs:
             # so the file paths inside the update match the install.
             rm -rf update_pack
             mkdir update_pack
-            cp -R Telegram.$ARCH.app update_pack/Telegram.app
+            cp -R mokaGram.$ARCH.app update_pack/Telegram.app
             cp Packer update_pack/
             cd update_pack
             ./Packer -path Telegram.app \
@@ -1174,7 +1174,7 @@ jobs:
           rm -rf portable
           mkdir -p portable/$CANARY_FOLDER/TelegramForcePortable
           touch portable/$CANARY_FOLDER/TelegramForcePortable/.keep
-          cp -R Telegram.app portable/$CANARY_FOLDER/
+          cp -R mokaGram.app portable/$CANARY_FOLDER/
           (cd portable && zip -q -r ../$PORTABLE $CANARY_FOLDER)
 
           mkdir -p artifact/update artifact/portable
@@ -1601,10 +1601,10 @@ jobs:
           # spctl --assess on every bundle; this is the publish-side
           # witness. TODO(canary-infra): pin an apple-codesign (rcodesign)
           # release for full signature + staple verification on Linux:
-          #   rcodesign verify /tmp/macapp/Telegram/Telegram.app
+          #   rcodesign verify /tmp/macapp/Telegram/mokaGram.app
           unzip -q artifacts/portable/td-portable-mac-*.zip -d /tmp/macapp
-          if [ ! -d "/tmp/macapp/${{ needs.version.outputs.folder }}/Telegram.app/Contents/_CodeSignature" ]; then
-            echo "::error::The portable Telegram.app has no code signature."
+          if [ ! -d "/tmp/macapp/${{ needs.version.outputs.folder }}/mokaGram.app/Contents/_CodeSignature" ]; then
+            echo "::error::The portable mokaGram.app has no code signature."
             exit 1
           fi
 

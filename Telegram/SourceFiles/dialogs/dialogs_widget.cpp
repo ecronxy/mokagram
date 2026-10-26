@@ -594,7 +594,7 @@ Widget::Widget(
 			auto hq = PainterHighQualityEnabler(p);
 			const auto margin = style::ConvertScale(8);
 			const auto card = QRectF(bar->rect()).marginsRemoved(
-				{ margin, margin, margin, margin });
+				QMarginsF(margin, margin, margin, margin));
 			p.setPen(QPen(QColor(255, 255, 255, 34), 1.));
 			p.setBrush(st::windowBg);
 			p.drawRoundedRect(

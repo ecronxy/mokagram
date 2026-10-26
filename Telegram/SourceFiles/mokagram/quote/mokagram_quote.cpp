@@ -654,7 +654,7 @@ protected:
 			const auto index = (i < count) ? i : kCustomBg;
 			auto a = QColor();
 			auto b = QColor();
-			BgColors(index, a, b);
+			(void)BgColors(index, a, b);
 			auto lg = QLinearGradient(r.topLeft(), r.bottomRight());
 			lg.setColorAt(0, a);
 			lg.setColorAt(1, b);

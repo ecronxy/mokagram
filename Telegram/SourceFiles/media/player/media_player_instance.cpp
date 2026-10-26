@@ -810,7 +810,7 @@ bool Instance::previousAvailable(AudioMsgId::Type type) const {
 	Assert(data != nullptr);
 
 	if (type == AudioMsgId::Type::Song
-		&& Mokagram::Music::OwnsTrack(data->current)) {
+		&& Mokagram::Music::UsesQueue(data->current)) {
 		return Mokagram::Music::PreviousAvailable();
 	}
 
@@ -834,7 +834,7 @@ bool Instance::nextAvailable(AudioMsgId::Type type) const {
 	Assert(data != nullptr);
 
 	if (type == AudioMsgId::Type::Song
-		&& Mokagram::Music::OwnsTrack(data->current)) {
+		&& Mokagram::Music::UsesQueue(data->current)) {
 		return Mokagram::Music::NextAvailable();
 	}
 
@@ -1261,7 +1261,7 @@ void Instance::resumeSongAfterVoice(bool force) {
 bool Instance::next(AudioMsgId::Type type) {
 	if (const auto data = getData(type)) {
 		if (type == AudioMsgId::Type::Song
-			&& Mokagram::Music::OwnsTrack(data->current)) {
+			&& Mokagram::Music::UsesQueue(data->current)) {
 			Mokagram::Music::Step(1);
 			return true;
 		}
@@ -1273,7 +1273,7 @@ bool Instance::next(AudioMsgId::Type type) {
 bool Instance::previous(AudioMsgId::Type type) {
 	if (const auto data = getData(type)) {
 		if (type == AudioMsgId::Type::Song
-			&& Mokagram::Music::OwnsTrack(data->current)) {
+			&& Mokagram::Music::UsesQueue(data->current)) {
 			Mokagram::Music::Step(-1);
 			return true;
 		}
@@ -1489,8 +1489,16 @@ void Instance::emitUpdate(AudioMsgId::Type type, CheckCallback check) {
 		}
 
 		auto finished = false;
+		const auto queueTrack = (type == AudioMsgId::Type::Song)
+			&& Mokagram::Music::UsesQueue(state.id);
 		_updatedNotifier.fire_copy({state});
-		if (data->isPlaying && state.state == State::StoppedAtEnd) {
+		if (data->current != state.id) {
+			return;
+		}
+		if (data->isPlaying && state.state == State::StoppedAtEnd
+			&& queueTrack) {
+			finished = IsStoppedAtEnd(getState(type).state);
+		} else if (data->isPlaying && state.state == State::StoppedAtEnd) {
 			if (repeat(data) == RepeatMode::One) {
 				play(data->current);
 			} else if (OptionDisableAutoplayNext.value()
@@ -1500,7 +1508,7 @@ void Instance::emitUpdate(AudioMsgId::Type type, CheckCallback check) {
 				finished = true;
 			}
 		}
-		data->isPlaying = !IsStopped(state.state);
+		data->isPlaying = !IsStopped(getState(type).state);
 		if (finished) {
 			_tracksFinished.fire_copy(type);
 			if (type == AudioMsgId::Type::Voice) {

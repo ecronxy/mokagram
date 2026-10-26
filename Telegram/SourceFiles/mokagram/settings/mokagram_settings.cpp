@@ -26,6 +26,7 @@ constexpr auto kSaveDelay = crl::time(300);
 
 struct State {
 	std::vector<Entry> entries;
+	base::flat_map<QString, int> entryIndices;
 	// Явно заданные значения: отличия от умолчаний и неизвестные ключи.
 	base::flat_map<QString, QJsonValue> values;
 	rpl::event_stream<QString> changed;
@@ -45,12 +46,9 @@ struct State {
 }
 
 [[nodiscard]] const Entry *Find(const QString &key) {
-	for (const auto &entry : Data().entries) {
-		if (entry.key == key) {
-			return &entry;
-		}
-	}
-	return nullptr;
+	const auto &data = Data();
+	const auto i = data.entryIndices.find(key);
+	return (i != data.entryIndices.end()) ? &data.entries[i->second] : nullptr;
 }
 
 // Приводит значение к виду, допустимому для записи. Пусто, если не подходит.
@@ -180,10 +178,11 @@ void ResetKey(const QString &key) {
 void Register(Entry entry) {
 	auto &data = Data();
 	const auto key = entry.key;
-	const auto index = ranges::find(data.entries, key, &Entry::key);
-	if (index != data.entries.end()) {
-		*index = std::move(entry);
+	const auto index = data.entryIndices.find(key);
+	if (index != data.entryIndices.end()) {
+		data.entries[index->second] = std::move(entry);
 	} else {
+		data.entryIndices.emplace(key, int(data.entries.size()));
 		data.entries.push_back(std::move(entry));
 	}
 	// Значение из файла могло прийти раньше записи: проверяем его теперь.

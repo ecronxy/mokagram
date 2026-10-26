@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "platform/platform_specific.h"
 #include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "data/data_file_origin.h"
 #include "data/data_session.h"
 #include "data/data_peer.h"
 #include "core/application.h"
@@ -509,9 +511,7 @@ void Widget::paintEvent(QPaintEvent *e) {
 		auto path = QPainterPath();
 		path.addRoundedRect(art, 12, 12);
 		const auto current = instance()->current(AudioMsgId::Type::Song);
-		const auto cover = current.audio()
-			? Mokagram::Music::CoverForDocument(current.audio()->id)
-			: QImage();
+		const auto cover = Mokagram::Music::CoverForPlayback(current);
 		if (!cover.isNull()) {
 			p.save();
 			p.setClipPath(path);
@@ -925,6 +925,7 @@ void Widget::handleSongChange() {
 		return;
 	}
 	_lastSongId = current;
+	refreshSongCover();
 	_speedController->reloadFromLookup();
 
 	auto textWithEntities = TextWithEntities();
@@ -945,6 +946,28 @@ void Widget::handleSongChange() {
 	_nameLabel->setMarkedText(textWithEntities);
 	handlePlaylistUpdate();
 	updateLabelsGeometry();
+}
+
+void Widget::refreshSongCover() {
+	_songMediaLifetime.destroy();
+	_songMedia = nullptr;
+	const auto document = _lastSongId.audio();
+	if (_type == AudioMsgId::Type::Song
+		&& document
+		&& !Mokagram::Music::OwnsTrack(_lastSongId)) {
+		_songMedia = document->createMediaView();
+		if (document->hasThumbnail() && !_songMedia->thumbnail()) {
+			document->session().downloaderTaskFinished(
+			) | rpl::on_next([=] {
+				update();
+				if (_songMedia->thumbnail()) {
+					_songMediaLifetime.destroy();
+				}
+			}, _songMediaLifetime);
+			_songMedia->thumbnailWanted(_lastSongId.contextId());
+		}
+	}
+	update();
 }
 
 void Widget::handlePlaylistUpdate() {

@@ -239,7 +239,7 @@ void AddAvatar(
 	});
 }
 
-[[nodiscard]] not_null<Ui::FlatLabel*> AddCenteredLabel(
+not_null<Ui::FlatLabel*> AddCenteredLabel(
 		not_null<Ui::VerticalLayout*> content,
 		const QString &text,
 		const style::FlatLabel &st,

@@ -1073,6 +1073,7 @@ namespace {
 
 struct LagState {
 	crl::time last = 0;
+	crl::time lastStall = 0;
 	std::deque<crl::time> stalls;
 	bool active = false;
 	PowerSaving::Flags saved;
@@ -1095,6 +1096,7 @@ void LagTick(LagState &state) {
 	const auto counted = QGuiApplication::applicationState() == Qt::ApplicationActive
 		&& delta > 120 && delta < 3000;
 	if (counted) {
+		state.lastStall = now;
 		state.stalls.push_back(now);
 	}
 	while (!state.stalls.empty() && now - state.stalls.front() > 10000) {
@@ -1140,8 +1142,7 @@ void LagTick(LagState &state) {
 			}
 		}
 	} else if (state.active
-		&& (state.stalls.empty()
-			|| now - state.stalls.back() > crl::time(S::Int(u"lag.calm"_q)) * 1000)) {
+		&& now - state.lastStall > crl::time(S::Int(u"lag.calm"_q)) * 1000) {
 		PowerSaving::Set(state.saved);
 		state.active = false;
 		state.stalls.clear();

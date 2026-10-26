@@ -8,6 +8,7 @@
 #include "rpl/producer.h"
 
 class AudioMsgId;
+class QImage;
 
 namespace Window {
 class SessionController;
@@ -22,6 +23,7 @@ void ShowMusicBox(
 // Мост к плееру клиента: если играет трек из очереди SoundCloud, кнопки
 // «вперёд/назад», повтор и перемешивание работают по этой очереди.
 [[nodiscard]] bool OwnsTrack(const AudioMsgId &id);
+[[nodiscard]] bool UsesQueue(const AudioMsgId &id);
 [[nodiscard]] bool NextAvailable();
 [[nodiscard]] bool PreviousAvailable();
 void Step(int delta);
@@ -31,8 +33,9 @@ void Step(int delta);
 [[nodiscard]] bool CurrentTrackInfo(QString &title, QString &artist);
 
 // Главный цвет обложки играющего трека (невалидный, если выключено в настройках
-// или играет не трек из очереди).
+// или обложка ещё не загружена).
 [[nodiscard]] QColor CurrentCoverAccent();
+[[nodiscard]] QImage CoverForPlayback(const AudioMsgId &id);
 
 // Меню по правой кнопке на панели плеера: то же, что в окне музыки, плюс управление.
 void ShowCurrentTrackMenu(
