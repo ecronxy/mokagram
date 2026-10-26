@@ -52,7 +52,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_file_utilities.h"
 #include "main/main_session.h"
 #include "menu/menu_send.h"
-#include "settings/detailed_settings_button.h"
 #include "settings/settings_common.h"
 #include "storage/file_upload.h"
 #include "storage/localimageloader.h"
@@ -207,7 +206,6 @@ private:
 
 		void setPlaceholder() const;
 		void removePlaceholder() const;
-		void showAddIcon(bool show);
 
 		[[nodiscard]] not_null<Ui::InputField*> field() const;
 		[[nodiscard]] not_null<Ui::RpWidget*> wrapWidget() const;
@@ -234,7 +232,6 @@ private:
 		FieldDropCallback _fieldDropCallback;
 		WidgetDropCallback _widgetDropCallback;
 		std::shared_ptr<PollMediaState> _media;
-		Ui::FadeWrapScaled<Ui::RpWidget> *_addIcon = nullptr;
 
 	};
 
@@ -369,20 +366,21 @@ void FocusAtEnd(not_null<Ui::InputField*> field) {
 	return result;
 }
 
-not_null<DetailedSettingsButton*> AddPollToggleButton(
+not_null<Ui::SettingsButton*> AddPollToggleButton(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<QString> title,
 		rpl::producer<QString> description,
-		Settings::IconDescriptor icon,
-		rpl::producer<bool> toggled,
-		const style::DetailedSettingsButtonStyle &rowStyle) {
-	return AddDetailedSettingsButton(
+		rpl::producer<bool> toggled) {
+	const auto button = container->add(object_ptr<Ui::SettingsButton>(
 		container,
 		std::move(title),
-		std::move(description),
-		std::move(icon),
-		std::move(toggled),
-		rowStyle);
+		st::settingsButtonNoIcon));
+	button->toggleOn(std::move(toggled));
+	std::move(description) | rpl::on_next([=](const QString &text) {
+		button->setToolTip(text);
+		button->setAccessibleDescription(text);
+	}, button->lifetime());
+	return button;
 }
 
 Options::Option::Option(
@@ -418,12 +416,6 @@ Options::Option::Option(
 	}
 
 	_wrap->hide(anim::type::instant);
-
-	_content->paintRequest(
-	) | rpl::on_next([content = _content.get()] {
-		auto p = QPainter(content);
-		p.fillRect(content->rect(), st::boxBg);
-	}, _content->lifetime());
 
 	_content->widthValue(
 	) | rpl::on_next([=] {
@@ -559,9 +551,8 @@ void Options::Option::createHandle() {
 
 	_content->sizeValue(
 	) | rpl::on_next([=](QSize size) {
-		const auto left = st::createPollFieldPadding.left();
-		wrap->moveToLeft(
-			left,
+		wrap->moveToRight(
+			st::createPollFieldPadding.right() + 80,
 			(size.height() - wrap->heightNoMargins()) / 2);
 	}, wrap->lifetime());
 
@@ -629,6 +620,7 @@ void Options::Option::enableChooseCorrect(
 		if (_handle) {
 			_handle->toggle(isGood(), anim::type::normal);
 		}
+		updateFieldGeometry();
 		return;
 	}
 	static auto Index = 0;
@@ -675,11 +667,12 @@ void Options::Option::enableChooseCorrect(
 	if (_handle) {
 		_handle->hide(anim::type::normal);
 	}
+	updateFieldGeometry();
 }
 
 void Options::Option::updateFieldGeometry() {
-	const auto skip = st::defaultRadio.diameter
-		+ st::defaultCheckbox.textPosition.x();
+	const auto skip = st::createPollFieldPadding.left();
+	_field->setAdditionalMargins(QMargins(_hasCorrect ? 32 : 0, 0, 0, 0));
 	_field->resizeToWidth(
 		_content->width() - skip - st::createPollFieldPadding.right());
 	_field->moveToLeft(skip, 4);
@@ -695,50 +688,6 @@ not_null<Ui::RpWidget*> Options::Option::wrapWidget() const {
 
 void Options::Option::removePlaceholder() const {
 	field()->setPlaceholder(rpl::single(QString()));
-}
-
-void Options::Option::showAddIcon(bool show) {
-	if (show && !_addIcon) {
-		auto icon = Settings::Icon(Settings::IconDescriptor{
-			&st::settingsIconAdd,
-			Settings::IconType::Round,
-			&st::windowBgActive,
-		});
-		const auto iconSize = icon.size();
-		auto widget = object_ptr<Ui::RpWidget>(_content.get());
-		const auto raw = widget.data();
-		raw->resize(iconSize);
-		const auto iconPtr = std::make_shared<Settings::Icon>(
-			std::move(icon));
-		raw->paintOn([=](QPainter &p) {
-			iconPtr->paint(p, 0, 0);
-		});
-
-		const auto wrap =
-			Ui::CreateChild<Ui::FadeWrapScaled<Ui::RpWidget>>(
-				_content.get(),
-				std::move(widget));
-		wrap->hide(anim::type::instant);
-
-		_content->sizeValue(
-		) | rpl::on_next([=](QSize size) {
-			const auto &handleIcon = st::pollBoxMenuPollOrderIcon;
-			const auto left = st::createPollFieldPadding.left()
-				+ (handleIcon.width() - iconSize.width()) / 2;
-			wrap->moveToLeft(
-				left,
-				(size.height() - wrap->heightNoMargins()) / 2);
-		}, wrap->lifetime());
-
-		_addIcon = wrap;
-	}
-	if (_addIcon) {
-		if (show) {
-			_addIcon->show(anim::type::normal);
-		} else {
-			_addIcon->hide(anim::type::normal);
-		}
-	}
 }
 
 PollAnswer Options::Option::toPollAnswer(int index) const {
@@ -970,10 +919,8 @@ void Options::fixAfterErase() {
 
 	const auto last = _list.end() - 1;
 	(*last)->setPlaceholder();
-	(*last)->showAddIcon(true);
 	if (last != begin(_list)) {
 		(*(last - 1))->setPlaceholder();
-		(*(last - 1))->showAddIcon(false);
 	}
 	fixShadows();
 }
@@ -1000,13 +947,8 @@ void Options::insertOption(
 	Assert(beforeIndex >= 0 && beforeIndex <= int(_list.size()));
 
 	const auto isAppend = (beforeIndex == int(_list.size()));
-	if (isAppend) {
-		if (!_list.empty()) {
-			_list.back()->showAddIcon(false);
-		}
-		if (_list.size() > 1) {
-			(*(_list.end() - 2))->removePlaceholder();
-		}
+	if (isAppend && _list.size() > 1) {
+		(*(_list.end() - 2))->removePlaceholder();
 	}
 
 	const auto layoutPosition = isAppend
@@ -1036,9 +978,6 @@ void Options::insertOption(
 	}
 	initOptionField(raw->field());
 
-	if (isAppend) {
-		raw->showAddIcon(true);
-	}
 	raw->show(animated);
 	fixShadows();
 	restartReorder();
@@ -1052,9 +991,7 @@ void Options::initOptionField(not_null<Ui::InputField*> field) {
 			_box,
 			_controller,
 			emojiPanel,
-			QPoint(
-				-st::createPollOptionFieldPremium.textMargins.right(),
-				st::createPollOptionEmojiPositionSkip));
+			st::createPollMediaEmojiPosition);
 		emojiToggle->shownValue() | rpl::on_next([=](bool shown) {
 			if (!shown) {
 				return;
@@ -1400,7 +1337,7 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 			this,
 			_controller,
 			emojiPanel,
-			QPoint(-st::defaultComposeFiles.emoji.inner.width - 4, 2));
+			st::createPollTitleEmojiPosition);
 		emojiToggle->show();
 		emojiPanel->selector()->emojiChosen(
 		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
@@ -1468,9 +1405,7 @@ not_null<Ui::InputField*> CreatePollBox::setupDescription(
 			this,
 			_controller,
 			emojiPanel,
-			QPoint(
-				-st::pollDescriptionField.textMargins.right(),
-				2));
+			st::createPollMediaEmojiPosition);
 		emojiToggle->shownValue() | rpl::on_next([=](bool shown) {
 			if (!shown) {
 				return;
@@ -2787,59 +2722,34 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			container,
 			tr::lng_polls_create_show_who_voted(),
 			tr::lng_polls_create_show_who_voted_about(),
-			{
-				.icon = &st::pollBoxFilledPollViewIcon,
-				.background = &st::windowBgActive,
-			},
 			rpl::single(!!(_chosen & PollData::Flag::PublicVotes))
-				| rpl::then(state->showWhoVotedForceOn.events()),
-			st::detailedSettingsButtonStyle).get()
+				| rpl::then(state->showWhoVotedForceOn.events())).get()
 		: nullptr;
 	const auto multiple = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_allow_multiple_answers(),
 		tr::lng_polls_create_allow_multiple_answers_about(),
-		{
-			.icon = &st::pollBoxFilledPollMultipleIcon,
-			.background = &st::windowBgActive,
-		},
 		rpl::single(!!(_chosen & PollData::Flag::MultiChoice))
-			| rpl::then(state->multipleForceOff.events()),
-		st::detailedSettingsButtonStyle);
+			| rpl::then(state->multipleForceOff.events()));
 	const auto addOptions = (!(_disabled & PollData::Flag::OpenAnswers))
 		? AddPollToggleButton(
 			container,
 			tr::lng_polls_create_allow_adding_options(),
 			tr::lng_polls_create_allow_adding_options_about(),
-			{
-				.icon = &st::pollBoxFilledPollAddIcon,
-				.background = &st::windowBgActive,
-			},
 			rpl::single(!!(_chosen & PollData::Flag::OpenAnswers))
-				| rpl::then(state->addOptionsForceOff.events()),
-			st::detailedSettingsButtonStyle).get()
+				| rpl::then(state->addOptionsForceOff.events())).get()
 		: nullptr;
 	const auto revoting = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_allow_revoting(),
 		tr::lng_polls_create_allow_revoting_about(),
-		{
-			.icon = &st::pollBoxFilledPollRevoteIcon,
-			.background = &st::windowBgActive,
-		},
 		rpl::single(!(_chosen & PollData::Flag::RevotingDisabled))
-			| rpl::then(state->revotingForceOff.events()),
-		st::detailedSettingsButtonStyle);
+			| rpl::then(state->revotingForceOff.events()));
 	const auto shuffle = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_shuffle_options(),
 		tr::lng_polls_create_shuffle_options_about(),
-		{
-			.icon = &st::pollBoxFilledPollShuffleIcon,
-			.background = &st::windowBgActive,
-		},
-		rpl::single(!!(_chosen & PollData::Flag::ShuffleAnswers)),
-		st::detailedSettingsButtonStyle);
+		rpl::single(!!(_chosen & PollData::Flag::ShuffleAnswers)));
 	const auto quiz = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_set_correct_answer(),
@@ -2851,13 +2761,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 					tr::now)
 				: tr::lng_polls_create_set_correct_answer_about(tr::now);
 		}),
-		{
-			.icon = &st::pollBoxFilledPollCorrectIcon,
-			.background = &st::windowBgActive,
-		},
 		rpl::single(!!(_chosen & PollData::Flag::Quiz))
-			| rpl::then(state->quizForceOff.events()),
-		st::detailedSettingsButtonStyle);
+			| rpl::then(state->quizForceOff.events()));
 
 	const auto show = uiShow();
 
@@ -2866,24 +2771,14 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			container,
 			tr::lng_polls_create_restrict_to_subscribers(),
 			tr::lng_polls_create_restrict_to_subscribers_about(),
-			{
-				.icon = &st::pollBoxFilledPollSubscribersIcon,
-				.background = &st::windowBgActive,
-			},
-			rpl::single(!!(_chosen & PollData::Flag::SubscribersOnly)),
-			st::detailedSettingsButtonStyle).get()
+			rpl::single(!!(_chosen & PollData::Flag::SubscribersOnly))).get()
 		: nullptr;
 	const auto limitByCountry = isBroadcastChannel
 		? AddPollToggleButton(
 			container,
 			tr::lng_polls_create_limit_by_country(),
 			tr::lng_polls_create_limit_by_country_about(),
-			{
-				.icon = &st::pollBoxFilledPollCountryIcon,
-				.background = &st::windowBgActive,
-			},
-			rpl::single(false),
-			st::detailedSettingsButtonStyle).get()
+			rpl::single(false)).get()
 		: nullptr;
 	const auto countriesWrap = limitByCountry
 		? container->add(
@@ -2951,12 +2846,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		container,
 		tr::lng_polls_create_limit_duration(),
 		tr::lng_polls_create_limit_duration_about(),
-		{
-			.icon = &st::pollBoxFilledPollDeadlineIcon,
-			.background = &st::windowBgActive,
-		},
-		rpl::single(false),
-		st::detailedSettingsButtonStyle);
+		rpl::single(false));
 
 	const auto durationWrap = container->add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(

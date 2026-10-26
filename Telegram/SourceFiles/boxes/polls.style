@@ -136,15 +136,15 @@ historyPollAddOptionAttach: IconButton(defaultIconButton) {
 
 pollBoxOutlinePollAddIcon: icon{{ "poll/general/outline_poll_add-18x18", activeButtonFg }};
 pollBoxMenuPollOrderIcon: icon{{ "poll/general/menu_poll_order-24x24", historyComposeIconFg }};
-pollBoxFilledPollDeadlineIcon: icon{{ "poll/filled/filled_poll_deadline", activeButtonFg }};
-pollBoxFilledPollViewIcon: icon{{ "poll/filled/filled_poll_view", activeButtonFg }};
-pollBoxFilledPollAddIcon: icon{{ "poll/filled/filled_poll_add", activeButtonFg }};
-pollBoxFilledPollCorrectIcon: icon{{ "poll/filled/filled_poll_correct", activeButtonFg }};
-pollBoxFilledPollRevoteIcon: icon{{ "poll/filled/filled_poll_revote", activeButtonFg }};
-pollBoxFilledPollShuffleIcon: icon{{ "poll/filled/filled_poll_shuffle", activeButtonFg }};
-pollBoxFilledPollMultipleIcon: icon{{ "poll/filled/filled_poll_multiple", activeButtonFg }};
-pollBoxFilledPollSubscribersIcon: icon{{ "poll/filled/filled_poll_subscribers-20x20", activeButtonFg }};
-pollBoxFilledPollCountryIcon: icon{{ "poll/filled/filled_poll_country-20x20", activeButtonFg }};
+pollBoxFilledPollDeadlineIcon: icon{{ "poll/filled/filled_poll_deadline", windowSubTextFg }};
+pollBoxFilledPollViewIcon: icon{{ "poll/filled/filled_poll_view", windowSubTextFg }};
+pollBoxFilledPollAddIcon: icon{{ "poll/filled/filled_poll_add", windowSubTextFg }};
+pollBoxFilledPollCorrectIcon: icon{{ "poll/filled/filled_poll_correct", windowSubTextFg }};
+pollBoxFilledPollRevoteIcon: icon{{ "poll/filled/filled_poll_revote", windowSubTextFg }};
+pollBoxFilledPollShuffleIcon: icon{{ "poll/filled/filled_poll_shuffle", windowSubTextFg }};
+pollBoxFilledPollMultipleIcon: icon{{ "poll/filled/filled_poll_multiple", windowSubTextFg }};
+pollBoxFilledPollSubscribersIcon: icon{{ "poll/filled/filled_poll_subscribers-20x20", windowSubTextFg }};
+pollBoxFilledPollCountryIcon: icon{{ "poll/filled/filled_poll_country-20x20", windowSubTextFg }};
 
 pollAttachTextSkip: 28px;
 pollAttachRadius: 7px;
@@ -170,35 +170,38 @@ pollAttachLink: icon {{ "menu/link", historyFileThumbIconFg }};
 createPollWidth: 440px;
 
 createPollField: InputField(defaultInputField) {
-	textBg: windowBgOver;
-	textBgActive: windowBgOver;
+	textBg: transparent;
+	textBgActive: transparent;
 	borderRadius: 12px;
+	borderFg: windowBgOver;
 	textMargins: margins(14px, 10px, 48px, 10px);
 	textAlign: align(left);
 	heightMin: 44px;
 	heightMax: 106px;
-	placeholderFg: placeholderFg;
-	placeholderFgActive: placeholderFgActive;
+	placeholderFg: windowSubTextFg;
+	placeholderFgActive: windowSubTextFg;
 	placeholderFgError: placeholderFgActive;
 	placeholderMargins: margins(2px, 0px, 2px, 0px);
 	placeholderAlign: align(topleft);
 	placeholderScale: 0.;
 	placeholderFont: boxTextFont;
 	placeholderShift: -50px;
-	border: 0px;
+	border: 1px;
 	borderActive: 2px;
 	duration: 100;
 }
 createPollFieldPadding: margins(22px, 6px, 22px, 6px);
 createPollOptionField: InputField(createPollField) {
-	textMargins: margins(14px, 10px, 40px, 10px);
+	textMargins: margins(14px, 10px, 104px, 10px);
 	placeholderMargins: margins(2px, 0px, 2px, 0px);
 	heightMax: 68px;
 }
 createPollOptionFieldPremium: InputField(createPollOptionField) {
-	textMargins: margins(14px, 10px, 72px, 10px);
+	textMargins: margins(14px, 10px, 104px, 10px);
 }
 createPollOptionFieldPremiumEmojiPosition: point(13px, -1px);
+createPollTitleEmojiPosition: point(-38px, 6px);
+createPollMediaEmojiPosition: point(-72px, 6px);
 createPollSolutionField: InputField(createPollField) {
 	textMargins: margins(14px, 10px, 48px, 10px);
 }
@@ -245,7 +248,7 @@ createTodoTitleField: InputField(createPollField) {
 	textMargins: margins(14px, 11px, 14px, 11px);
 	placeholderMargins: margins(0px, 0px, 0px, 0px);
 	heightMin: 44px;
-	borderRadius: 18px;
+	borderRadius: 12px;
 }
 createTodoTitleFieldPremium: InputField(createTodoTitleField) {
 	textMargins: margins(14px, 11px, 48px, 11px);
@@ -258,7 +261,7 @@ createTodoOptionField: InputField(createTodoOptionFieldPlain) {
 	textMargins: margins(14px, 11px, 68px, 11px);
 }
 createTodoOptionPadding: margins(22px, 4px, 22px, 4px);
-createTodoTitleEmojiPosition: point(-48px, -1px);
+createTodoTitleEmojiPosition: createPollTitleEmojiPosition;
 
 pollResultsQuestion: FlatLabel(defaultFlatLabel) {
 	minWidth: 320px;
