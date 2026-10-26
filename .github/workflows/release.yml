@@ -48,6 +48,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply lib_ui patch.
+        shell: bash
+        run: git -C Telegram/lib_ui apply --whitespace=nowarn ../../patches/lib_ui.patch
+
       - name: First set up.
         run: |
           sudo apt update
@@ -308,6 +312,10 @@ jobs:
           submodules: recursive
           path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
 
+      - name: Apply lib_ui patch.
+        shell: bash
+        run: git -C $TBUILD/$REPO_NAME/Telegram/lib_ui apply --whitespace=nowarn ../../patches/lib_ui.patch
+
       - name: First set up.
         shell: bash
         run: |
@@ -459,6 +467,9 @@ jobs:
         with:
           submodules: recursive
           path: ${{ env.REPO_NAME }}
+
+      - name: Apply lib_ui patch.
+        run: git -C $REPO_NAME/Telegram/lib_ui apply --whitespace=nowarn ../../patches/lib_ui.patch
 
       - name: First set up.
         run: |
