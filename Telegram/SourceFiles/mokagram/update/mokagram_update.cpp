@@ -36,7 +36,7 @@ namespace Mokagram::Update {
 namespace {
 
 constexpr auto kBaseUrl
-	= "https://raw.githubusercontent.com/ecronxy/mokagram/updates/";
+	= "https://up.moka.wtf/";
 constexpr auto kManifestName = "update.json";
 constexpr auto kPlatform = "linux-x64";
 constexpr auto kFirstCheckDelay = 15 * 1000;
@@ -479,7 +479,7 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.sectionIcon = u"update"_q,
 		.sectionNote = QString::fromUtf8(
-			Mokagram::Lang::Tr("Обновления приходят из github.com/ecronxy/mokagram и ставятся, только если подпись совпала.")),
+			Mokagram::Lang::Tr("Обновления приходят с up.moka.wtf и ставятся, только если подпись совпала.")),
 	});
 	Settings::Register({
 		.key = QString::fromLatin1(kCheckKey),
