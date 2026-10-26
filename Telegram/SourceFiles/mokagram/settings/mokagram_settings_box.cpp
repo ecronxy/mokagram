@@ -890,7 +890,14 @@ void ShowColorBox(const QString &title, const QString &key) {
 		};
 		static const auto fieldStyle = [] {
 			auto result = st::defaultInputField;
-			result.textMargins = style::margins(0, 7, 0, 7);
+			// Текст по центру поля: высоту задаём сами и считаем поля от высоты шрифта.
+			constexpr auto kFieldHeight = 44;
+			result.heightMin = kFieldHeight;
+			const auto margin = (kFieldHeight - result.style.font->height) / 2;
+			result.textMargins = style::margins(0, margin, 0, margin);
+			// Подсказка не всплывает над полем (в низком поле её обрезало).
+			result.placeholderScale = 0.;
+			result.placeholderShift = 0;
 			return result;
 		}();
 		const auto field = content->add(
@@ -902,25 +909,27 @@ void ShowColorBox(const QString &title, const QString &key) {
 			QMargins(22, 8, 22, 6));
 		const auto grid = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(22, 4, 22, 12));
+			QMargins(16, 4, 16, 8));
 		constexpr auto kDot = 36;
 		constexpr auto kGap = 12;
-		grid->resize(grid->width(), 2 * kDot + kGap);
+		// Поля вокруг кружков: белое кольцо выбранного цвета выходит за кружок и раньше обрезалось краем.
+		constexpr auto kPad = 6;
+		grid->resize(grid->width(), 2 * kDot + kGap + 2 * kPad);
 		grid->paintOn([=](QPainter &p) {
 			auto hq = PainterHighQualityEnabler(p);
 			const auto current = QColor(String(key));
 			const auto perRow = 6;
 			for (auto i = 0; i != int(presets.size()); ++i) {
 				const auto r = QRectF(
-					(i % perRow) * (kDot + kGap),
-					(i / perRow) * (kDot + kGap),
+					kPad + (i % perRow) * (kDot + kGap),
+					kPad + (i / perRow) * (kDot + kGap),
 					kDot,
 					kDot);
 				p.setPen(QPen(QColor(255, 255, 255, 40), 1.));
 				p.setBrush(presets[i]);
 				p.drawEllipse(r);
 				if (current.isValid() && current == presets[i]) {
-					p.setPen(QPen(Qt::white, 2.5));
+					p.setPen(QPen(Qt::white, 2.));
 					p.setBrush(Qt::NoBrush);
 					p.drawEllipse(r.adjusted(-4, -4, 4, 4));
 				}
@@ -931,7 +940,11 @@ void ShowColorBox(const QString &title, const QString &key) {
 		) | rpl::filter([](not_null<QEvent*> e) {
 			return e->type() == QEvent::MouseButtonRelease;
 		}) | rpl::on_next([=](not_null<QEvent*> e) {
-			const auto point = static_cast<QMouseEvent*>(e.get())->pos();
+			const auto point = static_cast<QMouseEvent*>(e.get())->pos()
+				- QPoint(kPad, kPad);
+			if (point.x() < 0 || point.y() < 0) {
+				return;
+			}
 			const auto perRow = 6;
 			const auto col = point.x() / (kDot + kGap);
 			const auto row = point.y() / (kDot + kGap);
@@ -2406,6 +2419,8 @@ void StartDebugCommands() {
 			}
 		} else if (cmd == u"welcome"_q) {
 			Mokagram::Plugins::ShowWelcome(controller);
+		} else if (cmd.startsWith(u"colorbox:"_q)) {
+			ShowColorBox(u"Мои сообщения: фон"_q, cmd.mid(9));
 		} else if (cmd == u"pluginsbox"_q) {
 			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
 		} else if (cmd == u"pluginstore"_q) {
