@@ -27,6 +27,7 @@
 #include "storage/cache/storage_cache_database.h"
 #include "base/call_delayed.h"
 #include <deque>
+#include <map>
 #include <QtGui/QGuiApplication>
 #include "ui/unread_badge.h"
 #include "core/application.h"
@@ -370,7 +371,14 @@ void Ask(const QString &query, Fn<void(Results)> done, Fn<void()> fail) {
 namespace Mokagram::Badges {
 namespace {
 
+// Свой вид и подпись (уровни 2 и 3): значок и текст под профилем.
+struct Custom {
+	DocumentId icon = 0;
+	QString text;
+};
+
 struct State {
+	std::map<quint64, Custom> custom;
 	base::flat_set<quint64> users;
 	base::flat_set<quint64> remote;
 	DocumentId icon = 5402618655601109041ULL;
@@ -411,6 +419,15 @@ void Load() {
 		for (const auto &value : object.value(u"users"_q).toArray()) {
 			if (const auto id = value.toVariant().toULongLong()) {
 				state.remote.emplace(id);
+			}
+		}
+		for (const auto &value : object.value(u"custom"_q).toArray()) {
+			const auto row = value.toArray();
+			if (row.size() == 3) {
+				state.custom[row[0].toVariant().toULongLong()] = Custom{
+					.icon = row[1].toVariant().toString().toULongLong(),
+					.text = row[2].toString().left(40),
+				};
 			}
 		}
 	}
@@ -504,21 +521,38 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	if (!role && !state.users.contains(id) && !state.remote.contains(id)) {
 		return {};
 	}
+	const auto found = state.custom.find(id);
+	const auto custom = (found != state.custom.end()) ? &found->second : nullptr;
 	return Ui::BotVerifyDetails{
 		.botId = UserId(0),
-		.iconId = BlueIcon(user) ? kBlueIcon : state.icon,
+		.iconId = BlueIcon(user)
+			? kBlueIcon
+			: (custom && custom->icon ? custom->icon : state.icon),
 		.description = TextWithEntities{
-			QString::fromUtf8(role ? role : (state.remote.contains(id) ? Mokagram::Lang::Tr("Поддерживает mokaGram") : Mokagram::Lang::Tr("Разработчик mokaGram"))),
+			(!role && custom && !custom->text.isEmpty())
+				? custom->text
+				: QString::fromUtf8(role ? role : (state.remote.contains(id) ? Mokagram::Lang::Tr("Поддерживает mokaGram") : Mokagram::Lang::Tr("Разработчик mokaGram"))),
 		},
 	};
 }
 
 // Список выданных галочек пришёл (из бота или из файла): обновляем значки у уже загруженных людей.
-void ApplyRemote(const std::vector<quint64> &ids, quint64 icon) {
+void ApplyRemote(
+		const std::vector<quint64> &ids,
+		quint64 icon,
+		std::map<quint64, Custom> custom) {
 	auto &state = Data();
 	state.fresh = true;
 	state.inFlight = false;
 	const auto old = base::take(state.remote);
+	auto changedIds = base::flat_set<quint64>();
+	for (const auto &[id, value] : state.custom) {
+		changedIds.emplace(id);
+	}
+	state.custom = std::move(custom);
+	for (const auto &[id, value] : state.custom) {
+		changedIds.emplace(id);
+	}
 	if (icon) {
 		state.icon = icon;
 	}
@@ -530,16 +564,28 @@ void ApplyRemote(const std::vector<quint64> &ids, quint64 icon) {
 		for (const auto id : state.remote) {
 			users.append(QString::number(id));
 		}
+		auto customArray = QJsonArray();
+		for (const auto &[id, value] : state.custom) {
+			customArray.append(QJsonArray{
+				QString::number(id),
+				QString::number(value.icon),
+				value.text,
+			});
+		}
 		auto file = QFile(cWorkingDir() + u"tdata/moka_badges_cache.json"_q);
 		if (file.open(QIODevice::WriteOnly)) {
 			file.write(QJsonDocument(QJsonObject{
 				{ u"emoji_id"_q, QString::number(state.icon) },
 				{ u"users"_q, users },
+				{ u"custom"_q, customArray },
 			}).toJson(QJsonDocument::Compact));
 		}
 	}
 	auto all = old;
 	for (const auto id : state.remote) {
+		all.emplace(id);
+	}
+	for (const auto id : changedIds) {
 		all.emplace(id);
 	}
 	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
@@ -557,9 +603,23 @@ void RefreshInline(Fn<void()> fail) {
 	Mokagram::Bot::Ask(u"list"_q, [=](Mokagram::Bot::Results results) {
 		auto ids = std::vector<quint64>();
 		auto icon = quint64();
+		auto custom = std::map<quint64, Custom>();
 		for (const auto &[id, title] : results) {
 			if (id == u"e"_q) {
 				icon = title.toULongLong();
+			} else if (id.startsWith('c')) {
+				for (const auto &value : QJsonDocument::fromJson(title.toUtf8()).array()) {
+					const auto row = value.toArray();
+					if (row.size() == 3) {
+						const auto user = row[0].toVariant().toULongLong();
+						if (user) {
+							custom[user] = Custom{
+								.icon = row[1].toVariant().toString().toULongLong(),
+								.text = row[2].toString().left(40),
+							};
+						}
+					}
+				}
 			} else if (id.startsWith('l')) {
 				for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
 					if (const auto value = part.toULongLong()) {
@@ -568,7 +628,7 @@ void RefreshInline(Fn<void()> fail) {
 				}
 			}
 		}
-		ApplyRemote(ids, icon);
+		ApplyRemote(ids, icon, std::move(custom));
 	}, fail);
 }
 
@@ -614,7 +674,7 @@ void Refresh(int index = 0) {
 				ids.push_back(id);
 			}
 		}
-		ApplyRemote(ids, object.value(u"emoji_id"_q).toVariant().toString().toULongLong());
+		ApplyRemote(ids, object.value(u"emoji_id"_q).toVariant().toString().toULongLong(), Data().custom);
 	});
 }
 
