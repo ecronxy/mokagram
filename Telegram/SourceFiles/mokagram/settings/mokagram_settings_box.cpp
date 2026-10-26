@@ -763,7 +763,22 @@ void PaintPlate(
 				}
 			}
 		}
+		if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
+			image.save(u"/tmp/moka_icon_%1.png"_q.arg(
+				QString::fromLatin1(alt.toUtf8().toHex())));
+		}
 		if (bounds.width() > 4 && bounds.height() > 4) {
+			// Плашки квадратные: если видимая часть заметно не квадрат, кадр
+			// неполный или эмодзи шире клетки, берём всю клетку 28x28.
+			const auto skewed = std::max(bounds.width(), bounds.height())
+				> std::min(bounds.width(), bounds.height()) * 1.12;
+			if (skewed) {
+				bounds = QRect(
+					kMargin * scale,
+					kMargin * scale,
+					kPackEmojiSize * scale,
+					kPackEmojiSize * scale);
+			}
 			const auto side = std::max(bounds.width(), bounds.height());
 			const auto square = QRect(
 				bounds.center().x() - side / 2,
@@ -2796,7 +2811,7 @@ namespace {
 		{ &st::menuIconLock, QString::fromUtf8("🔑") },
 		{ &st::menuIconChatBubble, QString::fromUtf8("💬") },
 		{ &st::menuIconShowInFolder, QString::fromUtf8("📁") },
-		{ &st::menuIconManage, QString::fromUtf8("⚙") },
+		{ &st::menuIconManage, QString::fromUtf8("⚙️") },
 		{ &st::menuIconUnmute, QString::fromUtf8("🎵") },
 		{ &st::menuIconBotCommands, QString::fromUtf8("🔧") },
 		{ &st::menuIconPalette, QString::fromUtf8("🖼") },
