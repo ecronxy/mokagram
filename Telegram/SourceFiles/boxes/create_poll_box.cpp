@@ -432,7 +432,7 @@ Options::Option::Option(
 
 	_field->heightValue(
 	) | rpl::on_next([=](int height) {
-		_content->resize(_content->width(), height);
+		_content->resize(_content->width(), height + 8);
 	}, _field->lifetime());
 
 	_field->changes(
@@ -680,8 +680,9 @@ void Options::Option::enableChooseCorrect(
 void Options::Option::updateFieldGeometry() {
 	const auto skip = st::defaultRadio.diameter
 		+ st::defaultCheckbox.textPosition.x();
-	_field->resizeToWidth(_content->width() - skip);
-	_field->moveToLeft(skip, 0);
+	_field->resizeToWidth(
+		_content->width() - skip - st::createPollFieldPadding.right());
+	_field->moveToLeft(skip, 4);
 }
 
 not_null<Ui::InputField*> Options::Option::field() const {
@@ -1366,8 +1367,7 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 			st::createPollField,
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_polls_create_question_placeholder()),
-		st::createPollFieldPadding
-			+ QMargins(0, 0, st::defaultComposeFiles.emoji.inner.width, 0));
+		st::createPollFieldPadding);
 	InitField(
 		getDelegate()->outerContainer(),
 		question,
@@ -1400,7 +1400,7 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 			this,
 			_controller,
 			emojiPanel,
-			st::createPollOptionFieldPremiumEmojiPosition);
+			QPoint(-st::defaultComposeFiles.emoji.inner.width - 4, 2));
 		emojiToggle->show();
 		emojiPanel->selector()->emojiChosen(
 		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
@@ -1470,7 +1470,7 @@ not_null<Ui::InputField*> CreatePollBox::setupDescription(
 			emojiPanel,
 			QPoint(
 				-st::pollDescriptionField.textMargins.right(),
-				-st::lineWidth));
+				2));
 		emojiToggle->shownValue() | rpl::on_next([=](bool shown) {
 			if (!shown) {
 				return;
@@ -2733,14 +2733,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	const auto question = setupQuestion(container);
 	const auto description = setupDescription(container);
 	addMediaButton(description, state->descriptionMedia);
-	Ui::AddDivider(container);
-	Ui::AddSkip(container);
-	container->add(
-		object_ptr<Ui::FlatLabel>(
-			container,
-			tr::lng_polls_create_options(),
-			st::defaultSubsectionTitle),
-		st::createPollFieldTitlePadding);
+	Ui::AddSkip(container, 12);
+	Ui::AddSubsectionTitle(container, tr::lng_polls_create_options());
 	state->options = std::make_unique<Options>(
 		this,
 		container,
@@ -2795,7 +2789,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			tr::lng_polls_create_show_who_voted_about(),
 			{
 				.icon = &st::pollBoxFilledPollViewIcon,
-				.background = &st::settingsIconBg4,
+				.background = &st::windowBgActive,
 			},
 			rpl::single(!!(_chosen & PollData::Flag::PublicVotes))
 				| rpl::then(state->showWhoVotedForceOn.events()),
@@ -2807,7 +2801,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		tr::lng_polls_create_allow_multiple_answers_about(),
 		{
 			.icon = &st::pollBoxFilledPollMultipleIcon,
-			.background = &st::settingsIconBg3,
+			.background = &st::windowBgActive,
 		},
 		rpl::single(!!(_chosen & PollData::Flag::MultiChoice))
 			| rpl::then(state->multipleForceOff.events()),
@@ -2819,7 +2813,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			tr::lng_polls_create_allow_adding_options_about(),
 			{
 				.icon = &st::pollBoxFilledPollAddIcon,
-				.background = &st::settingsIconBg4,
+				.background = &st::windowBgActive,
 			},
 			rpl::single(!!(_chosen & PollData::Flag::OpenAnswers))
 				| rpl::then(state->addOptionsForceOff.events()),
@@ -2831,7 +2825,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		tr::lng_polls_create_allow_revoting_about(),
 		{
 			.icon = &st::pollBoxFilledPollRevoteIcon,
-			.background = &st::settingsIconBg6,
+			.background = &st::windowBgActive,
 		},
 		rpl::single(!(_chosen & PollData::Flag::RevotingDisabled))
 			| rpl::then(state->revotingForceOff.events()),
@@ -2842,7 +2836,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		tr::lng_polls_create_shuffle_options_about(),
 		{
 			.icon = &st::pollBoxFilledPollShuffleIcon,
-			.background = &st::settingsIconBg8,
+			.background = &st::windowBgActive,
 		},
 		rpl::single(!!(_chosen & PollData::Flag::ShuffleAnswers)),
 		st::detailedSettingsButtonStyle);
@@ -2859,7 +2853,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		}),
 		{
 			.icon = &st::pollBoxFilledPollCorrectIcon,
-			.background = &st::settingsIconBg2,
+			.background = &st::windowBgActive,
 		},
 		rpl::single(!!(_chosen & PollData::Flag::Quiz))
 			| rpl::then(state->quizForceOff.events()),
@@ -2874,7 +2868,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			tr::lng_polls_create_restrict_to_subscribers_about(),
 			{
 				.icon = &st::pollBoxFilledPollSubscribersIcon,
-				.background = &st::settingsIconBg5,
+				.background = &st::windowBgActive,
 			},
 			rpl::single(!!(_chosen & PollData::Flag::SubscribersOnly)),
 			st::detailedSettingsButtonStyle).get()
@@ -2886,7 +2880,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			tr::lng_polls_create_limit_by_country_about(),
 			{
 				.icon = &st::pollBoxFilledPollCountryIcon,
-				.background = &st::settingsIconBg4,
+				.background = &st::windowBgActive,
 			},
 			rpl::single(false),
 			st::detailedSettingsButtonStyle).get()
@@ -2959,7 +2953,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		tr::lng_polls_create_limit_duration_about(),
 		{
 			.icon = &st::pollBoxFilledPollDeadlineIcon,
-			.background = &st::settingsIconBg1,
+			.background = &st::windowBgActive,
 		},
 		rpl::single(false),
 		st::detailedSettingsButtonStyle);
@@ -3447,7 +3441,7 @@ void CreatePollBox::prepare() {
 
 	const auto inner = setInnerWidget(setupContent());
 
-	setDimensionsToContent(st::boxWideWidth, inner);
+	setDimensionsToContent(st::createPollWidth, inner);
 
 	Ui::SetStickyBottomScroll(this, inner);
 }
