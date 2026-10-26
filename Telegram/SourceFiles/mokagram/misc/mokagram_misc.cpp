@@ -331,9 +331,11 @@ void Ask(const QString &query, Fn<void(Results)> done, Fn<void()> fail) {
 			result.match([&](const MTPDmessages_botResults &data) {
 				for (const auto &item : data.vresults().v) {
 					item.match([&](const MTPDbotInlineResult &r) {
-						out.emplace_back(
+						out.push_back({
 							qs(r.vid()),
-							r.vtitle() ? qs(*r.vtitle()) : QString());
+							r.vtitle() ? qs(*r.vtitle()) : QString(),
+							r.vdescription() ? qs(*r.vdescription()) : QString(),
+						});
 					}, [](const auto &) {});
 				}
 			});
@@ -598,38 +600,43 @@ void ApplyRemote(
 	}
 }
 
-// Основной путь: inline-запрос «list» к @mokagent.
-void RefreshInline(Fn<void()> fail) {
-	Mokagram::Bot::Ask(u"list"_q, [=](Mokagram::Bot::Results results) {
-		auto ids = std::vector<quint64>();
-		auto icon = quint64();
-		auto custom = std::map<quint64, Custom>();
-		for (const auto &[id, title] : results) {
-			if (id == u"e"_q) {
-				icon = title.toULongLong();
-			} else if (id.startsWith('c')) {
-				for (const auto &value : QJsonDocument::fromJson(title.toUtf8()).array()) {
-					const auto row = value.toArray();
-					if (row.size() == 3) {
-						const auto user = row[0].toVariant().toULongLong();
-						if (user) {
-							custom[user] = Custom{
-								.icon = row[1].toVariant().toString().toULongLong(),
-								.text = row[2].toString().left(40),
-							};
-						}
-					}
+// Основной путь: inline-запросы «badges:N» к @mokagent, страницами по 44 человека.
+struct PagesState {
+	std::vector<quint64> ids;
+	std::map<quint64, Custom> custom;
+	quint64 icon = 0;
+};
+
+void RefreshPage(int page, std::shared_ptr<PagesState> state, Fn<void()> fail) {
+	Mokagram::Bot::Ask(u"badges:%1"_q.arg(page), [=](Mokagram::Bot::Results results) {
+		auto count = 0;
+		for (const auto &result : results) {
+			if (result.id == u"e"_q) {
+				state->icon = result.title.toULongLong();
+			} else if (result.id.startsWith('b')) {
+				++count;
+				const auto user = result.id.mid(1).toULongLong();
+				if (!user) {
+					continue;
 				}
-			} else if (id.startsWith('l')) {
-				for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
-					if (const auto value = part.toULongLong()) {
-						ids.push_back(value);
-					}
+				state->ids.push_back(user);
+				const auto emoji = result.title.toULongLong();
+				const auto text = result.description.left(40);
+				if (emoji || !text.isEmpty()) {
+					state->custom[user] = Custom{ .icon = emoji, .text = text };
 				}
 			}
 		}
-		ApplyRemote(ids, icon, std::move(custom));
+		if (count >= 44 && page < 200) {
+			RefreshPage(page + 1, state, fail);
+			return;
+		}
+		ApplyRemote(state->ids, state->icon, std::move(state->custom));
 	}, fail);
+}
+
+void RefreshInline(Fn<void()> fail) {
+	RefreshPage(0, std::make_shared<PagesState>(), fail);
 }
 
 void Refresh(int index = 0) {

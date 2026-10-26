@@ -221,8 +221,8 @@ void StoreBox(
 		}
 	};
 	Mokagram::Bot::Ask(u"pstats"_q, [=](Mokagram::Bot::Results results) {
-		for (const auto &[id, title] : results) {
-			for (const auto &part : title.split(',', Qt::SkipEmptyParts)) {
+		for (const auto &result : results) {
+			for (const auto &part : result.title.split(',', Qt::SkipEmptyParts)) {
 				const auto at = part.lastIndexOf(':');
 				if (at > 0) {
 					counts->values[part.left(at)] = part.mid(at + 1).toInt();

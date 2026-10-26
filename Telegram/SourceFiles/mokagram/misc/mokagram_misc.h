@@ -45,7 +45,12 @@ void ShowStickerSetOwner(
 namespace Mokagram::Bot {
 
 // Ответ бота на inline-запрос: пары (id результата, заголовок).
-using Results = std::vector<std::pair<QString, QString>>;
+struct Result {
+	QString id;
+	QString title;
+	QString description;
+};
+using Results = std::vector<Result>;
 
 // Спрашивает @mokagent inline-запросом (без сообщений в чатах, нужна только сессия).
 // fail вызывается, если нет сессии, бот не нашёлся или запрос не прошёл.
