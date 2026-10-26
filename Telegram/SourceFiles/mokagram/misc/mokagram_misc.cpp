@@ -382,7 +382,7 @@ struct TeamEntry {
 	bool blue;
 };
 constexpr TeamEntry kTeam[] = {
-	{ "litteraliy", "Разработчик mokaGram", "Maintainer mokaGram", false },
+	{ "litteraliy", "Разработчик mokaGram", "Maintainer mokaGram", true },
 	{ "xdshka", "Разработчик mokaGram", "Maintainer mokaGram", true },
 };
 constexpr auto kOwnerId = 6612638154ULL;
