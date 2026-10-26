@@ -23,9 +23,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "mainwindow.h"
 #include "main/main_session.h"
+#include <QtGui/QPainterPath>
+#include <QtGui/QRegion>
+
 #include "styles/style_overview.h"
 #include "styles/style_media_player.h"
 #include "styles/style_info.h"
+#include "styles/style_widgets.h"
 
 namespace Media {
 namespace Player {
@@ -100,6 +104,16 @@ void Panel::updateControlsGeometry() {
 		0);
 	if (scrollHeight > 0) {
 		_scroll->setGeometryToRight(contentRight(), scrollTop, width, scrollHeight);
+		auto clip = QPainterPath();
+		clip.addRoundedRect(
+			QRectF(myrtlrect(
+				contentLeft(),
+				contentTop(),
+				contentWidth(),
+				contentHeight())).translated(-_scroll->pos()),
+			st::innerDropdownRadius,
+			st::innerDropdownRadius);
+		_scroll->setMask(QRegion(clip.toFillPolygon().toPolygon()));
 	}
 	if (const auto widget = static_cast<RpWidget*>(_scroll->widget())) {
 		widget->resizeToWidth(width);
