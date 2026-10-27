@@ -587,6 +587,11 @@ public:
 				if (!data.vdocuments().v.isEmpty()) {
 					_own = _session->data().processDocument(
 						data.vdocuments().v.front());
+					// Четвёртый эмодзи набора: сердце для окна «Поддержать разработку».
+					if (data.vdocuments().v.size() > 3) {
+						_ownHeart = _session->data().processDocument(
+							data.vdocuments().v[3]);
+					}
 					_updated.fire({});
 				}
 			}, [](const auto &) {});
@@ -636,6 +641,18 @@ public:
 			_own,
 			std::move(repaint),
 			Data::CustomEmojiSizeTag::Normal,
+			size);
+	}
+	[[nodiscard]] std::unique_ptr<Ui::Text::CustomEmoji> makeOwnHeart(
+			Fn<void()> repaint,
+			int size) {
+		if (!_session || !_ownHeart) {
+			return nullptr;
+		}
+		return _session->data().customEmojiManager().create(
+			_ownHeart,
+			std::move(repaint),
+			Data::CustomEmojiSizeTag::Isolated,
 			size);
 	}
 	[[nodiscard]] std::unique_ptr<Ui::Text::CustomEmoji> makeAlt(
@@ -695,6 +712,7 @@ private:
 	mtpRequestId _requestId = 0;
 	mtpRequestId _ownRequestId = 0;
 	DocumentData *_own = nullptr;
+	DocumentData *_ownHeart = nullptr;
 	base::flat_map<QString, DocumentData*> _docs;
 	rpl::event_stream<> _updated;
 
@@ -3109,13 +3127,28 @@ void ShowSupportBox(Window::SessionController *controller) {
 		PackIcons::Instance().ensure(&controller->session());
 		const auto content = box->verticalLayout();
 
-		constexpr auto kHead = 76;
+		constexpr auto kHead = 84;
 		const auto head = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(0, 28, 0, 0));
+			QMargins(0, 26, 0, 0));
 		head->resize(head->width(), kHead);
-		const auto headState = std::make_shared<std::shared_ptr<void>>();
+		constexpr auto kHeart = 48;
+		const auto heart = std::make_shared<
+			std::unique_ptr<Ui::Text::CustomEmoji>>();
+		const auto makeHeart = [=] {
+			if (!*heart) {
+				*heart = PackIcons::Instance().makeOwnHeart(
+					[=] { head->update(); },
+					kHeart);
+			}
+		};
+		PackIcons::Instance().updated(
+		) | rpl::on_next([=] {
+			makeHeart();
+			head->update();
+		}, head->lifetime());
 		head->paintOn([=](QPainter &p) {
+			makeHeart();
 			auto hq = PainterHighQualityEnabler(p);
 			const auto rect = QRect(
 				(head->width() - kHead) / 2,
@@ -3130,12 +3163,14 @@ void ShowSupportBox(Window::SessionController *controller) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(gradient);
 			p.drawEllipse(rect);
-			PaintPackIcon(
-				p,
-				rect.marginsRemoved(QMargins(20, 20, 20, 20)),
-				U("💟"),
-				*headState,
-				head);
+			if (*heart && (*heart)->ready()) {
+				(*heart)->paint(p, {
+					.textColor = QColor(Qt::white),
+					.now = crl::now(),
+					.position = rect.center()
+						- QPoint(kHeart / 2, kHeart / 2),
+				});
+			}
 		});
 
 		const auto title = content->add(
@@ -3189,19 +3224,19 @@ void ShowSupportBox(Window::SessionController *controller) {
 		};
 		addItem(
 			U("💰"),
-			U(Mokagram::Lang::Tr("Сделать пожертвование")),
-			U(Mokagram::Lang::Tr("Переведите любую сумму через Ozon, CryptoBot, xRocket или Stars. Все способы собраны во вкладке «Важное» в настройках mokaGram.")));
+			U(Mokagram::Lang::Tr("Выбрать способ и уровень")),
+			U(Mokagram::Lang::Tr("Во вкладке «Важное» нажмите Ozon, CryptoBot, xRocket или Stars: откроется @mokagent, там выберите уровень поддержки.\n1: 300 ₽ · 249 ⭐ · 3.74 USDT\n2: 450 ₽ · 374 ⭐ · 5.61 USDT\n3: 600 ₽ · 498 ⭐ · 7.48 USDT")));
 		addItem(
 			U("📤"),
-			U(Mokagram::Lang::Tr("Отправить подтверждение платежа")),
-			U(Mokagram::Lang::Tr("Пришлите фото или скриншот перевода в @Mokagram. На нём должны быть чётко видны сумма, дата и время.")));
+			U(Mokagram::Lang::Tr("Оплатить")),
+			U(Mokagram::Lang::Tr("Бот выставит счёт в выбранном сервисе. После оплаты в CryptoBot или xRocket нажмите «проверить оплату». Для Ozon бот покажет реквизиты, после перевода пришлите ему скриншот: такие заявки проверяются вручную.")));
 		addItem(
 			U("🎁"),
 			U(Mokagram::Lang::Tr("Получить значок")),
-			U(Mokagram::Lang::Tr("После проверки платежа вы получите уникальный значок, он будет в вашем профиле и виден другим пользователям.")));
+			U(Mokagram::Lang::Tr("После подтверждения оплаты вы получите уникальный значок, он будет в вашем профиле и виден другим пользователям.")));
 		const auto close = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(22, 24, 22, 22));
+			QMargins(22, 22, 22, 14));
 		close->resize(close->width(), 48);
 		close->setCursor(style::cur_pointer);
 		close->paintOn([=](QPainter &p) {

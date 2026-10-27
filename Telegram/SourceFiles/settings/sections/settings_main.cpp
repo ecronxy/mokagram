@@ -433,8 +433,10 @@ void MokagramImportant::setupContent() {
 			const auto button = builder.addButton({
 				.id = u"important/%1"_q.arg(QLatin1String(way.id)),
 				.title = rpl::single(QString::fromUtf8(way.title)),
-				.onClick = [] {
-					UrlClickHandler::Open(u"https://t.me/Mokagram"_q);
+				.onClick = [id = QString::fromLatin1(way.id)] {
+					// Бот предложит уровень поддержки и выставит счёт в этом сервисе.
+					UrlClickHandler::Open(
+						u"https://t.me/mokagent?start=pay_%1"_q.arg(id));
 				},
 				.keywords = { QString::fromUtf8(way.title).toLower() },
 			});
