@@ -72,6 +72,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/peer_qr_box.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/layers/generic_box.h"
+#include "ui/painter.h"
 #include "ui/new_badges.h"
 #include "ui/power_saving.h"
 #include "ui/rect.h"
@@ -374,6 +375,115 @@ void Cover::refreshQrButtonGeometry(int newWidth) {
 	_qrButton->moveToRight(buttonRight - inset, buttonTop, newWidth);
 }
 
+// Mokagram: вкладка «Важное» со способами поддержать разработку.
+class MokagramImportant : public Section<MokagramImportant> {
+public:
+	MokagramImportant(
+		QWidget *parent,
+		not_null<Window::SessionController*> controller);
+
+	[[nodiscard]] rpl::producer<QString> title() override;
+
+private:
+	void setupContent();
+
+};
+
+MokagramImportant::MokagramImportant(
+	QWidget *parent,
+	not_null<Window::SessionController*> controller)
+: Section(parent, controller) {
+	setupContent();
+}
+
+rpl::producer<QString> MokagramImportant::title() {
+	return rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Важное")));
+}
+
+void MokagramImportant::setupContent() {
+	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
+	const SectionBuildMethod buildMethod = [](
+			not_null<Ui::VerticalLayout*> container,
+			not_null<Window::SessionController*> controller,
+			Fn<void(Type)> showOther,
+			rpl::producer<> showFinished) {
+		auto builder = SectionBuilder(WidgetContext{
+			.container = container,
+			.controller = controller,
+			.showOther = std::move(showOther),
+			.isPaused = Window::PausedIn(
+				controller,
+				Window::GifPauseReason::Layer),
+		});
+		builder.addDivider();
+		builder.addSubsectionTitle(rpl::single(
+			QString::fromUtf8(Mokagram::Lang::Tr("Поддержка"))));
+		struct Way {
+			const char *id;
+			const char *title;
+			const char *image;
+		};
+		const auto ways = std::vector<Way>{
+			{ "ozon", "Ozon", ":/gui/art/moka_support_ozon.png" },
+			{ "cryptobot", "CryptoBot", ":/gui/art/moka_support_cryptobot.png" },
+			{ "xrocket", "xRocket", ":/gui/art/moka_support_xrocket.png" },
+			{ "stars", "Stars", ":/gui/art/moka_support_stars.png" },
+		};
+		for (const auto &way : ways) {
+			const auto button = builder.addButton({
+				.id = u"important/%1"_q.arg(QLatin1String(way.id)),
+				.title = rpl::single(QString::fromUtf8(way.title)),
+				.onClick = [] {
+					UrlClickHandler::Open(u"https://t.me/Mokagram"_q);
+				},
+				.keywords = { QString::fromUtf8(way.title).toLower() },
+			});
+			if (!button) {
+				continue;
+			}
+			// Значок сервиса: круглая картинка на месте значка строки.
+			const auto image = QImage(QString::fromLatin1(way.image));
+			const auto icon = Ui::CreateChild<Ui::RpWidget>(button);
+			constexpr auto kSize = 30;
+			icon->resize(kSize, kSize);
+			icon->setAttribute(Qt::WA_TransparentForMouseEvents);
+			button->heightValue() | rpl::on_next([=](int height) {
+				icon->move(st::settingsButton.iconLeft, (height - kSize) / 2);
+			}, icon->lifetime());
+			icon->paintOn([=](QPainter &p) {
+				auto hq = PainterHighQualityEnabler(p);
+				p.drawImage(icon->rect(), image);
+			});
+		}
+		builder.addSkip();
+		builder.addControl({
+			.factory = [=](not_null<Ui::VerticalLayout*> parent) {
+				static const auto linkStyle = [] {
+					auto result = st::boxDividerLabel;
+					result.style.linkUnderline = st::kLinkUnderlineAlways;
+					return result;
+				}();
+				auto label = object_ptr<Ui::FlatLabel>(
+					parent,
+					rpl::single(
+						Ui::Text::Link(
+							QString::fromUtf8(Mokagram::Lang::Tr("Поддержите разработку")),
+							1).append(' ').append(
+							QString::fromUtf8(Mokagram::Lang::Tr("и получите уникальный значок!")))),
+					linkStyle);
+				label->setLink(1, std::make_shared<LambdaClickHandler>([=] {
+					Mokagram::Settings::ShowSupportBox(controller);
+				}));
+				return label;
+			},
+			.margin = { st::boxRowPadding.left(), 0, st::boxRowPadding.right(), 0 },
+		});
+		builder.addSkip();
+	};
+	build(content, buildMethod);
+	Ui::ResizeFitChild(this, content);
+}
+
 // Mokagram: отдельная вкладка с настройками клиента.
 class MokagramSettings : public Section<MokagramSettings> {
 public:
@@ -416,6 +526,12 @@ void MokagramSettings::setupContent() {
 		});
 		builder.addDivider();
 		builder.addSkip();
+		builder.addSectionButton({
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Важное"))),
+			.targetSection = MokagramImportant::Id(),
+			.icon = { &st::menuIconReport },
+			.keywords = { u"important"_q, u"support"_q, u"donate"_q, u"ozon"_q, u"cryptobot"_q, u"xrocket"_q },
+		});
 		builder.addButton({
 			.id = u"main/plugins"_q,
 			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Плагины"))),

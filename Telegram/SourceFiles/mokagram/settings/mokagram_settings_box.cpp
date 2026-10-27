@@ -2812,6 +2812,7 @@ namespace {
 		{ &st::menuIconChatBubble, QString::fromUtf8("💬") },
 		{ &st::menuIconShowInFolder, QString::fromUtf8("📁") },
 		{ &st::menuIconManage, QString::fromUtf8("⚙️") },
+		{ &st::menuIconReport, QString::fromUtf8("❗️") },
 		{ &st::menuIconUnmute, QString::fromUtf8("🎵") },
 		{ &st::menuIconBotCommands, QString::fromUtf8("🔧") },
 		{ &st::menuIconPalette, QString::fromUtf8("🖼") },
@@ -3097,6 +3098,131 @@ bool PaintPackIcon(
 	const auto pack = static_cast<PackIcon*>(state.get());
 	PaintPlate(p, rect, QColor(), st::menuIconSettings, QString(), alt, *pack, widget, false);
 	return pack->emoji || !pack->normalized.isNull();
+}
+
+void ShowSupportBox(Window::SessionController *controller) {
+	if (!controller) {
+		return;
+	}
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setWidth(400);
+		PackIcons::Instance().ensure(&controller->session());
+		const auto content = box->verticalLayout();
+
+		constexpr auto kHead = 76;
+		const auto head = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(0, 28, 0, 0));
+		head->resize(head->width(), kHead);
+		const auto headState = std::make_shared<std::shared_ptr<void>>();
+		head->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			const auto rect = QRect(
+				(head->width() - kHead) / 2,
+				0,
+				kHead,
+				kHead);
+			auto gradient = QLinearGradient(
+				rect.topLeft(),
+				rect.bottomRight());
+			gradient.setColorAt(0, QColor(0xFF, 0x45, 0x3A));
+			gradient.setColorAt(1, QColor(0xFF, 0x2D, 0x55));
+			p.setPen(Qt::NoPen);
+			p.setBrush(gradient);
+			p.drawEllipse(rect);
+			PaintPackIcon(
+				p,
+				rect.marginsRemoved(QMargins(20, 20, 20, 20)),
+				U("💟"),
+				*headState,
+				head);
+		});
+
+		const auto title = content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				rpl::single(U(Mokagram::Lang::Tr("Поддержать разработку"))),
+				st::boxTitle),
+			QMargins(22, 14, 22, 0),
+			style::al_top);
+		Q_UNUSED(title);
+		const auto intro = content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				rpl::single(U(Mokagram::Lang::Tr("Поддерживая проект, вы вносите вклад в его развитие и получаете уникальный значок."))),
+				TextLabelStyle()),
+			QMargins(22, 8, 22, 4),
+			style::al_top);
+
+		const auto addItem = [&](
+				const QString &alt,
+				const QString &name,
+				const QString &text) {
+			const auto row = content->add(
+				object_ptr<Ui::RpWidget>(content),
+				QMargins(22, 16, 22, 0));
+			const auto head = Ui::CreateChild<Ui::FlatLabel>(
+				row,
+				name,
+				TitleLabelStyle());
+			const auto body = Ui::CreateChild<Ui::FlatLabel>(
+				row,
+				text,
+				TextLabelStyle());
+			const auto state = std::make_shared<std::shared_ptr<void>>();
+			constexpr auto kIcon = 26;
+			constexpr auto kLeft = 42;
+			row->widthValue() | rpl::on_next([=](int width) {
+				const auto inner = std::max(width - kLeft, 1);
+				head->resizeToWidth(inner);
+				body->resizeToWidth(inner);
+				head->moveToLeft(kLeft, 0);
+				body->moveToLeft(kLeft, head->height() + 2);
+				const auto height = head->height() + 2 + body->height();
+				if (row->height() != height) {
+					row->resize(width, height);
+				}
+			}, row->lifetime());
+			row->paintOn([=](QPainter &p) {
+				PaintPackIcon(p, QRect(0, 1, kIcon, kIcon), alt, *state, row);
+			});
+		};
+		addItem(
+			U("💰"),
+			U(Mokagram::Lang::Tr("Сделать пожертвование")),
+			U(Mokagram::Lang::Tr("Переведите любую сумму через Ozon, CryptoBot, xRocket или Stars. Все способы собраны во вкладке «Важное» в настройках mokaGram.")));
+		addItem(
+			U("📤"),
+			U(Mokagram::Lang::Tr("Отправить подтверждение платежа")),
+			U(Mokagram::Lang::Tr("Пришлите фото или скриншот перевода в @Mokagram. На нём должны быть чётко видны сумма, дата и время.")));
+		addItem(
+			U("🎁"),
+			U(Mokagram::Lang::Tr("Получить значок")),
+			U(Mokagram::Lang::Tr("После проверки платежа вы получите уникальный значок, он будет в вашем профиле и виден другим пользователям.")));
+		const auto close = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(22, 24, 22, 22));
+		close->resize(close->width(), 48);
+		close->setCursor(style::cur_pointer);
+		close->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(close->rect(), 24, 24);
+			p.setPen(st::windowFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(
+				close->rect(),
+				Qt::AlignCenter,
+				U(Mokagram::Lang::Tr("Закрыть")));
+		});
+		close->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::MouseButtonRelease;
+		}) | rpl::on_next([=] {
+			box->closeBox();
+		}, close->lifetime());
+	}));
 }
 
 } // namespace Mokagram::Settings

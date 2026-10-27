@@ -37,6 +37,8 @@ void ShowCustomizeBox(Window::SessionController *controller);
 void ShowSettingsPage(
 	Window::SessionController *controller,
 	const QString &page);
+// Окно «Поддержать разработку» (как у вкладки «Важное»).
+void ShowSupportBox(Window::SessionController *controller);
 void StartDebugCommands();
 
 // Открывает «Кастомизацию» сразу с поиском по тексту (например, по названию плагина).
