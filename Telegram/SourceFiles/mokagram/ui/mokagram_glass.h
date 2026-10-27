@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: 8acc7771
 // Mokagram: подложка liquid glass по рецепту стекла таб-бара кита TIER:
 // заливка section-bg 70%, мягкая тень 0 0 10px 10% и кромка 1px (градиент 8deg,
 // 32% белого в середине). Размытие подложки Qt не умеет, его здесь нет.

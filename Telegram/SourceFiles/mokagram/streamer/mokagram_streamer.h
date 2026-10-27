@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: 889bc569
 // Mokagram: режим стримера. Маскирует номер, юзернейм, ссылки, ID, имя
 // и уведомления. Флаги лежат в реестре настроек (ключи "streamer.*").
 // Не зависит от Main::Session, вызывается из любого кода.

@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: c7df01d5
 // Mokagram: источник музыки SoundCloud через неофициальный api-v2.
 // client_id берётся из публичных JS-файлов сайта, кэшируется и обновляется при 401/403.
 #pragma once
