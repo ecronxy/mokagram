@@ -652,7 +652,7 @@ public:
 		return _session->data().customEmojiManager().create(
 			_ownHeart,
 			std::move(repaint),
-			Data::CustomEmojiSizeTag::Isolated,
+			Data::CustomEmojiSizeTag::Normal,
 			size);
 	}
 	[[nodiscard]] std::unique_ptr<Ui::Text::CustomEmoji> makeAlt(
@@ -3123,7 +3123,8 @@ void ShowSupportBox(Window::SessionController *controller) {
 		return;
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setWidth(400);
+		RoundedNoButtons(box);
+		box->setWidth(380);
 		PackIcons::Instance().ensure(&controller->session());
 		const auto content = box->verticalLayout();
 
@@ -3132,7 +3133,7 @@ void ShowSupportBox(Window::SessionController *controller) {
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(0, 26, 0, 0));
 		head->resize(head->width(), kHead);
-		constexpr auto kHeart = 48;
+		constexpr auto kHeart = 64;
 		const auto heart = std::make_shared<
 			std::unique_ptr<Ui::Text::CustomEmoji>>();
 		const auto makeHeart = [=] {
@@ -3149,26 +3150,13 @@ void ShowSupportBox(Window::SessionController *controller) {
 		}, head->lifetime());
 		head->paintOn([=](QPainter &p) {
 			makeHeart();
-			auto hq = PainterHighQualityEnabler(p);
-			const auto rect = QRect(
-				(head->width() - kHead) / 2,
-				0,
-				kHead,
-				kHead);
-			auto gradient = QLinearGradient(
-				rect.topLeft(),
-				rect.bottomRight());
-			gradient.setColorAt(0, QColor(0xFF, 0x45, 0x3A));
-			gradient.setColorAt(1, QColor(0xFF, 0x2D, 0x55));
-			p.setPen(Qt::NoPen);
-			p.setBrush(gradient);
-			p.drawEllipse(rect);
 			if (*heart && (*heart)->ready()) {
 				(*heart)->paint(p, {
-					.textColor = QColor(Qt::white),
+					.textColor = QColor(0xFF, 0x3B, 0x5C),
 					.now = crl::now(),
-					.position = rect.center()
-						- QPoint(kHeart / 2, kHeart / 2),
+					.position = QPoint(
+						(head->width() - kHeart) / 2,
+						(head->height() - kHeart) / 2),
 				});
 			}
 		});
@@ -3181,14 +3169,6 @@ void ShowSupportBox(Window::SessionController *controller) {
 			QMargins(22, 14, 22, 0),
 			style::al_top);
 		Q_UNUSED(title);
-		const auto intro = content->add(
-			object_ptr<Ui::FlatLabel>(
-				content,
-				rpl::single(U(Mokagram::Lang::Tr("Поддерживая проект, вы вносите вклад в его развитие и получаете уникальный значок."))),
-				TextLabelStyle()),
-			QMargins(22, 8, 22, 4),
-			style::al_top);
-
 		const auto addItem = [&](
 				const QString &alt,
 				const QString &name,
@@ -3224,20 +3204,20 @@ void ShowSupportBox(Window::SessionController *controller) {
 		};
 		addItem(
 			U("💰"),
-			U(Mokagram::Lang::Tr("Выбрать способ и уровень")),
-			U(Mokagram::Lang::Tr("Во вкладке «Важное» нажмите Ozon, CryptoBot, xRocket или Stars: откроется @mokagent, там выберите уровень поддержки.\n1: 300 ₽ · 249 ⭐ · 3.74 USDT\n2: 450 ₽ · 374 ⭐ · 5.61 USDT\n3: 600 ₽ · 498 ⭐ · 7.48 USDT")));
+			U(Mokagram::Lang::Tr("Выберите уровень")),
+			U(Mokagram::Lang::Tr("1: 300 ₽ · 249 ⭐ · 3.74 USDT\n2: 450 ₽ · 374 ⭐ · 5.61 USDT\n3: 600 ₽ · 498 ⭐ · 7.48 USDT")));
 		addItem(
 			U("📤"),
-			U(Mokagram::Lang::Tr("Оплатить")),
-			U(Mokagram::Lang::Tr("Бот выставит счёт в выбранном сервисе. После оплаты в CryptoBot или xRocket нажмите «проверить оплату». Для Ozon бот покажет реквизиты, после перевода пришлите ему скриншот: такие заявки проверяются вручную.")));
+			U(Mokagram::Lang::Tr("Оплатите в боте")),
+			U(Mokagram::Lang::Tr("В CryptoBot и xRocket после оплаты нажмите «проверить оплату». Для Ozon пришлите скриншот перевода.")));
 		addItem(
 			U("🎁"),
-			U(Mokagram::Lang::Tr("Получить значок")),
-			U(Mokagram::Lang::Tr("После подтверждения оплаты вы получите уникальный значок, он будет в вашем профиле и виден другим пользователям.")));
+			U(Mokagram::Lang::Tr("Получите значок")),
+			U(Mokagram::Lang::Tr("Он появится в вашем профиле.")));
 		const auto close = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(22, 22, 22, 14));
-		close->resize(close->width(), 48);
+			QMargins(22, 20, 22, 18));
+		close->resize(close->width(), 44);
 		close->setCursor(style::cur_pointer);
 		close->paintOn([=](QPainter &p) {
 			auto hq = PainterHighQualityEnabler(p);
