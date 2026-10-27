@@ -9,9 +9,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_audio_msg_id.h"
 #include "ui/rp_widget.h"
+#include "ui/userpic_view.h"
 #include "base/object_ptr.h"
 
 class AudioMsgId;
+class PeerData;
 
 namespace Data {
 class DocumentMedia;
@@ -117,6 +119,7 @@ private:
 	void handleSongUpdate(const TrackState &state);
 	void handleSongChange();
 	void refreshSongCover();
+	[[nodiscard]] PeerData *voiceSender() const;
 	void handlePlaylistUpdate();
 
 	void updateTimeText(const TrackState &state);
@@ -171,6 +174,7 @@ private:
 	std::unique_ptr<OrderController> _orderController;
 	std::unique_ptr<SpeedController> _speedController;
 
+	Ui::PeerUserpicView _voiceUserpic;
 	std::shared_ptr<Data::DocumentMedia> _songMedia;
 	rpl::lifetime _songMediaLifetime;
 	rpl::lifetime _playlistChangesLifetime;
