@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: 5d82b513
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/lang/mokagram_lang.h"
 
@@ -681,13 +685,13 @@ void PlayDelete(
 	// grab() заливает фон плоским цветом: считаем его прозрачным по углу.
 	{
 		const auto bg = image.pixel(0, 0);
-		const auto near = [](int a, int b) { return std::abs(a - b) <= 2; };
+		const auto sameColor = [](int a, int b) { return std::abs(a - b) <= 2; };
 		for (auto y = 0; y != image.height(); ++y) {
 			const auto line = reinterpret_cast<QRgb*>(image.scanLine(y));
 			for (auto x = 0; x != image.width(); ++x) {
-				if (near(qRed(line[x]), qRed(bg))
-					&& near(qGreen(line[x]), qGreen(bg))
-					&& near(qBlue(line[x]), qBlue(bg))) {
+				if (sameColor(qRed(line[x]), qRed(bg))
+					&& sameColor(qGreen(line[x]), qGreen(bg))
+					&& sameColor(qBlue(line[x]), qBlue(bg))) {
 					line[x] = 0;
 				}
 			}

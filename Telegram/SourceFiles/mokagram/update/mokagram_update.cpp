@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: 9cb4412a
 #include "mokagram/update/mokagram_update.h"
 #include "mokagram/lang/mokagram_lang.h"
 
@@ -22,10 +26,14 @@
 #include <QtCore/QDir>
 #include <QtCore/QProcessEnvironment>
 
+#ifndef _WIN32
 #include <lzma.h>
+#endif
 #include <openssl/evp.h>
 
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include <cstdio>
 #include <limits>
@@ -36,7 +44,7 @@ namespace Mokagram::Update {
 namespace {
 
 constexpr auto kBaseUrl
-	= "https://raw.githubusercontent.com/ecronxy/mokagram/updates/";
+	= "https://up.moka.wtf/";
 constexpr auto kManifestName = "update.json";
 constexpr auto kPlatform = "linux-x64";
 constexpr auto kFirstCheckDelay = 15 * 1000;
@@ -107,6 +115,7 @@ void Toast(const QString &text) {
 	}
 }
 
+#ifndef _WIN32
 // Обновления ставятся только в установленный клиент. Рабочая сборка из
 // папки разработки не должна перезаписывать сама себя.
 [[nodiscard]] bool UpdatesAllowed() {
@@ -144,6 +153,8 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 		+ QByteArray::number(manifest.size) + '\n';
 }
 
+#endif // !_WIN32
+
 [[nodiscard]] bool Verify(
 		const QByteArray &message,
 		const QByteArray &signature) {
@@ -175,6 +186,7 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 		size_t(message.size())) == 1;
 }
 
+#ifndef _WIN32
 [[nodiscard]] bool SignatureValid(const Manifest &manifest) {
 	return Verify(SignedMessage(manifest), manifest.signature);
 }
@@ -458,6 +470,8 @@ void AutoCheck() {
 	}
 }
 
+#endif // !_WIN32
+
 } // namespace
 
 bool VerifyDetached(
@@ -467,6 +481,9 @@ bool VerifyDetached(
 }
 
 void RegisterSettings() {
+#ifdef _WIN32
+	return;
+#else
 	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Обновления"));
 	Settings::Register({
 		.key = QString::fromLatin1(kAutoKey),
@@ -479,7 +496,7 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.sectionIcon = u"update"_q,
 		.sectionNote = QString::fromUtf8(
-			Mokagram::Lang::Tr("Обновления приходят из github.com/ecronxy/mokagram и ставятся, только если подпись совпала.")),
+			Mokagram::Lang::Tr("Обновления приходят с up.moka.wtf и ставятся, только если подпись совпала.")),
 	});
 	Settings::Register({
 		.key = QString::fromLatin1(kCheckKey),
@@ -503,9 +520,13 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.hidden = true,
 	});
+#endif
 }
 
 void Start() {
+#ifdef _WIN32
+	return;
+#else
 	QFile::remove(TemporaryPath());
 	if (!UpdatesAllowed()) {
 		// Рабочая сборка: ни проверок, ни запросов в сеть.
@@ -516,10 +537,15 @@ void Start() {
 	timer->setInterval(kCheckInterval);
 	QObject::connect(timer, &QTimer::timeout, AutoCheck);
 	timer->start();
+#endif
 }
 
 void CheckNow() {
+#ifdef _WIN32
+	return;
+#else
 	Check(true);
+#endif
 }
 
 } // namespace Mokagram::Update

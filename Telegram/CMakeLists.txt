@@ -177,7 +177,12 @@ else()
     set_target_properties(moka_sqlite3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(Telegram PRIVATE moka_sqlite3)
 endif()
-# lzma: системная, а если нет (Windows) собираем xz 5.4.7 из исходников
+# Статический Qt6Network на Windows тянет DnsQuery_W и другие функции из dnsapi
+if (WIN32)
+    target_link_libraries(Telegram PRIVATE dnsapi)
+endif()
+# lzma нужен только самообновлению (Linux, macOS); на Windows оно пока не включено
+if (NOT WIN32)
 find_package(LibLZMA QUIET)
 if (LibLZMA_FOUND)
     target_link_libraries(Telegram PRIVATE LibLZMA::LibLZMA)
@@ -192,6 +197,7 @@ else()
     FetchContent_MakeAvailable(moka_xz)
     set(BUILD_SHARED_LIBS ${moka_shared_backup})
     target_link_libraries(Telegram PRIVATE liblzma)
+endif()
 endif()
 
 target_link_libraries(Telegram
@@ -2689,6 +2695,10 @@ if (WIN32)
     endif()
 
     target_link_options(Telegram PRIVATE /PDBPAGESIZE:8192)
+
+    # Telegram.exe динамически подключает pythonNNN.dll (плагины): ищем её и в папке приложения,
+    # а не только в System32 (общий флаг 0x800 из cmake_helpers). Последний флаг побеждает.
+    target_link_options(Telegram PRIVATE /DEPENDENTLOADFLAG:0xA00)
 
     if (DESKTOP_APP_WIN7_BASELINE)
         # The loader reads the subsystem version as the minimal Windows.

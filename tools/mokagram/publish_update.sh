@@ -6,8 +6,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 binary=${1:-$root/../build/bin/Telegram}
 notes=${2:-}
 key=${MOKAGRAM_UPDATE_KEY:-$HOME/.config/mokagram/update-key.pem}
-remote=${MOKAGRAM_UPDATE_REMOTE:-git@github.com:ecronxy/mokagram.git}
-branch=updates
+remote=${MOKAGRAM_UPDATE_REMOTE:-tier:/var/www/moka-up/}
 platform=linux-x64
 file=mokagram-$platform.xz
 header=$root/Telegram/SourceFiles/mokagram/update/mokagram_update.h
@@ -32,10 +31,10 @@ if [[ "$mode" != "600" && "$mode" != "400" ]]; then
 	exit 1
 fi
 
-published=$(curl -fsSL "https://raw.githubusercontent.com/ecronxy/mokagram/$branch/update.json" 2>/dev/null \
+published=$(curl -fsSL "https://up.moka.wtf/update.json" 2>/dev/null \
 	| python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])' 2>/dev/null || echo 0)
 if (( version <= published )); then
-	echo "В ветке $branch уже версия $published. Увеличьте kVersion в $header и пересоберите." >&2
+	echo "На up.moka.wtf уже версия $published. Увеличьте kVersion в $header и пересоберите." >&2
 	exit 1
 fi
 
@@ -70,10 +69,8 @@ print(json.dumps({
 }, ensure_ascii=False, indent=2))
 EOF
 
-cd "$work/repo"
-git init -q -b "$branch"
-git add update.json "$file"
-git commit -q -m "mokaGram $title"
-echo "Публикую mokaGram $title ($size байт) в $remote, ветка $branch..."
-git push --force "$remote" "$branch:$branch"
+echo "Публикую mokaGram $title ($size байт) на $remote..."
+# сначала файл, потом манифест: клиент не должен увидеть update.json раньше пакета
+rsync -e ssh "$work/repo/$file" "$remote"
+rsync -e ssh "$work/repo/update.json" "$remote"
 echo "Готово."

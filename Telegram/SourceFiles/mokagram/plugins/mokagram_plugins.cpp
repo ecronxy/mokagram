@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: c69c989a
 // Mokagram: хост плагинов (встроенный Python).
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -143,7 +147,11 @@ void Drain(const LogFn &log) {
 std::string NowIso() {
 	const auto now = std::time(nullptr);
 	auto parts = std::tm();
+#ifdef _WIN32
+	localtime_s(&parts, &now);
+#else
 	localtime_r(&now, &parts);
+#endif
 	char buffer[32];
 	std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &parts);
 	return buffer;

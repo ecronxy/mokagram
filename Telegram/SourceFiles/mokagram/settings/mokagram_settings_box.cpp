@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: 277d403b
 // Mokagram: окно «Кастомизация», строится из реестра настроек.
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
@@ -587,6 +591,11 @@ public:
 				if (!data.vdocuments().v.isEmpty()) {
 					_own = _session->data().processDocument(
 						data.vdocuments().v.front());
+					// Четвёртый эмодзи набора: сердце для окна «Поддержать разработку».
+					if (data.vdocuments().v.size() > 3) {
+						_ownHeart = _session->data().processDocument(
+							data.vdocuments().v[3]);
+					}
 					_updated.fire({});
 				}
 			}, [](const auto &) {});
@@ -634,6 +643,18 @@ public:
 		}
 		return _session->data().customEmojiManager().create(
 			_own,
+			std::move(repaint),
+			Data::CustomEmojiSizeTag::Normal,
+			size);
+	}
+	[[nodiscard]] std::unique_ptr<Ui::Text::CustomEmoji> makeOwnHeart(
+			Fn<void()> repaint,
+			int size) {
+		if (!_session || !_ownHeart) {
+			return nullptr;
+		}
+		return _session->data().customEmojiManager().create(
+			_ownHeart,
 			std::move(repaint),
 			Data::CustomEmojiSizeTag::Normal,
 			size);
@@ -695,6 +716,7 @@ private:
 	mtpRequestId _requestId = 0;
 	mtpRequestId _ownRequestId = 0;
 	DocumentData *_own = nullptr;
+	DocumentData *_ownHeart = nullptr;
 	base::flat_map<QString, DocumentData*> _docs;
 	rpl::event_stream<> _updated;
 
@@ -2812,6 +2834,7 @@ namespace {
 		{ &st::menuIconChatBubble, QString::fromUtf8("💬") },
 		{ &st::menuIconShowInFolder, QString::fromUtf8("📁") },
 		{ &st::menuIconManage, QString::fromUtf8("⚙️") },
+		{ &st::menuIconReport, QString::fromUtf8("❗️") },
 		{ &st::menuIconUnmute, QString::fromUtf8("🎵") },
 		{ &st::menuIconBotCommands, QString::fromUtf8("🔧") },
 		{ &st::menuIconPalette, QString::fromUtf8("🖼") },
@@ -3097,6 +3120,128 @@ bool PaintPackIcon(
 	const auto pack = static_cast<PackIcon*>(state.get());
 	PaintPlate(p, rect, QColor(), st::menuIconSettings, QString(), alt, *pack, widget, false);
 	return pack->emoji || !pack->normalized.isNull();
+}
+
+void ShowSupportBox(Window::SessionController *controller) {
+	if (!controller) {
+		return;
+	}
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		RoundedNoButtons(box);
+		box->setWidth(380);
+		PackIcons::Instance().ensure(&controller->session());
+		const auto content = box->verticalLayout();
+
+		constexpr auto kHead = 64;
+		const auto head = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(0, 14, 0, 0));
+		head->resize(head->width(), kHead);
+		constexpr auto kHeart = 64;
+		const auto heart = std::make_shared<
+			std::unique_ptr<Ui::Text::CustomEmoji>>();
+		const auto makeHeart = [=] {
+			if (!*heart) {
+				*heart = PackIcons::Instance().makeOwnHeart(
+					[=] { head->update(); },
+					kHeart);
+			}
+		};
+		PackIcons::Instance().updated(
+		) | rpl::on_next([=] {
+			makeHeart();
+			head->update();
+		}, head->lifetime());
+		head->paintOn([=](QPainter &p) {
+			makeHeart();
+			if (*heart && (*heart)->ready()) {
+				(*heart)->paint(p, {
+					.textColor = QColor(0xFF, 0x3B, 0x5C),
+					.now = crl::now(),
+					.position = QPoint(
+						(head->width() - kHeart) / 2,
+						(head->height() - kHeart) / 2),
+				});
+			}
+		});
+
+		const auto title = content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				rpl::single(U(Mokagram::Lang::Tr("Поддержать разработку"))),
+				st::boxTitle),
+			QMargins(22, 6, 22, 4),
+			style::al_top);
+		Q_UNUSED(title);
+		const auto addItem = [&](
+				const QString &alt,
+				const QString &name,
+				const QString &text) {
+			const auto row = content->add(
+				object_ptr<Ui::RpWidget>(content),
+				QMargins(22, 16, 22, 0));
+			const auto head = Ui::CreateChild<Ui::FlatLabel>(
+				row,
+				name,
+				TitleLabelStyle());
+			const auto body = Ui::CreateChild<Ui::FlatLabel>(
+				row,
+				text,
+				TextLabelStyle());
+			const auto state = std::make_shared<std::shared_ptr<void>>();
+			constexpr auto kIcon = 26;
+			constexpr auto kLeft = 42;
+			row->widthValue() | rpl::on_next([=](int width) {
+				const auto inner = std::max(width - kLeft, 1);
+				head->resizeToWidth(inner);
+				body->resizeToWidth(inner);
+				head->moveToLeft(kLeft, 0);
+				body->moveToLeft(kLeft, head->height() + 2);
+				const auto height = head->height() + 2 + body->height();
+				if (row->height() != height) {
+					row->resize(width, height);
+				}
+			}, row->lifetime());
+			row->paintOn([=](QPainter &p) {
+				PaintPackIcon(p, QRect(0, 1, kIcon, kIcon), alt, *state, row);
+			});
+		};
+		addItem(
+			U("💰"),
+			U(Mokagram::Lang::Tr("Выберите уровень")),
+			U(Mokagram::Lang::Tr("На 1 уровне выдаётся простой бейджик, на 2 выбор из 4 бейджиков, на 3 полная кастомизация.")));
+		addItem(
+			U("📤"),
+			U(Mokagram::Lang::Tr("Оплатите в боте")),
+			U(Mokagram::Lang::Tr("Оплатите счёт в боте")));
+		addItem(
+			U("🎁"),
+			U(Mokagram::Lang::Tr("Получите значок")),
+			U(Mokagram::Lang::Tr("Он появится в вашем профиле.")));
+		const auto close = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(22, 20, 22, 18));
+		close->resize(close->width(), 44);
+		close->setCursor(style::cur_pointer);
+		close->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(close->rect(), 24, 24);
+			p.setPen(st::windowFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(
+				close->rect(),
+				Qt::AlignCenter,
+				U(Mokagram::Lang::Tr("Закрыть")));
+		});
+		close->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::MouseButtonRelease;
+		}) | rpl::on_next([=] {
+			box->closeBox();
+		}, close->lifetime());
+	}));
 }
 
 } // namespace Mokagram::Settings

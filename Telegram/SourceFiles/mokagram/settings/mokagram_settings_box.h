@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: 1e0b9cfd
 // Mokagram: окно «Кастомизация», строится из реестра настроек.
 #pragma once
 
@@ -37,6 +41,8 @@ void ShowCustomizeBox(Window::SessionController *controller);
 void ShowSettingsPage(
 	Window::SessionController *controller,
 	const QString &page);
+// Окно «Поддержать разработку» (как у вкладки «Важное»).
+void ShowSupportBox(Window::SessionController *controller);
 void StartDebugCommands();
 
 // Открывает «Кастомизацию» сразу с поиском по тексту (например, по названию плагина).

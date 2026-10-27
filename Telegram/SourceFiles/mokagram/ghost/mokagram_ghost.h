@@ -1,3 +1,7 @@
+// This file is part of mokaGram, https://github.com/ecronxy/mokagram
+// (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
+// of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
+// mokagram-id: 6a1c4279
 // Mokagram: режим призрака и скрытие сообщений заблокированных.
 // Флаги лежат в реестре настроек (ключи "ghost.*" и "filters.hide_blocked"),
 // здесь они кэшируются в обычных bool, горячий путь не ищет по реестру.
