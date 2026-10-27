@@ -461,7 +461,8 @@ jobs:
           -D CMAKE_CONFIGURATION_TYPES=Release ^
           -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON ^
-          -D DESKTOP_APP_ENABLE_LTO=OFF
+          -D DESKTOP_APP_ENABLE_LTO=OFF ^
+          -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
 
           cmake --build ..\out --config Release --parallel -- -k 0
 
