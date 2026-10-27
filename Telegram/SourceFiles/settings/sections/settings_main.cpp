@@ -443,17 +443,25 @@ void MokagramImportant::setupContent() {
 			if (!button) {
 				continue;
 			}
-			// Значок сервиса: круглая картинка на месте значка строки.
+			// Значок сервиса: плашка того же размера и скругления, что у соседних строк.
 			const auto image = QImage(QString::fromLatin1(way.image));
 			const auto icon = Ui::CreateChild<Ui::RpWidget>(button);
-			constexpr auto kSize = 30;
-			icon->resize(kSize, kSize);
+			const auto size = st::menuIconManage.size();
+			icon->resize(size);
 			icon->setAttribute(Qt::WA_TransparentForMouseEvents);
 			button->heightValue() | rpl::on_next([=](int height) {
-				icon->move(st::settingsButton.iconLeft, (height - kSize) / 2);
+				icon->move(
+					st::settingsButton.iconLeft,
+					(height - size.height()) / 2);
 			}, icon->lifetime());
 			icon->paintOn([=](QPainter &p) {
 				auto hq = PainterHighQualityEnabler(p);
+				auto path = QPainterPath();
+				path.addRoundedRect(
+					QRectF(icon->rect()),
+					st::settingsIconRadius,
+					st::settingsIconRadius);
+				p.setClipPath(path);
 				p.drawImage(icon->rect(), image);
 			});
 		}
