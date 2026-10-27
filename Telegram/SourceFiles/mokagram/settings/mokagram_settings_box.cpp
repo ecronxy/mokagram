@@ -3128,10 +3128,10 @@ void ShowSupportBox(Window::SessionController *controller) {
 		PackIcons::Instance().ensure(&controller->session());
 		const auto content = box->verticalLayout();
 
-		constexpr auto kHead = 84;
+		constexpr auto kHead = 64;
 		const auto head = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(0, 26, 0, 0));
+			QMargins(0, 14, 0, 0));
 		head->resize(head->width(), kHead);
 		constexpr auto kHeart = 64;
 		const auto heart = std::make_shared<
@@ -3166,7 +3166,7 @@ void ShowSupportBox(Window::SessionController *controller) {
 				content,
 				rpl::single(U(Mokagram::Lang::Tr("Поддержать разработку"))),
 				st::boxTitle),
-			QMargins(22, 14, 22, 0),
+			QMargins(22, 6, 22, 4),
 			style::al_top);
 		Q_UNUSED(title);
 		const auto addItem = [&](
@@ -3205,10 +3205,10 @@ void ShowSupportBox(Window::SessionController *controller) {
 		addItem(
 			U("💰"),
 			U(Mokagram::Lang::Tr("Выберите уровень")),
-			U(Mokagram::Lang::Tr("1: 300 ₽ · 249 ⭐ · 3.74 USDT\n2: 450 ₽ · 374 ⭐ · 5.61 USDT\n3: 600 ₽ · 498 ⭐ · 7.48 USDT")));
+			U(Mokagram::Lang::Tr("На 1 уровне выдаётся простой бейджик, на 2 выбор из 4 бейджиков, на 3 полная кастомизация.\n1: 300 ₽ · 249 ⭐ · 3.74 USDT\n2: 450 ₽ · 374 ⭐ · 5.61 USDT\n3: 600 ₽ · 498 ⭐ · 7.48 USDT")));
 		addItem(
 			U("📤"),
-			U(Mokagram::Lang::Tr("Оплатите в боте")),
+			U(Mokagram::Lang::Tr("Оплатите счёт в боте")),
 			U(Mokagram::Lang::Tr("В CryptoBot и xRocket после оплаты нажмите «проверить оплату». Для Ozon пришлите скриншот перевода.")));
 		addItem(
 			U("🎁"),
