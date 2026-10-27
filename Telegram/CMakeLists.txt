@@ -177,7 +177,8 @@ else()
     set_target_properties(moka_sqlite3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(Telegram PRIVATE moka_sqlite3)
 endif()
-# lzma: системная, а если нет (Windows) собираем xz 5.4.7 из исходников
+# lzma нужен только самообновлению (Linux, macOS); на Windows оно пока не включено
+if (NOT WIN32)
 find_package(LibLZMA QUIET)
 if (LibLZMA_FOUND)
     target_link_libraries(Telegram PRIVATE LibLZMA::LibLZMA)
@@ -192,6 +193,7 @@ else()
     FetchContent_MakeAvailable(moka_xz)
     set(BUILD_SHARED_LIBS ${moka_shared_backup})
     target_link_libraries(Telegram PRIVATE liblzma)
+endif()
 endif()
 
 target_link_libraries(Telegram

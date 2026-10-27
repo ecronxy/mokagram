@@ -22,10 +22,14 @@
 #include <QtCore/QDir>
 #include <QtCore/QProcessEnvironment>
 
+#ifndef _WIN32
 #include <lzma.h>
+#endif
 #include <openssl/evp.h>
 
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include <cstdio>
 #include <limits>
@@ -107,6 +111,7 @@ void Toast(const QString &text) {
 	}
 }
 
+#ifndef _WIN32
 // Обновления ставятся только в установленный клиент. Рабочая сборка из
 // папки разработки не должна перезаписывать сама себя.
 [[nodiscard]] bool UpdatesAllowed() {
@@ -144,6 +149,8 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 		+ QByteArray::number(manifest.size) + '\n';
 }
 
+#endif // !_WIN32
+
 [[nodiscard]] bool Verify(
 		const QByteArray &message,
 		const QByteArray &signature) {
@@ -175,6 +182,7 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 		size_t(message.size())) == 1;
 }
 
+#ifndef _WIN32
 [[nodiscard]] bool SignatureValid(const Manifest &manifest) {
 	return Verify(SignedMessage(manifest), manifest.signature);
 }
@@ -458,6 +466,8 @@ void AutoCheck() {
 	}
 }
 
+#endif // !_WIN32
+
 } // namespace
 
 bool VerifyDetached(
@@ -467,6 +477,9 @@ bool VerifyDetached(
 }
 
 void RegisterSettings() {
+#ifdef _WIN32
+	return;
+#else
 	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Обновления"));
 	Settings::Register({
 		.key = QString::fromLatin1(kAutoKey),
@@ -503,9 +516,13 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.hidden = true,
 	});
+#endif
 }
 
 void Start() {
+#ifdef _WIN32
+	return;
+#else
 	QFile::remove(TemporaryPath());
 	if (!UpdatesAllowed()) {
 		// Рабочая сборка: ни проверок, ни запросов в сеть.
@@ -516,10 +533,15 @@ void Start() {
 	timer->setInterval(kCheckInterval);
 	QObject::connect(timer, &QTimer::timeout, AutoCheck);
 	timer->start();
+#endif
 }
 
 void CheckNow() {
+#ifdef _WIN32
+	return;
+#else
 	Check(true);
+#endif
 }
 
 } // namespace Mokagram::Update

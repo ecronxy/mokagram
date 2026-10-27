@@ -442,6 +442,13 @@ jobs:
         shell: bash
         run: exit 1
 
+      - name: Освободить место перед сборкой клиента (на диске C: всего ~28 ГБ).
+        shell: pwsh
+        run: |
+          # Исходники и сборочные деревья Qt больше не нужны: Qt уже установлен в Qt-*.
+          Get-ChildItem "$env:LibrariesPath" -Directory -Filter 'qt_*' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name,@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
+
       - name: Telegram Desktop build.
         run: |
           cd %TBUILD%\%REPO_NAME%\Telegram
