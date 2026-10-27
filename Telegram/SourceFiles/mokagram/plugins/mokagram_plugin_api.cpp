@@ -683,7 +683,11 @@ std::string DialogShow(const QJsonObject &args) {
 								: Ui::InputField::Mode::SingleLine,
 							rpl::single(text),
 							TextWithTags{ def.toString() }),
-						st::boxPadding);
+						style::margins(
+							st::boxPadding.left(),
+							st::boxPadding.top(),
+							st::boxPadding.right(),
+							st::boxPadding.bottom() + st::boxPadding.top()));
 					getters->push_back({ key, [=] {
 						return QJsonValue(input->getLastText());
 					} });
@@ -734,6 +738,7 @@ std::string DialogShow(const QJsonObject &args) {
 								item.toString()),
 							st::boxPadding);
 					}
+					Ui::AddSkip(content);
 					getters->push_back({ key, [=] {
 						return QJsonValue(group->current());
 					} });
