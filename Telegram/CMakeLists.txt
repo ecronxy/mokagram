@@ -177,6 +177,10 @@ else()
     set_target_properties(moka_sqlite3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(Telegram PRIVATE moka_sqlite3)
 endif()
+# Статический Qt6Network на Windows тянет DnsQuery_W и другие функции из dnsapi
+if (WIN32)
+    target_link_libraries(Telegram PRIVATE dnsapi)
+endif()
 # lzma нужен только самообновлению (Linux, macOS); на Windows оно пока не включено
 if (NOT WIN32)
 find_package(LibLZMA QUIET)
