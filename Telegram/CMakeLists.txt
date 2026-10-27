@@ -2696,6 +2696,10 @@ if (WIN32)
 
     target_link_options(Telegram PRIVATE /PDBPAGESIZE:8192)
 
+    # Telegram.exe динамически подключает pythonNNN.dll (плагины): ищем её и в папке приложения,
+    # а не только в System32 (общий флаг 0x800 из cmake_helpers). Последний флаг побеждает.
+    target_link_options(Telegram PRIVATE /DEPENDENTLOADFLAG:0xA00)
+
     if (DESKTOP_APP_WIN7_BASELINE)
         # The loader reads the subsystem version as the minimal Windows.
         target_link_options(Telegram PRIVATE /SUBSYSTEM:WINDOWS,6.01)
