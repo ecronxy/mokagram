@@ -3205,11 +3205,11 @@ void ShowSupportBox(Window::SessionController *controller) {
 		addItem(
 			U("💰"),
 			U(Mokagram::Lang::Tr("Выберите уровень")),
-			U(Mokagram::Lang::Tr("На 1 уровне выдаётся простой бейджик, на 2 выбор из 4 бейджиков, на 3 полная кастомизация.\n1: 300 ₽ · 249 ⭐ · 3.74 USDT\n2: 450 ₽ · 374 ⭐ · 5.61 USDT\n3: 600 ₽ · 498 ⭐ · 7.48 USDT")));
+			U(Mokagram::Lang::Tr("На 1 уровне выдаётся простой бейджик, на 2 выбор из 4 бейджиков, на 3 полная кастомизация.")));
 		addItem(
 			U("📤"),
-			U(Mokagram::Lang::Tr("Оплатите счёт в боте")),
-			U(Mokagram::Lang::Tr("В CryptoBot и xRocket после оплаты нажмите «проверить оплату». Для Ozon пришлите скриншот перевода.")));
+			U(Mokagram::Lang::Tr("Оплатите в боте")),
+			U(Mokagram::Lang::Tr("Оплатите счёт в боте")));
 		addItem(
 			U("🎁"),
 			U(Mokagram::Lang::Tr("Получите значок")),
