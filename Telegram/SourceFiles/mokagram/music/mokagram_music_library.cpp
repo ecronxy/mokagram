@@ -274,6 +274,19 @@ Library &Lib() {
 	return result;
 }
 
+// Источник трека: «Автор - Название» часто заливают чужие аккаунты, поэтому
+// сравниваем по имени из названия, а не только по аккаунту.
+[[nodiscard]] QString Origin(const Track &t) {
+	const auto dash = t.title.indexOf(u" - "_q);
+	if (dash > 1) {
+		const auto name = NormalizePart(t.title.left(dash));
+		if (name.size() >= 3) {
+			return name;
+		}
+	}
+	return NormalizePart(t.artist);
+}
+
 [[nodiscard]] std::vector<QString> KeysFor(const Track &t) {
 	return KeysFor(t.id, NormKey(t));
 }
@@ -350,16 +363,43 @@ void Remember(
 [[nodiscard]] Profile BuildProfile(const Track &current) {
 	auto p = Profile();
 	const auto now = QDateTime::currentSecsSinceEpoch();
+	// Тег, который встречается только у одного автора, это его ник, а не звучание:
+	// по нему подборка превращается в «всё от этого автора».
+	auto tagArtists = std::map<QString, std::set<QString>>();
+	const auto collectTags = [&](const QString &artistId, const QStringList &tags) {
+		for (const auto &tag : tags) {
+			tagArtists[tag].insert(artistId);
+		}
+	};
+	for (const auto &item : Lib().liked) {
+		collectTags(item.track.artistId, item.track.tags);
+	}
+	for (const auto &item : Lib().boosted) {
+		collectTags(item.track.artistId, item.track.tags);
+	}
+	for (const auto &h : Lib().history) {
+		collectTags(h.artistId, h.tags);
+	}
+	collectTags(current.artistId, current.tags);
+	const auto clean = [&](const QStringList &tags) {
+		auto result = QStringList();
+		for (const auto &tag : tags) {
+			if (tagArtists[tag].size() >= 2) {
+				result.push_back(tag);
+			}
+		}
+		return result;
+	};
 	for (const auto &item : Lib().liked) {
 		const auto &t = item.track;
-		AddSignal(p, t.id, t.artistId, t.genre, t.tags, 3. * Decay(item.at, now));
+		AddSignal(p, t.id, t.artistId, t.genre, clean(t.tags), 3. * Decay(item.at, now));
 		p.likesLong = p.likesLong || (t.durationMs > kMaxDurationMs);
 	}
 	// «Больше такого»: сильнее лайка по тегам и жанру.
 	for (const auto &item : Lib().boosted) {
 		const auto &t = item.track;
 		const auto d = Decay(item.at, now);
-		AddSignalEx(p, t.id, t.artistId, t.genre, t.tags, 4. * d, 2. * d, 2. * d, 4. * d);
+		AddSignalEx(p, t.id, t.artistId, t.genre, clean(t.tags), 4. * d, 2. * d, 2. * d, 4. * d);
 	}
 	auto recent = std::vector<const Listen*>();
 	for (const auto &h : Lib().history) {
@@ -370,18 +410,18 @@ void Remember(
 		const auto done = h.finished || ratio >= 0.8;
 		if (done) {
 			Remember(p.finishedKeys, h.id, h.key, h.at);
-			AddSignal(p, h.id, h.artistId, h.genre, h.tags, d);
+			AddSignal(p, h.id, h.artistId, h.genre, clean(h.tags), d);
 			recent.push_back(&h);
 		} else if (h.listenedMs < kEarlySkipMs) {
 			// Пропуск в первые секунды: сильный минус треку, слабее автору и тегам.
 			Remember(p.skippedKeys, h.id, h.key, h.at);
-			AddSignalEx(p, h.id, h.artistId, h.genre, h.tags, -2. * d, -1. * d, -0.4 * d, -0.6 * d);
+			AddSignalEx(p, h.id, h.artistId, h.genre, clean(h.tags), -2. * d, -1. * d, -0.4 * d, -0.6 * d);
 		} else if (ratio < 0.25) {
 			Remember(p.skippedKeys, h.id, h.key, h.at);
-			AddSignal(p, h.id, h.artistId, h.genre, h.tags, -0.8 * d);
+			AddSignal(p, h.id, h.artistId, h.genre, clean(h.tags), -0.8 * d);
 		} else if (ratio >= 0.35) {
 			Remember(p.partialKeys, h.id, h.key, h.at);
-			AddSignal(p, h.id, h.artistId, h.genre, h.tags, 0.25 * d);
+			AddSignal(p, h.id, h.artistId, h.genre, clean(h.tags), 0.25 * d);
 		} else {
 			Remember(p.partialKeys, h.id, h.key, h.at);
 		}
@@ -397,12 +437,12 @@ void Remember(
 		}
 	};
 	if (!current.id.isEmpty()) {
-		addSession(current.genre, current.tags, 1.4);
+		addSession(current.genre, clean(current.tags), 1.4);
 	}
 	auto weight = 1.;
 	for (auto i = int(recent.size()) - 1, n = 0; i >= 0 && n < 10; --i, ++n) {
 		const auto &h = *recent[i];
-		addSession(h.genre, h.tags, weight);
+		addSession(h.genre, clean(h.tags), weight);
 		if (n < 3) {
 			p.recentFinishedIds.push_back(h.id);
 		}
@@ -486,11 +526,13 @@ void Remember(
 
 [[nodiscard]] bool IsBlockedArtist(const Track &t) {
 	const auto name = NormalizePart(t.artist);
+	const auto origin = Origin(t);
 	for (const auto &b : Lib().blocked) {
 		if (!b.artistId.isEmpty() && b.artistId == t.artistId) {
 			return true;
 		}
-		if (!name.isEmpty() && NormalizePart(b.name) == name) {
+		const auto blocked = NormalizePart(b.name);
+		if (!blocked.isEmpty() && (blocked == name || blocked == origin)) {
 			return true;
 		}
 	}
@@ -612,6 +654,7 @@ void BuildImpl(
 			if (!t.artistId.isEmpty()) {
 				avoidArtists.insert(t.artistId);
 			}
+			avoidArtists.insert(Origin(t));
 		};
 		for (const auto &l : lib.liked) {
 			for (const auto &k : KeysFor(l.track)) {
@@ -664,6 +707,7 @@ void BuildImpl(
 			if (skip
 				|| IsBlockedArtist(t)
 				|| (!t.artistId.isEmpty() && avoidArtists.contains(t.artistId))
+				|| avoidArtists.contains(Origin(t))
 				|| within(profile->finishedKeys, keys, kFinishedCooldown)
 				|| within(profile->partialKeys, keys, kPartialCooldown)
 				|| within(profile->skippedKeys, keys, kSkippedCooldown)) {
@@ -713,7 +757,11 @@ void BuildImpl(
 			for (auto i = 0; i != int(scored.size()); ++i) {
 				const auto &c = scored[i];
 				auto value = c.score;
-				value -= 0.55 * artistCount[c.track.artistId];
+				const auto origin = Origin(c.track);
+				value -= 0.55 * artistCount[origin];
+				if (artistCount[origin] >= 2) {
+					value -= 3.;
+				}
 				if (!result.empty()
 					&& genreCount[c.track.genre] > int(result.size()) / 2 + 1) {
 					value -= 0.3;
@@ -725,8 +773,7 @@ void BuildImpl(
 				}
 				// Тот же автор не чаще раза в 5 треков.
 				for (auto back = 0; back != 4 && back != int(result.size()); ++back) {
-					if (!c.track.artistId.isEmpty()
-						&& result[result.size() - 1 - back].artistId == c.track.artistId) {
+					if (Origin(result[result.size() - 1 - back]) == origin) {
 						value -= 3.;
 						break;
 					}
@@ -750,7 +797,7 @@ void BuildImpl(
 			for (const auto &k : KeysFor(picked.track)) {
 				titles.insert(k);
 			}
-			++artistCount[picked.track.artistId];
+			++artistCount[Origin(picked.track)];
 			++genreCount[picked.track.genre];
 			unknown += picked.known ? 0 : 1;
 			result.push_back(std::move(picked.track));
