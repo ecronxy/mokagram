@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_music_ui.h"
@@ -394,8 +395,25 @@ MainMenu::MainMenu(
 		}
 	});
 
+	// Mokagram: ссылки на канал и форум над названием клиента.
+	const auto links = Ui::CreateChild<Ui::FlatLabel>(
+		_footer.get(),
+		st::mainMenuVersionLabel);
+	links->setMarkedText(
+		tr::link(
+			QString::fromUtf8(Mokagram::Lang::Tr("Канал")),
+			u"https://t.me/mokagram"_q)
+		.append(QChar(' '))
+		.append(QChar(8211))
+		.append(QChar(' '))
+		.append(tr::link(
+			QString::fromUtf8(Mokagram::Lang::Tr("Форум")),
+			u"https://t.me/mokaforum"_q)));
+	links->setLinksTrusted();
+
 	_footer->heightValue(
 	) | rpl::on_next([=] {
+		links->moveToLeft(st::mainMenuFooterLeft, _footer->height() - st::mainMenuTelegramBottom - _telegram->height() - links->height() - st::lineWidth * 6);
 		_telegram->moveToLeft(st::mainMenuFooterLeft, _footer->height() - st::mainMenuTelegramBottom - _telegram->height());
 		_version->moveToLeft(st::mainMenuFooterLeft, _footer->height() - st::mainMenuVersionBottom - _version->height());
 	}, _footer->lifetime());

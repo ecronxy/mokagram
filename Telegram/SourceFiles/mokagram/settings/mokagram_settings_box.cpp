@@ -477,6 +477,9 @@ struct FadeButton {
 
 void MakeTransparent(not_null<Ui::RpWidget*> widget) {
 	widget->setAttribute(Qt::WA_TransparentForMouseEvents);
+	// Дочерние виджеты, созданные после показа родителя (перестройка
+	// страницы по клику), сами не показываются: без этого пропадал весь текст.
+	widget->show();
 }
 
 // Находит запрос в тексте и выделяет жирным с подчёркиванием.
