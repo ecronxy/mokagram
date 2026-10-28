@@ -14,6 +14,8 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QSaveFile>
 #include <QtCore/QStandardPaths>
 
 #include <algorithm>
@@ -26,6 +28,14 @@ namespace Mokagram::Music {
 namespace {
 
 constexpr auto kHistoryLimit = 3000;
+constexpr auto kShownLimit = 1500;
+constexpr qint64 kEarlySkipMs = 30 * 1000;
+constexpr qint64 kFinishedCooldown = 30 * 86400;
+constexpr qint64 kPartialCooldown = 14 * 86400;
+constexpr qint64 kSkippedCooldown = 365 * 86400;
+constexpr qint64 kShownCooldown = 5 * 86400;
+constexpr auto kMinDurationMs = 75 * 1000;
+constexpr auto kMaxDurationMs = 11 * 60 * 1000;
 constexpr double kHalfLifeDays = 60.;
 
 struct Liked {
@@ -42,11 +52,26 @@ struct Listen {
 	int listenedMs = 0;
 	bool finished = false;
 	qint64 at = 0;
+	QString key;  // нормализованные название и автор (для дедупликации перезаливов)
+};
+
+struct Blocked {
+	QString artistId;
+	QString name;
+};
+
+struct Shown {
+	QString id;
+	QString key;
+	qint64 at = 0;
 };
 
 struct Library {
 	std::vector<Liked> liked;      // новые сверху
 	std::vector<Listen> history;   // старые сверху
+	std::vector<Liked> boosted;    // «больше такого», новые сверху
+	std::vector<Blocked> blocked;  // авторы, которых не предлагать
+	std::vector<Shown> shown;      // что уже попадало в подборку, старые сверху
 	bool loaded = false;
 	rpl::event_stream<> likesChanged;
 };
@@ -113,15 +138,42 @@ void Save() {
 		o.insert("l", h.listenedMs);
 		o.insert("fin", h.finished);
 		o.insert("at", double(h.at));
+		o.insert("k", h.key);
 		history.push_back(o);
+	}
+	auto boosted = QJsonArray();
+	for (const auto &item : lib.boosted) {
+		auto o = ToJson(item.track);
+		o.insert("at", double(item.at));
+		boosted.push_back(o);
+	}
+	auto blocked = QJsonArray();
+	for (const auto &b : lib.blocked) {
+		auto o = QJsonObject();
+		o.insert("aid", b.artistId);
+		o.insert("name", b.name);
+		blocked.push_back(o);
+	}
+	auto shown = QJsonArray();
+	for (const auto &sh : lib.shown) {
+		auto o = QJsonObject();
+		o.insert("id", sh.id);
+		o.insert("k", sh.key);
+		o.insert("at", double(sh.at));
+		shown.push_back(o);
 	}
 	auto root = QJsonObject();
 	root.insert("liked", liked);
 	root.insert("history", history);
+	root.insert("boosted", boosted);
+	root.insert("blocked", blocked);
+	root.insert("shown", shown);
 	QDir().mkpath(QFileInfo(FilePath()).absolutePath());
-	auto file = QFile(FilePath());
-	if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+	// Через временный файл: обрыв посреди записи не стирает историю.
+	auto file = QSaveFile(FilePath());
+	if (file.open(QIODevice::WriteOnly)) {
 		file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+		file.commit();
 	}
 }
 
@@ -149,11 +201,81 @@ Library &Lib() {
 				h.listenedMs = o.value("l").toInt();
 				h.finished = o.value("fin").toBool();
 				h.at = qint64(o.value("at").toDouble());
+				h.key = o.value("k").toString();
 				library.history.push_back(std::move(h));
+			}
+			for (const auto &v : root.value("boosted").toArray()) {
+				const auto o = v.toObject();
+				library.boosted.push_back({ FromJson(o), qint64(o.value("at").toDouble()) });
+			}
+			for (const auto &v : root.value("blocked").toArray()) {
+				const auto o = v.toObject();
+				library.blocked.push_back({ o.value("aid").toString(), o.value("name").toString() });
+			}
+			for (const auto &v : root.value("shown").toArray()) {
+				const auto o = v.toObject();
+				library.shown.push_back({
+					o.value("id").toString(),
+					o.value("k").toString(),
+					qint64(o.value("at").toDouble()) });
 			}
 		}
 	}
 	return library;
+}
+
+// ---- нормализация для дедупликации ----
+
+[[nodiscard]] QString NormalizePart(const QString &source) {
+	static const auto brackets = QRegularExpression(
+		u"[\\(\\[\\{][^\\)\\]\\}]*[\\)\\]\\}]"_q);
+	static const auto noise = QRegularExpression(
+		u"\\b(feat|ft|featuring|prod|remix|edit|mix|official|remaster|remastered|slowed|sped)\\b.*$"_q,
+		QRegularExpression::CaseInsensitiveOption
+			| QRegularExpression::UseUnicodePropertiesOption);
+	auto text = source;
+	text.remove(brackets);
+	auto cleaned = text;
+	cleaned.remove(noise);
+	if (cleaned.trimmed().isEmpty()) {
+		cleaned = text.isEmpty() ? source : text;
+	}
+	auto result = QString();
+	for (const auto ch : cleaned.toLower()) {
+		if (ch.isLetterOrNumber()) {
+			result.append(ch);
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] QString NormKey(const QString &title, const QString &artist) {
+	return NormalizePart(title) + '|' + NormalizePart(artist);
+}
+
+[[nodiscard]] QString NormKey(const Track &t) {
+	return NormKey(t.title, t.artist);
+}
+
+// Ключи для сравнения: по id, по названию с автором и по длинному названию
+// (перезалив того же трека другим аккаунтом).
+[[nodiscard]] std::vector<QString> KeysFor(const QString &id, const QString &key) {
+	auto result = std::vector<QString>();
+	if (!id.isEmpty()) {
+		result.push_back(u"i:"_q + id);
+	}
+	if (key.size() > 1) {
+		result.push_back(key);
+		const auto title = key.left(key.indexOf('|'));
+		if (title.size() >= 10) {
+			result.push_back(u"t:"_q + title);
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] std::vector<QString> KeysFor(const Track &t) {
+	return KeysFor(t.id, NormKey(t));
 }
 
 // ---- профиль вкуса ----
@@ -163,12 +285,45 @@ struct Profile {
 	std::map<QString, double> artist;
 	std::map<QString, double> genre;
 	std::map<QString, double> tag;
-	std::map<QString, qint64> lastFinished;  // когда трек доигран в последний раз
+	// Кулдауны по ключам (id, название+автор): дослушан, прослушан частично, пропущен.
+	std::map<QString, qint64> finishedKeys;
+	std::map<QString, qint64> partialKeys;
+	std::map<QString, qint64> skippedKeys;
+	// Контекст сессии: последние дослушанные треки (новые весят больше).
+	std::map<QString, double> sessionGenre;
+	std::map<QString, double> sessionTag;
+	std::vector<QString> recentFinishedIds;  // новые первыми
+	bool likesLong = false;
 };
 
 [[nodiscard]] double Decay(qint64 at, qint64 now) {
 	const auto days = std::max<qint64>(now - at, 0) / 86400.;
 	return std::pow(0.5, days / kHalfLifeDays);
+}
+
+void AddSignalEx(
+		Profile &p,
+		const QString &trackId,
+		const QString &artistId,
+		const QString &genre,
+		const QStringList &tags,
+		double wTrack,
+		double wArtist,
+		double wGenre,
+		double wTag) {
+	if (!trackId.isEmpty()) {
+		p.track[trackId] += wTrack;
+	}
+	if (!artistId.isEmpty()) {
+		p.artist[artistId] += wArtist;
+	}
+	if (!genre.isEmpty()) {
+		p.genre[genre] += wGenre;
+	}
+	const auto norm = tags.isEmpty() ? 1. : 1. / std::sqrt(double(tags.size()));
+	for (const auto &tag : tags) {
+		p.tag[tag] += wTag * norm;
+	}
 }
 
 void AddSignal(
@@ -178,42 +333,80 @@ void AddSignal(
 		const QString &genre,
 		const QStringList &tags,
 		double weight) {
-	if (!trackId.isEmpty()) {
-		p.track[trackId] += weight;
-	}
-	if (!artistId.isEmpty()) {
-		p.artist[artistId] += weight;
-	}
-	if (!genre.isEmpty()) {
-		p.genre[genre] += weight;
-	}
-	const auto norm = tags.isEmpty() ? 1. : 1. / std::sqrt(double(tags.size()));
-	for (const auto &tag : tags) {
-		p.tag[tag] += weight * norm;
+	AddSignalEx(p, trackId, artistId, genre, tags, weight, weight, weight, weight);
+}
+
+void Remember(
+		std::map<QString, qint64> &map,
+		const QString &id,
+		const QString &key,
+		qint64 at) {
+	for (const auto &k : KeysFor(id, key)) {
+		auto &value = map[k];
+		value = std::max(value, at);
 	}
 }
 
-[[nodiscard]] Profile BuildProfile() {
+[[nodiscard]] Profile BuildProfile(const Track &current) {
 	auto p = Profile();
 	const auto now = QDateTime::currentSecsSinceEpoch();
 	for (const auto &item : Lib().liked) {
 		const auto &t = item.track;
 		AddSignal(p, t.id, t.artistId, t.genre, t.tags, 3. * Decay(item.at, now));
+		p.likesLong = p.likesLong || (t.durationMs > kMaxDurationMs);
 	}
+	// «Больше такого»: сильнее лайка по тегам и жанру.
+	for (const auto &item : Lib().boosted) {
+		const auto &t = item.track;
+		const auto d = Decay(item.at, now);
+		AddSignalEx(p, t.id, t.artistId, t.genre, t.tags, 4. * d, 2. * d, 2. * d, 4. * d);
+	}
+	auto recent = std::vector<const Listen*>();
 	for (const auto &h : Lib().history) {
 		const auto ratio = (h.durationMs > 0)
 			? std::min(1., h.listenedMs / double(h.durationMs))
 			: 0.;
-		auto w = 0.;
-		if (h.finished || ratio >= 0.8) {
-			w = 1.;
-			p.lastFinished[h.id] = std::max(p.lastFinished[h.id], h.at);
-		} else if (ratio >= 0.35) {
-			w = 0.25;
+		const auto d = Decay(h.at, now);
+		const auto done = h.finished || ratio >= 0.8;
+		if (done) {
+			Remember(p.finishedKeys, h.id, h.key, h.at);
+			AddSignal(p, h.id, h.artistId, h.genre, h.tags, d);
+			recent.push_back(&h);
+		} else if (h.listenedMs < kEarlySkipMs) {
+			// Пропуск в первые секунды: сильный минус треку, слабее автору и тегам.
+			Remember(p.skippedKeys, h.id, h.key, h.at);
+			AddSignalEx(p, h.id, h.artistId, h.genre, h.tags, -2. * d, -1. * d, -0.4 * d, -0.6 * d);
 		} else if (ratio < 0.25) {
-			w = -0.8; // пропустил почти сразу
+			Remember(p.skippedKeys, h.id, h.key, h.at);
+			AddSignal(p, h.id, h.artistId, h.genre, h.tags, -0.8 * d);
+		} else if (ratio >= 0.35) {
+			Remember(p.partialKeys, h.id, h.key, h.at);
+			AddSignal(p, h.id, h.artistId, h.genre, h.tags, 0.25 * d);
+		} else {
+			Remember(p.partialKeys, h.id, h.key, h.at);
 		}
-		AddSignal(p, h.id, h.artistId, h.genre, h.tags, w * Decay(h.at, now));
+	}
+	// Сессия: последние 10 дослушанных и играющий сейчас трек.
+	auto addSession = [&](const QString &genre, const QStringList &tags, double w) {
+		if (!genre.isEmpty()) {
+			p.sessionGenre[genre] += w;
+		}
+		const auto norm = tags.isEmpty() ? 1. : 1. / std::sqrt(double(tags.size()));
+		for (const auto &tag : tags) {
+			p.sessionTag[tag] += w * norm;
+		}
+	};
+	if (!current.id.isEmpty()) {
+		addSession(current.genre, current.tags, 1.4);
+	}
+	auto weight = 1.;
+	for (auto i = int(recent.size()) - 1, n = 0; i >= 0 && n < 10; --i, ++n) {
+		const auto &h = *recent[i];
+		addSession(h.genre, h.tags, weight);
+		if (n < 3) {
+			p.recentFinishedIds.push_back(h.id);
+		}
+		weight = std::max(0.3, weight - 0.07);
 	}
 	return p;
 }
@@ -243,6 +436,79 @@ void AddSignal(
 
 [[nodiscard]] double Random01() {
 	return base::RandomIndex(10000) / 10000.;
+}
+
+// Насколько трек подходит к тому, что играет в этой сессии: 0..1.
+[[nodiscard]] double SessionMatch(const Profile &p, const Track &t) {
+	auto maxGenre = 0., maxTag = 0.;
+	for (const auto &[k, v] : p.sessionGenre) {
+		maxGenre = std::max(maxGenre, v);
+	}
+	for (const auto &[k, v] : p.sessionTag) {
+		maxTag = std::max(maxTag, v);
+	}
+	const auto genre = (maxGenre > 0.)
+		? Get(p.sessionGenre, t.genre) / maxGenre
+		: 0.;
+	auto tag = 0.;
+	if (maxTag > 0.) {
+		for (const auto &name : t.tags) {
+			tag += Get(p.sessionTag, name) / maxTag;
+		}
+		tag = std::min(1., tag / 2.);
+	}
+	return 0.45 * std::min(1., genre) + 0.55 * tag;
+}
+
+// Плавность перехода между двумя треками: жанр, теги, длительность. 0..1.
+[[nodiscard]] double Smoothness(const Track &a, const Track &b) {
+	if (a.id.isEmpty()) {
+		return 0.;
+	}
+	auto result = 0.;
+	if (!a.genre.isEmpty() && a.genre == b.genre) {
+		result += 0.4;
+	}
+	if (!a.tags.isEmpty() && !b.tags.isEmpty()) {
+		auto common = 0;
+		for (const auto &tag : b.tags) {
+			common += a.tags.contains(tag) ? 1 : 0;
+		}
+		const auto all = a.tags.size() + b.tags.size() - common;
+		result += 0.4 * (all > 0 ? common / double(all) : 0.);
+	}
+	if (a.durationMs > 0 && b.durationMs > 0) {
+		const auto diff = std::abs(a.durationMs - b.durationMs);
+		result += 0.2 * (1. - std::min(1., diff / double(std::max(a.durationMs, b.durationMs))));
+	}
+	return result;
+}
+
+[[nodiscard]] bool IsBlockedArtist(const Track &t) {
+	const auto name = NormalizePart(t.artist);
+	for (const auto &b : Lib().blocked) {
+		if (!b.artistId.isEmpty() && b.artistId == t.artistId) {
+			return true;
+		}
+		if (!name.isEmpty() && NormalizePart(b.name) == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void MarkShown(const std::vector<Track> &tracks) {
+	auto &lib = Lib();
+	const auto now = QDateTime::currentSecsSinceEpoch();
+	for (const auto &t : tracks) {
+		lib.shown.push_back({ t.id, NormKey(t), now });
+	}
+	if (int(lib.shown.size()) > kShownLimit) {
+		lib.shown.erase(
+			lib.shown.begin(),
+			lib.shown.begin() + (lib.shown.size() - kShownLimit));
+	}
+	Save();
 }
 
 struct Candidate {
@@ -275,7 +541,289 @@ void Gather(
 	}
 }
 
+void BuildImpl(
+		StreamContext context,
+		int count,
+		bool stream,
+		Fn<void(std::vector<Track>, QString)> done) {
+	if (IsTelegramId(context.current.id)) {
+		context.current = Track();
+	}
+	if (!HasTaste() && context.current.id.isEmpty()) {
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Пока нечего анализировать. Поставьте сердечко нескольким трекам и послушайте музыку: подборка подстроится под вас.")));
+		return;
+	}
+	const auto ctx = std::make_shared<StreamContext>(std::move(context));
+	const auto profile = std::make_shared<Profile>(BuildProfile(ctx->current));
+	const auto now = QDateTime::currentSecsSinceEpoch();
+
+	// Семена: лучшие треки по вкусу, часть выбирается случайно из следующих.
+	auto ranked = std::vector<std::pair<QString, double>>(
+		profile->track.begin(),
+		profile->track.end());
+	std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) {
+		return a.second > b.second;
+	});
+	auto seeds = std::vector<std::pair<QString, double>>();
+	const auto maxSeed = (!ranked.empty() && ranked[0].second > 1.)
+		? ranked[0].second
+		: 1.;
+	auto seedIds = std::set<QString>();
+	const auto addSeed = [&](const QString &id, double weight) {
+		if (id.isEmpty() || IsTelegramId(id) || !seedIds.insert(id).second) {
+			return;
+		}
+		seeds.push_back({ id, weight });
+	};
+	// Что играет сейчас и последние дослушанные: главный сигнал для потока.
+	addSeed(ctx->current.id, 1.);
+	for (const auto &id : profile->recentFinishedIds) {
+		addSeed(id, 0.8);
+	}
+	if (!ranked.empty() && ranked[0].second > 0.) {
+		addSeed(ranked[0].first, std::clamp(ranked[0].second / maxSeed, 0.3, 1.));
+	}
+	auto pool = std::vector<std::pair<QString, double>>();
+	for (auto i = 1; i < std::min<int>(ranked.size(), 30); ++i) {
+		if (ranked[i].second > 0.) {
+			pool.push_back(ranked[i]);
+		}
+	}
+	const auto randomSeeds = stream ? 4 : 8;
+	for (auto picked = 0; picked != randomSeeds && !pool.empty(); ++picked) {
+		const auto at = base::RandomIndex(int(pool.size()));
+		addSeed(pool[at].first, std::clamp(pool[at].second / maxSeed, 0.3, 1.));
+		pool.erase(pool.begin() + at);
+	}
+	const auto topGenres = TopKeys(profile->genre, 2, 0.5);
+	const auto topTags = TopKeys(profile->tag, 2, 0.5);
+	const auto sessionTags = TopKeys(profile->sessionTag, 1, 0.);
+
+	const auto collector = std::make_shared<Collector>();
+	collector->finish = [=] {
+		const auto &lib = Lib();
+		// Жёсткие исключения: уже играет или стоит в очереди, лайкнуто.
+		auto excluded = std::set<QString>();
+		auto avoidArtists = std::set<QString>();
+		const auto exclude = [&](const Track &t) {
+			for (const auto &k : KeysFor(t)) {
+				excluded.insert(k);
+			}
+			if (!t.artistId.isEmpty()) {
+				avoidArtists.insert(t.artistId);
+			}
+		};
+		for (const auto &l : lib.liked) {
+			for (const auto &k : KeysFor(l.track)) {
+				excluded.insert(k);
+			}
+		}
+		for (const auto &b : lib.boosted) {
+			for (const auto &k : KeysFor(b.track)) {
+				excluded.insert(k);
+			}
+		}
+		if (!ctx->current.id.isEmpty()) {
+			exclude(ctx->current);
+		}
+		for (const auto &t : ctx->avoid) {
+			exclude(t);
+		}
+		auto shownAt = std::map<QString, qint64>();
+		for (const auto &sh : lib.shown) {
+			Remember(shownAt, sh.id, sh.key, sh.at);
+		}
+		const auto within = [&](const std::map<QString, qint64> &map, const std::vector<QString> &keys, qint64 span) {
+			for (const auto &k : keys) {
+				const auto i = map.find(k);
+				if (i != map.end() && (now - i->second) < span) {
+					return true;
+				}
+			}
+			return false;
+		};
+		struct Scored {
+			Track track;
+			double score = 0.;
+			bool known = false;
+		};
+		auto scored = std::vector<Scored>();
+		for (const auto &[id, c] : collector->candidates) {
+			const auto &t = c.track;
+			const auto keys = KeysFor(t);
+			auto skip = false;
+			for (const auto &k : keys) {
+				skip = skip || excluded.contains(k);
+			}
+			// Мусор: превью и очень длинные миксы (если автор не слушает такое сам).
+			if (t.durationMs > 0
+				&& (t.durationMs < kMinDurationMs
+					|| (t.durationMs > kMaxDurationMs && !profile->likesLong))) {
+				skip = true;
+			}
+			if (skip
+				|| IsBlockedArtist(t)
+				|| (!t.artistId.isEmpty() && avoidArtists.contains(t.artistId))
+				|| within(profile->finishedKeys, keys, kFinishedCooldown)
+				|| within(profile->partialKeys, keys, kPartialCooldown)
+				|| within(profile->skippedKeys, keys, kSkippedCooldown)) {
+				continue;
+			}
+			auto score = 1.6 * std::min(1., c.seedHits / 1.5);
+			const auto artistAffinity = Get(profile->artist, t.artistId);
+			score += 0.3 * std::tanh(artistAffinity);
+			score += 0.9 * std::tanh(Get(profile->genre, t.genre));
+			auto tagAffinity = 0.;
+			for (const auto &tag : t.tags) {
+				tagAffinity += std::tanh(Get(profile->tag, tag));
+			}
+			score += 0.9 * std::min(1., tagAffinity / 2.);
+			score += 1.1 * SessionMatch(*profile, t);
+			score += 0.25 * std::clamp(std::log10(t.playbackCount + 1.) / 7., 0., 1.);
+			if (t.playbackCount > 0) {
+				score += 0.2 * std::min(1., (t.likesCount / double(t.playbackCount)) * 25.);
+			}
+			if (t.createdAt > 0 && (now - t.createdAt) < 365 * 86400) {
+				score += 0.15;
+			}
+			if (artistAffinity < -0.8) {
+				score -= 2.;
+			}
+			if (within(shownAt, keys, kShownCooldown)) {
+				score -= 2.; // уже предлагали недавно
+			}
+			scored.push_back({ t, score, artistAffinity > 0.3 });
+		}
+		if (scored.empty()) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не нашлось подходящих треков. Попробуйте позже.")));
+			return;
+		}
+		// Жадный отбор: штрафы за повтор исполнителя и жанра, плавный переход от
+		// предыдущего трека, знакомых авторов около 20% (остальное новое по вайбу).
+		const auto knownMax = std::max(1, int(std::round(count * 0.2)));
+		auto result = std::vector<Track>();
+		auto artistCount = std::map<QString, int>();
+		auto genreCount = std::map<QString, int>();
+		auto titles = excluded;
+		auto unknown = 0;
+		while (int(result.size()) < count && !scored.empty()) {
+			auto best = -1;
+			auto bestValue = -1e9;
+			const auto previous = result.empty() ? ctx->current : result.back();
+			for (auto i = 0; i != int(scored.size()); ++i) {
+				const auto &c = scored[i];
+				auto value = c.score;
+				value -= 0.55 * artistCount[c.track.artistId];
+				if (!result.empty()
+					&& genreCount[c.track.genre] > int(result.size()) / 2 + 1) {
+					value -= 0.3;
+				}
+				if (!c.known) {
+					value += 0.5;
+				} else if (int(result.size()) - unknown >= knownMax) {
+					value -= 0.8;
+				}
+				// Тот же автор не чаще раза в 5 треков.
+				for (auto back = 0; back != 4 && back != int(result.size()); ++back) {
+					if (!c.track.artistId.isEmpty()
+						&& result[result.size() - 1 - back].artistId == c.track.artistId) {
+						value -= 3.;
+						break;
+					}
+				}
+				value += 0.7 * Smoothness(previous, c.track);
+				value += (Random01() - 0.5) * 0.3;
+				if (value > bestValue) {
+					bestValue = value;
+					best = i;
+				}
+			}
+			auto picked = scored[best];
+			scored.erase(scored.begin() + best);
+			auto repeated = false;
+			for (const auto &k : KeysFor(picked.track)) {
+				repeated = repeated || titles.contains(k);
+			}
+			if (repeated) {
+				continue;
+			}
+			for (const auto &k : KeysFor(picked.track)) {
+				titles.insert(k);
+			}
+			++artistCount[picked.track.artistId];
+			++genreCount[picked.track.genre];
+			unknown += picked.known ? 0 : 1;
+			result.push_back(std::move(picked.track));
+		}
+		// Немного знакомого: пара любимых треков внутри подборки (не в потоке).
+		if (!stream && lib.liked.size() >= 5 && result.size() > 6) {
+			for (const auto position : { 8 }) {
+				if (position < int(result.size())) {
+					const auto &pick = lib.liked[base::RandomIndex(int(lib.liked.size()))];
+					const auto exists = std::any_of(result.begin(), result.end(), [&](const Track &t) {
+						return t.id == pick.track.id;
+					});
+					if (!exists) {
+						result.insert(result.begin() + position, pick.track);
+					}
+				}
+			}
+		}
+		MarkShown(result);
+		done(std::move(result), QString());
+	};
+
+	// Запросы кандидатов: related по семенам, поиск по жанрам и тегам.
+	// Треки любимых исполнителей не запрашиваем: подборка про звучание, а не про авторов.
+	auto jobs = std::vector<Fn<void()>>();
+	for (const auto &[id, weight] : seeds) {
+		const auto w = weight;
+		jobs.push_back([=] {
+			Related(id, 25, [=](std::vector<Track> list) {
+				Gather(collector, std::move(list), w, false);
+			});
+		});
+	}
+	for (const auto &genre : topGenres) {
+		jobs.push_back([=] {
+			SearchLimited(genre, 20, [=](std::vector<Track> list) {
+				Gather(collector, std::move(list), 0.2, true);
+			});
+		});
+	}
+	for (const auto &tag : topTags) {
+		jobs.push_back([=] {
+			SearchLimited(tag, 20, [=](std::vector<Track> list) {
+				Gather(collector, std::move(list), 0.2, true);
+			});
+		});
+	}
+	// Тег текущей сессии: поток следует за настроением, а не только за долгим профилем.
+	for (const auto &tag : sessionTags) {
+		if (std::find(topTags.begin(), topTags.end(), tag) != topTags.end()) {
+			continue;
+		}
+		jobs.push_back([=] {
+			SearchLimited(tag, 20, [=](std::vector<Track> list) {
+				Gather(collector, std::move(list), 0.4, true);
+			});
+		});
+	}
+	if (jobs.empty()) {
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Мало данных о вкусе: послушайте и полайкайте ещё несколько треков.")));
+		return;
+	}
+	collector->pending = int(jobs.size());
+	for (const auto &job : jobs) {
+		job();
+	}
+}
+
 } // namespace
+
+bool IsTelegramId(const QString &trackId) {
+	return trackId.startsWith(u"telegram:"_q);
+}
 
 bool IsLiked(const QString &trackId) {
 	for (const auto &item : Lib().liked) {
@@ -331,6 +879,7 @@ void RecordListen(const Track &track, int listenedMs, bool finished) {
 	h.listenedMs = std::clamp(listenedMs, 0, track.durationMs);
 	h.finished = finished;
 	h.at = QDateTime::currentSecsSinceEpoch();
+	h.key = NormKey(track);
 	lib.history.push_back(std::move(h));
 	if (int(lib.history.size()) > kHistoryLimit) {
 		lib.history.erase(
@@ -340,211 +889,66 @@ void RecordListen(const Track &track, int listenedMs, bool finished) {
 	Save();
 }
 
-bool HasTaste() {
-	return !Lib().liked.empty() || !Lib().history.empty();
+void BoostTrack(const Track &track) {
+	if (track.id.isEmpty()) {
+		return;
+	}
+	auto &lib = Lib();
+	auto copy = track;
+	copy.transcodingUrl.clear();
+	copy.authorization.clear();
+	lib.boosted.insert(
+		lib.boosted.begin(),
+		{ std::move(copy), QDateTime::currentSecsSinceEpoch() });
+	if (lib.boosted.size() > 300) {
+		lib.boosted.resize(300);
+	}
+	Save();
 }
 
-std::set<QString> &ShownRecently() {
-	static auto result = std::set<QString>();
-	return result;
+void BlockArtist(const Track &track) {
+	if (track.artistId.isEmpty() && track.artist.trimmed().isEmpty()) {
+		return;
+	}
+	auto &lib = Lib();
+	if (!IsBlockedArtist(track)) {
+		lib.blocked.push_back({ track.artistId, track.artist });
+		Save();
+	}
+}
+
+void UnblockArtist(const QString &artistId) {
+	auto &lib = Lib();
+	const auto old = lib.blocked.size();
+	lib.blocked.erase(
+		std::remove_if(lib.blocked.begin(), lib.blocked.end(), [&](const Blocked &b) {
+			return b.artistId == artistId;
+		}),
+		lib.blocked.end());
+	if (lib.blocked.size() != old) {
+		Save();
+	}
+}
+
+bool IsArtistBlocked(const Track &track) {
+	return IsBlockedArtist(track);
+}
+
+bool HasTaste() {
+	return !Lib().liked.empty() || !Lib().history.empty();
 }
 
 void BuildForYou(
 		int count,
 		Fn<void(std::vector<Track>, QString)> done) {
-	if (!HasTaste()) {
-		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Пока нечего анализировать. Поставьте сердечко нескольким трекам и послушайте музыку: подборка подстроится под вас.")));
-		return;
-	}
-	const auto profile = std::make_shared<Profile>(BuildProfile());
-	const auto now = QDateTime::currentSecsSinceEpoch();
+	BuildImpl({}, count, false, std::move(done));
+}
 
-	// Семена: лучшие треки по вкусу, часть выбирается случайно из следующих.
-	auto ranked = std::vector<std::pair<QString, double>>(
-		profile->track.begin(),
-		profile->track.end());
-	std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) {
-		return a.second > b.second;
-	});
-	auto seeds = std::vector<std::pair<QString, double>>();
-	// Каждое обновление берёт другие семена: один сильный всегда, остальные из верхней части.
-	if (!ranked.empty() && ranked[0].second > 0.) {
-		seeds.push_back(ranked[0]);
-	}
-	auto pool = std::vector<std::pair<QString, double>>();
-	for (auto i = 1; i < std::min<int>(ranked.size(), 30); ++i) {
-		if (ranked[i].second > 0.) {
-			pool.push_back(ranked[i]);
-		}
-	}
-	for (auto picked = 0; picked != 8 && !pool.empty(); ++picked) {
-		const auto at = base::RandomIndex(int(pool.size()));
-		seeds.push_back(pool[at]);
-		pool.erase(pool.begin() + at);
-	}
-	const auto topArtists = TopKeys(profile->artist, 3, 0.5);
-	const auto topGenres = TopKeys(profile->genre, 2, 0.5);
-	const auto topTags = TopKeys(profile->tag, 2, 0.5);
-
-	const auto collector = std::make_shared<Collector>();
-	const auto maxSeed = seeds.empty() ? 1. : std::max(seeds.front().second, 1.);
-	collector->finish = [=] {
-		const auto &lib = Lib();
-		auto liked = std::set<QString>();
-		for (const auto &l : lib.liked) {
-			liked.insert(l.track.id);
-		}
-		struct Scored {
-			Track track;
-			double score = 0.;
-			bool known = false;
-		};
-		auto scored = std::vector<Scored>();
-		const auto tagSet = std::set<QString>(topTags.begin(), topTags.end());
-		for (const auto &[id, c] : collector->candidates) {
-			if (liked.contains(id)) {
-				continue;
-			}
-			const auto &t = c.track;
-			auto score = 1.6 * std::min(1., c.seedHits / 1.5);
-			const auto artistAffinity = Get(profile->artist, t.artistId);
-			score += 0.3 * std::tanh(artistAffinity);
-			score += 0.9 * std::tanh(Get(profile->genre, t.genre));
-			auto tagAffinity = 0.;
-			for (const auto &tag : t.tags) {
-				tagAffinity += std::tanh(Get(profile->tag, tag));
-			}
-			score += 0.9 * std::min(1., tagAffinity / 2.);
-			score += 0.25 * std::clamp(std::log10(t.playbackCount + 1.) / 7., 0., 1.);
-			if (t.playbackCount > 0) {
-				score += 0.2 * std::min(1., (t.likesCount / double(t.playbackCount)) * 25.);
-			}
-			if (t.createdAt > 0 && (now - t.createdAt) < 365 * 86400) {
-				score += 0.15;
-			}
-			if (artistAffinity < -0.8) {
-				score -= 2.;
-			}
-			if (ShownRecently().contains(id)) {
-				score -= 1.6; // уже было в прошлой подборке
-			}
-			const auto last = profile->lastFinished.find(id);
-			if (last != profile->lastFinished.end() && (now - last->second) < 7 * 86400) {
-				score -= 1.5;
-			}
-			if (Get(profile->track, id) < -0.5) {
-				score -= 2.; // уже пропускал этот трек
-			}
-			scored.push_back({ t, score, artistAffinity > 0.3 });
-		}
-		if (scored.empty()) {
-			done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не нашлось подходящих треков. Попробуйте позже.")));
-			return;
-		}
-		// Жадный отбор: штрафы за повтор исполнителя и жанра, доля нового ~30%.
-		auto result = std::vector<Track>();
-		auto artistCount = std::map<QString, int>();
-		auto genreCount = std::map<QString, int>();
-		auto titles = std::set<QString>();
-		auto unknown = 0;
-		while (int(result.size()) < count && !scored.empty()) {
-			auto best = -1;
-			auto bestValue = -1e9;
-			for (auto i = 0; i != int(scored.size()); ++i) {
-				const auto &c = scored[i];
-				auto value = c.score;
-				value -= 0.55 * artistCount[c.track.artistId];
-				if (!result.empty()
-					&& genreCount[c.track.genre] > int(result.size()) / 2 + 1) {
-					value -= 0.3;
-				}
-				// Подборка по вайбу, а не по знакомым авторам: новые исполнители
-				// в приоритете, знакомых не больше четверти.
-				if (!c.known) {
-					value += 0.5;
-				} else if (int(result.size()) - unknown >= int(count * 0.25)) {
-					value -= 0.8;
-				}
-				if (!result.empty() && result.back().artistId == c.track.artistId) {
-					value -= 0.6;
-				}
-				value += (Random01() - 0.5) * 0.3;
-				if (value > bestValue) {
-					bestValue = value;
-					best = i;
-				}
-			}
-			auto picked = scored[best];
-			scored.erase(scored.begin() + best);
-			const auto key = picked.track.title.toLower().trimmed();
-			if (!titles.insert(key).second) {
-				continue;
-			}
-			++artistCount[picked.track.artistId];
-			++genreCount[picked.track.genre];
-			unknown += picked.known ? 0 : 1;
-			result.push_back(std::move(picked.track));
-		}
-		// Немного знакомого: пара любимых треков внутри подборки.
-		if (lib.liked.size() >= 5 && result.size() > 6) {
-			for (const auto position : { 8 }) {
-				if (position < int(result.size())) {
-					const auto &pick = lib.liked[base::RandomIndex(int(lib.liked.size()))];
-					const auto exists = std::any_of(result.begin(), result.end(), [&](const Track &t) {
-						return t.id == pick.track.id;
-					});
-					if (!exists) {
-						result.insert(result.begin() + position, pick.track);
-					}
-				}
-			}
-		}
-		for (const auto &t : result) {
-			ShownRecently().insert(t.id);
-		}
-		if (ShownRecently().size() > 300) {
-			ShownRecently().clear();
-		}
-		done(std::move(result), QString());
-	};
-
-	// Запросы кандидатов: related по семенам, треки любимых исполнителей, поиск по тегам.
-	collector->pending = 0;
-	struct Job { Fn<void()> run; };
-	auto jobs = std::vector<Fn<void()>>();
-	for (const auto &[id, weight] : seeds) {
-		const auto w = std::clamp(weight / maxSeed, 0.3, 1.);
-		jobs.push_back([=] {
-			Related(id, 25, [=](std::vector<Track> list) {
-				Gather(collector, std::move(list), w, false);
-			});
-		});
-	}
-	// Треки любимых исполнителей больше не запрашиваем: подборка должна быть
-	// про похожее звучание (related, жанры, теги), а не про авторов из лайков.
-	Q_UNUSED(topArtists);
-	for (const auto &genre : topGenres) {
-		jobs.push_back([=] {
-			SearchLimited(genre, 20, [=](std::vector<Track> list) {
-				Gather(collector, std::move(list), 0.2, true);
-			});
-		});
-	}
-	for (const auto &tag : topTags) {
-		jobs.push_back([=] {
-			SearchLimited(tag, 20, [=](std::vector<Track> list) {
-				Gather(collector, std::move(list), 0.2, true);
-			});
-		});
-	}
-	if (jobs.empty()) {
-		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Мало данных о вкусе: послушайте и полайкайте ещё несколько треков.")));
-		return;
-	}
-	collector->pending = int(jobs.size());
-	for (const auto &job : jobs) {
-		job();
-	}
+void BuildStream(
+		StreamContext context,
+		int count,
+		Fn<void(std::vector<Track>, QString)> done) {
+	BuildImpl(std::move(context), count, true, std::move(done));
 }
 
 } // namespace Mokagram::Music
