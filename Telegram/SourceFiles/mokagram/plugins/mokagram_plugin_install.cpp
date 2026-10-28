@@ -36,6 +36,7 @@
 #include "ui/widgets/fields/input_field.h"
 #include "core/file_utilities.h"
 #include "ui/effects/animations.h"
+#include "rpl/variable.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "data/data_peer.h"
@@ -57,6 +58,7 @@
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
+#include <QtWidgets/QGraphicsOpacityEffect>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QCoreApplication>
@@ -651,10 +653,15 @@ void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
 [[nodiscard]] not_null<Ui::AbstractButton*> MakeSwitch(
 		not_null<QWidget*> parent,
 		bool checked,
-		Fn<void(bool)> changed) {
+		Fn<void(bool)> changed,
+		rpl::producer<bool> active = rpl::single(true)) {
 	struct State {
 		Ui::Animations::Simple animation;
 		bool checked = false;
+		bool active = true;
+		[[nodiscard]] bool shown() const {
+			return checked && active;
+		}
 	};
 	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
 	const auto state = button->lifetime().make_state<State>();
@@ -665,7 +672,7 @@ void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
 	) | rpl::on_next([=] {
 		auto p = QPainter(button);
 		auto hq = PainterHighQualityEnabler(p);
-		const auto t = state->animation.value(state->checked ? 1. : 0.);
+		const auto t = state->animation.value(state->shown() ? 1. : 0.);
 		const auto on = st::windowBgActive->c;
 		const auto off = st::windowSubTextFg->c;
 		const auto track = QRectF(1, 1, 38, 22);
@@ -679,14 +686,31 @@ void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
 		p.drawEllipse(QPointF(cx, 12.), size / 2, size / 2);
 	}, button->lifetime());
 	button->setClickedCallback([=] {
+		const auto was = state->shown();
 		state->checked = !state->checked;
-		state->animation.start(
-			[=] { button->update(); },
-			state->checked ? 0. : 1.,
-			state->checked ? 1. : 0.,
-			200);
+		const auto now = state->shown();
+		if (was != now) {
+			state->animation.start(
+				[=] { button->update(); },
+				was ? 1. : 0.,
+				now ? 1. : 0.,
+				200);
+		}
 		changed(state->checked);
 	});
+	// Выключенная система плагинов гасит тумблер, не меняя выбор пользователя.
+	std::move(active) | rpl::on_next([=](bool value) {
+		const auto was = state->shown();
+		state->active = value;
+		const auto now = state->shown();
+		if (was != now) {
+			state->animation.start(
+				[=] { button->update(); },
+				was ? 1. : 0.,
+				now ? 1. : 0.,
+				200);
+		}
+	}, button->lifetime());
 	return button;
 }
 
@@ -868,7 +892,8 @@ Card AddPluginCard(
 		const QJsonObject &entry,
 		Fn<void()> removeClicked,
 		Fn<void()> refresh,
-		const LogFn &log) {
+		const LogFn &log,
+		rpl::producer<bool> engineOn) {
 	const auto id = entry.value("id").toString();
 	const auto name = entry.value("name").toString().isEmpty()
 		? id
@@ -956,7 +981,8 @@ Card AddPluginCard(
 					.confirmText = U(Mokagram::Lang::Tr("Подтвердить")),
 				});
 			}));
-		});
+		},
+		rpl::duplicate(engineOn));
 	const auto text = description.isEmpty()
 		? nullptr
 		: Ui::CreateChild<Ui::FlatLabel>(panel, description, st::boxLabel);
@@ -1037,6 +1063,13 @@ Card AddPluginCard(
 		st::menuIconDeleteAttention,
 		std::move(removeClicked));
 
+	// Пока система плагинов выключена, карточка затемнена.
+	const auto dim = new QGraphicsOpacityEffect(panel);
+	dim->setOpacity(1.);
+	panel->setGraphicsEffect(dim);
+	std::move(engineOn) | rpl::on_next([=](bool value) {
+		dim->setOpacity(value ? 1. : 0.5);
+	}, panel->lifetime());
 	panel->paintOn([=](QPainter &p) {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
@@ -1403,6 +1436,8 @@ void PluginsBox(
 			(header->height() - field->height()) / 2);
 	}, header->lifetime());
 
+	const auto engineOn = std::make_shared<rpl::variable<bool>>(
+		EngineEnabled());
 	const auto engine = content->add(
 		object_ptr<Ui::RpWidget>(content),
 		QMargins(14, 8, 14, 4));
@@ -1414,7 +1449,10 @@ void PluginsBox(
 	const auto engineSwitch = MakeSwitch(
 		engine,
 		EngineEnabled(),
-		[=](bool enabled) { SetEngineEnabled(enabled, log); });
+		[=](bool enabled) {
+			SetEngineEnabled(enabled, log);
+			*engineOn = EngineEnabled();
+		});
 	engine->paintOn([=](QPainter &p) {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
@@ -1483,7 +1521,7 @@ void PluginsBox(
 					.confirmText = U(Mokagram::Lang::Tr("Удалить")),
 				});
 			}));
-		}, reopen, log));
+		}, reopen, log, engineOn->value()));
 	}
 
 	const auto weakBox = base::make_weak(box);
