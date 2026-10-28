@@ -2197,10 +2197,10 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			ShowMusicBox(controller, artist);
 		});
 
-		const auto heart = Ui::CreateChild<RoundGlyph>(info, Glyph::Add, 48);
+		const auto heart = Ui::CreateChild<RoundGlyph>(info, Glyph::Add, 40);
 		info->widthValue(
 		) | rpl::on_next([=](int width) {
-			heart->move(width - 24 - 40 - 8 - 48, coverRect().bottom() + 30);
+			heart->move(width - 24 - 40 - 40, coverRect().bottom() + 34);
 		}, heart->lifetime());
 
 		// Перемотка и время.
