@@ -1,0 +1,148 @@
+diff --git a/Telegram/SourceFiles/_other/updater_osx.m b/Telegram/SourceFiles/_other/updater_osx.m
+index 62aedabc32..8f45d677e5 100644
+--- a/Telegram/SourceFiles/_other/updater_osx.m
++++ b/Telegram/SourceFiles/_other/updater_osx.m
+@@ -56,7 +56,10 @@ void RemoveQuarantineAttribute(NSString *path) {
+ 
+ void RemoveQuarantineFromBundle(NSString *path) {
+ 	RemoveQuarantineAttribute(path);
+-	RemoveQuarantineAttribute([path stringByAppendingString:@"/Contents/MacOS/Telegram"]);
++	NSString *executablePath = [[NSBundle bundleWithPath:path] executablePath];
++	if (executablePath) {
++		RemoveQuarantineAttribute(executablePath);
++	}
+ 	RemoveQuarantineAttribute([path stringByAppendingString:@"/Contents/Helpers/crashpad_handler"]);
+ 	RemoveQuarantineAttribute([path stringByAppendingString:@"/Contents/Frameworks/Updater"]);
+ }
+diff --git a/Telegram/SourceFiles/dialogs/dialogs_widget.cpp b/Telegram/SourceFiles/dialogs/dialogs_widget.cpp
+index 9da743ebee..706f431361 100644
+--- a/Telegram/SourceFiles/dialogs/dialogs_widget.cpp
++++ b/Telegram/SourceFiles/dialogs/dialogs_widget.cpp
+@@ -593,7 +593,7 @@ Widget::Widget(
+ 			auto hq = PainterHighQualityEnabler(p);
+ 			const auto margin = style::ConvertScale(8);
+ 			const auto card = QRectF(bar->rect()).marginsRemoved(
+-				{ margin, margin, margin, margin });
++				QMarginsF(margin, margin, margin, margin));
+ 			p.setPen(QPen(QColor(255, 255, 255, 34), 1.));
+ 			p.setBrush(st::windowBg);
+ 			p.drawRoundedRect(
+diff --git a/Telegram/SourceFiles/info/profile/info_profile_values.cpp b/Telegram/SourceFiles/info/profile/info_profile_values.cpp
+index 081189275d..6719b7e36b 100644
+--- a/Telegram/SourceFiles/info/profile/info_profile_values.cpp
++++ b/Telegram/SourceFiles/info/profile/info_profile_values.cpp
+@@ -111,7 +111,7 @@ rpl::producer<QString> NameValue(not_null<PeerData*> peer) {
+ 		UpdateFlag::Name
+ 	) | rpl::map([=] { return peer->name(); });
+ 	if (!peer->isSelf()) {
+-		return std::move(name);
++		return name;
+ 	}
+ 	// Режим стримера: маска только на своё имя.
+ 	return Mokagram::Streamer::Wrap(
+diff --git a/Telegram/SourceFiles/mokagram/history/mokagram_history_ui.cpp b/Telegram/SourceFiles/mokagram/history/mokagram_history_ui.cpp
+index fe3f104db7..eec67eb4d9 100644
+--- a/Telegram/SourceFiles/mokagram/history/mokagram_history_ui.cpp
++++ b/Telegram/SourceFiles/mokagram/history/mokagram_history_ui.cpp
+@@ -144,7 +144,7 @@ struct CardParts {
+ }
+ 
+ // Круглый переключатель выбора в правом верхнем углу карточки.
+-[[nodiscard]] not_null<Ui::AbstractButton*> AddCheck(
++not_null<Ui::AbstractButton*> AddCheck(
+ 		not_null<Ui::RpWidget*> card,
+ 		bool initial,
+ 		Fn<void(bool)> changed,
+@@ -193,7 +193,7 @@ struct CardParts {
+ }
+ 
+ // Ряд кнопок равной ширины.
+-[[nodiscard]] not_null<Ui::RpWidget*> AddButtonsRow(
++not_null<Ui::RpWidget*> AddButtonsRow(
+ 		not_null<Ui::VerticalLayout*> parent,
+ 		std::vector<not_null<Ui::RoundButton*>> buttons) {
+ 	const auto row = parent->add(
+diff --git a/Telegram/SourceFiles/mokagram/perf/mokagram_perf.cpp b/Telegram/SourceFiles/mokagram/perf/mokagram_perf.cpp
+index acb8264f87..2b5c9dcc6c 100644
+--- a/Telegram/SourceFiles/mokagram/perf/mokagram_perf.cpp
++++ b/Telegram/SourceFiles/mokagram/perf/mokagram_perf.cpp
+@@ -13,7 +13,11 @@
+ #include <QtCore/QTimer>
+ #include <QtGui/QGuiApplication>
+ 
++#ifdef Q_OS_MAC
++#include <malloc/malloc.h>
++#else // Q_OS_MAC
+ #include <malloc.h>
++#endif // Q_OS_MAC
+ 
+ namespace Mokagram::Perf {
+ namespace {
+@@ -45,7 +49,13 @@ void Apply() {
+ 
+ // Мелкие блоки возвращаем системе: glibc иначе держит их в арене и память растёт.
+ void Trim() {
++#if defined Q_OS_MAC
++	malloc_zone_pressure_relief(nullptr, 0);
++#elif defined Q_OS_WIN
++	_heapmin();
++#else
+ 	malloc_trim(0);
++#endif
+ }
+ 
+ } // namespace
+@@ -59,10 +69,12 @@ bool UserIsLooking() {
+ }
+ 
+ void Start() {
++#ifdef Q_OS_LINUX
+ 	// Меньше арен и раньше отдаём память: заметно для долго работающего клиента.
+ 	mallopt(M_ARENA_MAX, 2);
+ 	mallopt(M_TRIM_THRESHOLD, 128 * 1024);
+ 	mallopt(M_MMAP_THRESHOLD, 256 * 1024);
++#endif // Q_OS_LINUX
+ 
+ 	static auto idleTimer = QTimer();
+ 	idleTimer.setSingleShot(true);
+diff --git a/Telegram/SourceFiles/mokagram/plugins/mokagram_plugin_install.cpp b/Telegram/SourceFiles/mokagram/plugins/mokagram_plugin_install.cpp
+index f254939e4b..5f654002fb 100644
+--- a/Telegram/SourceFiles/mokagram/plugins/mokagram_plugin_install.cpp
++++ b/Telegram/SourceFiles/mokagram/plugins/mokagram_plugin_install.cpp
+@@ -238,7 +238,7 @@ void AddAvatar(
+ 	});
+ }
+ 
+-[[nodiscard]] not_null<Ui::FlatLabel*> AddCenteredLabel(
++not_null<Ui::FlatLabel*> AddCenteredLabel(
+ 		not_null<Ui::VerticalLayout*> content,
+ 		const QString &text,
+ 		const style::FlatLabel &st,
+diff --git a/Telegram/SourceFiles/mokagram/quote/mokagram_quote.cpp b/Telegram/SourceFiles/mokagram/quote/mokagram_quote.cpp
+index 55a941dc14..fc63394798 100644
+--- a/Telegram/SourceFiles/mokagram/quote/mokagram_quote.cpp
++++ b/Telegram/SourceFiles/mokagram/quote/mokagram_quote.cpp
+@@ -654,7 +654,7 @@ protected:
+ 			const auto index = (i < count) ? i : kCustomBg;
+ 			auto a = QColor();
+ 			auto b = QColor();
+-			BgColors(index, a, b);
++			(void)BgColors(index, a, b);
+ 			auto lg = QLinearGradient(r.topLeft(), r.bottomRight());
+ 			lg.setColorAt(0, a);
+ 			lg.setColorAt(1, b);
+diff --git a/Telegram/SourceFiles/mokagram/snippets/mokagram_snippets.cpp b/Telegram/SourceFiles/mokagram/snippets/mokagram_snippets.cpp
+index ee52ba482b..40cca0e48c 100644
+--- a/Telegram/SourceFiles/mokagram/snippets/mokagram_snippets.cpp
++++ b/Telegram/SourceFiles/mokagram/snippets/mokagram_snippets.cpp
+@@ -164,8 +164,8 @@ void Expand(TextWithTags &text) {
+ 		const auto found = Data().items.find(match.captured(2).toLower());
+ 		if (found != Data().items.end()) {
+ 			list.push_back({
+-				match.capturedStart(),
+-				match.capturedEnd(),
++				int(match.capturedStart()),
++				int(match.capturedEnd()),
+ 				&found->second,
+ 			});
+ 		}
