@@ -14,6 +14,13 @@
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
+#include <QtGui/QWindow>
+
+#include <memory>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif // Q_OS_WIN
 
 namespace Mokagram::Streamer {
 namespace {
@@ -61,6 +68,62 @@ enum class CopyMode {
 [[nodiscard]] QString MaskName(const QString &real) {
 	return real.isEmpty() ? real : (real.left(1) + Dots(3));
 }
+
+#ifdef Q_OS_WIN
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif // WDA_EXCLUDEFROMCAPTURE
+
+// Прячет окна от захвата экрана (Discord, OBS, запись), пока включён
+// режим стримера. Нужен Windows 10 2004+, на старых вызов молча не работает.
+void ApplyCapture(QWindow *window, bool hidden) {
+	if (!window || !window->isVisible()) {
+		return;
+	}
+	SetWindowDisplayAffinity(
+		reinterpret_cast<HWND>(window->winId()),
+		hidden ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
+}
+
+[[nodiscard]] bool CaptureHidden() {
+	return Settings::Bool(u"streamer.enabled"_q)
+		&& Settings::Bool(u"streamer.capture"_q);
+}
+
+class CaptureGuard final : public QObject {
+public:
+	CaptureGuard() {
+		qApp->installEventFilter(this);
+		Settings::Changed() | rpl::filter([](const QString &key) {
+			return key == u"streamer.enabled"_q
+				|| key == u"streamer.capture"_q;
+		}) | rpl::on_next([=] {
+			refreshAll();
+		}, _lifetime);
+		refreshAll();
+	}
+
+	bool eventFilter(QObject *object, QEvent *e) override {
+		if (e->type() == QEvent::Show) {
+			if (const auto window = qobject_cast<QWindow*>(object)) {
+				ApplyCapture(window, CaptureHidden());
+			}
+		}
+		return false;
+	}
+
+private:
+	void refreshAll() {
+		const auto hidden = CaptureHidden();
+		for (const auto window : QGuiApplication::allWindows()) {
+			ApplyCapture(window, hidden);
+		}
+	}
+
+	rpl::lifetime _lifetime;
+
+};
+#endif // Q_OS_WIN
 
 } // namespace
 
@@ -151,6 +214,9 @@ bool SetClipboard(Field field, const QString &real) {
 }
 
 void RegisterSettings() {
+#ifdef Q_OS_WIN
+	static const auto guard = std::make_unique<CaptureGuard>();
+#endif // Q_OS_WIN
 	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Режим стримера"));
 	const auto note = QString::fromUtf8(
 		Mokagram::Lang::Tr("Для тех, кто показывает экран зрителям: выбранные личные данные заменяются точками везде в клиенте. Переписка и чужие имена остаются как есть."));
@@ -220,6 +286,14 @@ void RegisterSettings() {
 		"",
 		"notify",
 		false);
+#ifdef Q_OS_WIN
+	add("streamer.capture",
+		Mokagram::Lang::Tr("Скрыть окно от трансляции"),
+		Mokagram::Lang::Tr("Клиент не виден в Discord, OBS и записи экрана: зрители видят пустое место."),
+		"",
+		"hide",
+		true);
+#endif // Q_OS_WIN
 	Settings::Register({
 		.key = u"streamer.copy"_q,
 		.section = section,

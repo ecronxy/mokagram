@@ -634,6 +634,27 @@ void MokagramSettings::setupContent() {
 			.keywords = { u"commands"_q, u"alias"_q, u"mute"_q, u"ban"_q },
 		});
 		builder.addSkip();
+		builder.addDivider();
+		builder.addSkip();
+		builder.addButton({
+			.id = u"main/channel"_q,
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Канал mokaGram"))),
+			.icon = { &st::menuIconChannel },
+			.onClick = [=] {
+				UrlClickHandler::Open(u"https://t.me/mokagram"_q);
+			},
+			.keywords = { u"channel"_q, u"news"_q },
+		});
+		builder.addButton({
+			.id = u"main/forum"_q,
+			.title = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Форум mokaGram"))),
+			.icon = { &st::menuIconDiscussion },
+			.onClick = [=] {
+				UrlClickHandler::Open(u"https://t.me/mokaforum"_q);
+			},
+			.keywords = { u"forum"_q, u"chat"_q },
+		});
+		builder.addSkip();
 	};
 	build(content, buildMethod);
 	Ui::ResizeFitChild(this, content);
