@@ -1337,30 +1337,31 @@ private:
 		const auto c = r.center();
 		p.setPen(Qt::NoPen);
 		if (_glyph == Glyph::Add) {
-			const auto color = QColor(st::windowFg->c);
-			p.setPen(_liked
-				? QPen(Qt::NoPen)
-				: QPen(color, 2., Qt::SolidLine, Qt::RoundCap));
-			p.setBrush(_liked
-				? QBrush(st::activeButtonBg->c)
-				: QBrush(Qt::NoBrush));
-			p.drawEllipse(r.adjusted(8, 8, -8, -8));
+			// Лайк: контурное сердце, после добавления в профиль закрашено.
+			auto heart = QPainterPath();
+			heart.moveTo(c + QPointF(0, 8.5));
+			heart.cubicTo(
+				c + QPointF(-14, -1),
+				c + QPointF(-8.5, -11.5),
+				c + QPointF(0, -4));
+			heart.cubicTo(
+				c + QPointF(8.5, -11.5),
+				c + QPointF(14, -1),
+				c + QPointF(0, 8.5));
+			heart.closeSubpath();
 			if (_liked) {
+				p.setPen(Qt::NoPen);
+				p.setBrush(QColor(0xFF, 0x3B, 0x5C));
+			} else {
 				p.setPen(QPen(
-					st::activeButtonFg->c,
-					3.,
+					QColor(st::windowFg->c),
+					2.,
 					Qt::SolidLine,
 					Qt::RoundCap,
 					Qt::RoundJoin));
-				auto path = QPainterPath();
-				path.moveTo(c + QPointF(-6, 0));
-				path.lineTo(c + QPointF(-1, 5));
-				path.lineTo(c + QPointF(7, -5));
-				p.drawPath(path);
-			} else {
-				p.drawLine(c + QPointF(-7, 0), c + QPointF(7, 0));
-				p.drawLine(c + QPointF(0, -7), c + QPointF(0, 7));
+				p.setBrush(Qt::NoBrush);
 			}
+			p.drawPath(heart);
 			return;
 		}
 		if (_glyph == Glyph::Shuffle || _glyph == Glyph::Repeat) {
