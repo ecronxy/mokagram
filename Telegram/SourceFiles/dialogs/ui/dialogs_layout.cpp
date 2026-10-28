@@ -51,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_dialogs_layout.h"
 #include "styles/style_widgets.h"
 #include "styles/style_window.h"
+#include <QtGui/QPainterPath>
 
 namespace Dialogs::Ui {
 
@@ -500,7 +501,22 @@ void PaintRow(
 		auto ripple = context.active
 			? st::dialogsRippleBgActive
 			: st::dialogsRippleBg;
+		// Mokagram: рябь не должна выходить за скруглённую пилюлю.
+		const auto pill = (context.active || context.selected)
+			&& !swipeTranslation;
+		if (pill) {
+			auto path = QPainterPath();
+			path.addRoundedRect(
+				QRectF(geometry.marginsRemoved({ 2, 1, 2, 1 })),
+				18,
+				18);
+			p.save();
+			p.setClipPath(path, Qt::IntersectClip);
+		}
 		row->paintRipple(p, 0, 0, context.width, &ripple->c);
+		if (pill) {
+			p.restore();
+		}
 	}
 
 	if (flags & Flag::SavedMessages) {

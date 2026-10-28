@@ -18,6 +18,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_origin.h"
 #include "data/data_session.h"
 #include "data/data_peer.h"
+#include "data/data_user.h"
+#include "data/data_changes.h"
+#include "ui/userpic_view.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "ui/widgets/labels.h"
@@ -38,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/player/media_player_instance.h"
 #include "media/player/media_player_dropdown.h"
 #include "media/player/media_player_volume_controller.h"
+#include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
 #include "storage/storage_account.h"
@@ -550,7 +554,31 @@ void Widget::paintEvent(QPaintEvent *e) {
 				Qt::AlignLeft | Qt::AlignVCenter,
 				st::normalFont->elided(name.performer, std::max(room, 40)));
 		}
+	} else if (const auto peer = voiceSender()) {
+		// Mokagram: аватарка отправителя вместо пустоты слева у голосовых.
+		const auto size = 52;
+		peer->paintUserpicLeft(
+			p,
+			_voiceUserpic,
+			14,
+			(st::mediaPlayerHeight - size) / 2,
+			width(),
+			size);
 	}
+}
+
+PeerData *Widget::voiceSender() const {
+	const auto document = _lastSongId.audio();
+	if (!document) {
+		return nullptr;
+	}
+	const auto item = document->owner().message(_lastSongId.contextId());
+	if (!item) {
+		return nullptr;
+	}
+	return (!item->out() || item->isPost())
+		? item->fromOriginal().get()
+		: static_cast<PeerData*>(item->history()->session().user().get());
 }
 
 void Widget::enterEventHook(QEnterEvent *e) {
@@ -938,6 +966,7 @@ void Widget::handleSongChange() {
 		return;
 	}
 	_lastSongId = current;
+	_voiceUserpic = {};
 	refreshSongCover();
 	_speedController->reloadFromLookup();
 
@@ -957,6 +986,20 @@ void Widget::handleSongChange() {
 void Widget::refreshSongCover() {
 	_songMediaLifetime.destroy();
 	_songMedia = nullptr;
+	if (const auto peer = (_type == AudioMsgId::Type::Voice)
+		? voiceSender()
+		: nullptr) {
+		peer->session().changes().peerUpdates(
+			peer,
+			Data::PeerUpdate::Flag::Photo
+		) | rpl::on_next([=] {
+			update();
+		}, _songMediaLifetime);
+		peer->session().downloaderTaskFinished(
+		) | rpl::on_next([=] {
+			update();
+		}, _songMediaLifetime);
+	}
 	const auto document = _lastSongId.audio();
 	if (_type == AudioMsgId::Type::Song
 		&& document
