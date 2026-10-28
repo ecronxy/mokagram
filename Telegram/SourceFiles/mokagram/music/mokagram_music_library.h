@@ -26,6 +26,29 @@ void RecordListen(const Track &track, int listenedMs, bool finished);
 // Есть ли данные для рекомендаций (лайки или история).
 [[nodiscard]] bool HasTaste();
 
+// Треки Telegram в очереди живут под id «telegram:...», в подборках не участвуют.
+[[nodiscard]] bool IsTelegramId(const QString &trackId);
+
+// Явная обратная связь из плеера. «Больше такого» усиливает вкус сильнее лайка,
+// блокировка автора навсегда убирает его из подборок и потока.
+void BoostTrack(const Track &track);
+void BlockArtist(const Track &track);
+void UnblockArtist(const QString &artistId);
+[[nodiscard]] bool IsArtistBlocked(const Track &track);
+
+// Контекст бесконечного потока: что играет сейчас и что недавно было или уже в очереди.
+struct StreamContext {
+	Track current;
+	std::vector<Track> avoid;
+};
+
+// Пополнение потока: подборка с учётом сессии (последние дослушанные), плавных
+// переходов, дедупликации и кулдаунов по истории на диске.
+void BuildStream(
+	StreamContext context,
+	int count,
+	Fn<void(std::vector<Track> tracks, QString note)> done);
+
 // Собирает подборку. note: пояснение для интерфейса (например, «лайкни пару треков»).
 void BuildForYou(
 	int count,

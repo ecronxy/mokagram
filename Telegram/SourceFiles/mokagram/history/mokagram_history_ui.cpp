@@ -29,6 +29,7 @@
 #include "ui/text/text_entity.h"
 #include "window/window_peer_menu.h"
 #include "styles/style_menu_icons.h"
+#include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
 #include "data/data_session.h"
@@ -1125,10 +1126,17 @@ void ShowDeleteMyMessages(
 					},
 					st::attentionBoxButton);
 				box->boxClosing() | rpl::on_next([=] {
+					if (!state->cancelled) {
+						LOG(("Mokagram: delete-mine: окно закрыто, найдено %1, удалено %2.").arg(state->found).arg(state->deleted));
+					}
 					state->cancelled = true;
 				}, box->lifetime());
 			}));
-			RunDeleteMine(state);
+			// Окно подтверждения ещё закрывается: даём ему закрыться, иначе
+			// новое окно уходит вместе с ним и поиск отменяется сам.
+			QTimer::singleShot(400, [=] {
+				RunDeleteMine(state);
+			});
 		},
 		.confirmText = rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Удалить"))),
 		.confirmStyle = &st::attentionBoxButton,

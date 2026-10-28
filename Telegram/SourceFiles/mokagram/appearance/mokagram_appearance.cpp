@@ -202,6 +202,13 @@ void RegisterSettings() {
 		.defaultValue = true,
 	});
 	playerEntry({
+		.key = u"music.smart_stream"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Умный поток музыки")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Подборка «Для вас» играет без конца: очередь сама пополняется под ваш вкус и текущее настроение, без повторов и пропущенного.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+	});
+	playerEntry({
 		.key = u"lyrics.enabled"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Текст песни")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Показывать слова под обложкой, подсвечивая текущую строку.")),

@@ -14,6 +14,7 @@
 #include "base/options.h"
 #include "mainwindow.h"
 #include "base/random.h"
+#include <set>
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "api/api_common.h"
@@ -100,6 +101,12 @@ struct Queue {
 	bool subscribed = false;
 	bool telegramSearch = false;
 	PeerId selectedChat;
+	// Умный поток: очередь сама пополняется, пока играет.
+	bool stream = false;
+	bool refilling = false;
+	bool waiting = false;            // очередь кончилась, ждём пополнения
+	int streamEpoch = 0;
+	std::set<QString> autoIds;       // добавлено подборщиком, не вручную
 };
 
 Queue &QueueState() {
@@ -143,6 +150,11 @@ void BindController(not_null<Window::SessionController*> controller) {
 		queue.index = -1;
 		queue.custom = false;
 		queue.recorded = true;
+		queue.stream = false;
+		queue.refilling = false;
+		queue.waiting = false;
+		++queue.streamEpoch;
+		queue.autoIds.clear();
 		queue.session = base::make_weak(&controller->session());
 	}
 	queue.controller = base::make_weak(controller);
@@ -378,6 +390,7 @@ void ChatMusicSearch::searchMore() {
 }
 
 void PlayIndex(int index);
+void RefillStream();
 
 void ResolveThen(const Track &track, Fn<void(Track, QString)> done) {
 	if (!track.transcodingUrl.isEmpty()) {
@@ -388,10 +401,11 @@ void ResolveThen(const Track &track, Fn<void(Track, QString)> done) {
 }
 
 // Записывает в историю то, что успели послушать, до перехода на другой трек.
-void RecordCurrentListen(bool finished) {
+// Возвращает true, если трек пропущен в первые секунды.
+bool RecordCurrentListen(bool finished) {
 	auto &queue = QueueState();
 	if (queue.recorded || queue.current.id.isEmpty()) {
-		return;
+		return false;
 	}
 	queue.recorded = true;
 	auto listened = queue.current.durationMs;
@@ -401,6 +415,62 @@ void RecordCurrentListen(bool finished) {
 		listened = int(state.position * 1000 / frequency);
 	}
 	RecordListen(queue.current, listened, finished);
+	return !finished && listened < 30 * 1000;
+}
+
+bool StreamEnabled() {
+	return Mokagram::Settings::Bool(u"music.smart_stream"_q);
+}
+
+// Убирает из хвоста очереди то, что добавил подборщик (после позиции from).
+void DropUpcoming(Fn<bool(const Track &)> predicate, int from, bool onlyAuto) {
+	auto &queue = QueueState();
+	for (auto i = int(queue.tracks.size()) - 1; i > from; --i) {
+		const auto &t = queue.tracks[i];
+		if ((!onlyAuto || queue.autoIds.contains(t.id)) && predicate(t)) {
+			queue.autoIds.erase(t.id);
+			queue.tracks.erase(queue.tracks.begin() + i);
+		}
+	}
+	queue.changes.fire({});
+}
+
+// Дозагрузка очереди с учётом того, что играет сейчас и что недавно было.
+void RefillStream() {
+	auto &queue = QueueState();
+	if (!queue.stream || queue.refilling || !StreamEnabled()) {
+		return;
+	}
+	queue.refilling = true;
+	const auto epoch = queue.streamEpoch;
+	auto context = StreamContext();
+	context.current = queue.current;
+	const auto from = std::max(0, queue.index - 4);
+	for (auto i = from; i < int(queue.tracks.size()); ++i) {
+		if (i != queue.index) {
+			context.avoid.push_back(queue.tracks[i]);
+		}
+	}
+	BuildStream(std::move(context), 12, [=](std::vector<Track> tracks, QString note) {
+		auto &queue = QueueState();
+		if (epoch != queue.streamEpoch) {
+			return;
+		}
+		queue.refilling = false;
+		for (auto &t : tracks) {
+			queue.autoIds.insert(t.id);
+			queue.tracks.push_back(std::move(t));
+		}
+		queue.changes.fire({});
+		if (queue.waiting) {
+			queue.waiting = false;
+			if (queue.index + 1 < int(queue.tracks.size())) {
+				PlayIndex(queue.index + 1);
+			} else if (const auto controller = queue.controller.get(); controller && !note.isEmpty()) {
+				controller->showToast(note);
+			}
+		}
+	});
 }
 
 void Subscribe() {
@@ -425,6 +495,13 @@ void Subscribe() {
 					Media::Player::kOptionDisableAutoplayNext)
 				|| !Mokagram::Settings::Bool(u"player.autoplay_next"_q)) {
 				return;
+			} else if (queue.stream && StreamEnabled()) {
+				if (queue.index + 1 < count) {
+					PlayIndex(queue.index + 1);
+				} else {
+					queue.waiting = true;
+					RefillStream();
+				}
 			} else if (settings.playerOrderMode() == Media::OrderMode::Shuffle
 				&& count > 1) {
 				auto next = queue.index;
@@ -449,7 +526,14 @@ void PlayIndex(int index) {
 		return;
 	}
 	Subscribe();
-	RecordCurrentListen(false);
+	const auto previousArtist = queue.current.artistId;
+	const auto skippedEarly = RecordCurrentListen(false);
+	if (skippedEarly && queue.stream && !previousArtist.isEmpty()) {
+		// Пропуск в первые секунды: убираем автора из предстоящих авто-треков.
+		DropUpcoming([=](const Track &t) {
+			return t.artistId == previousArtist;
+		}, std::max(queue.index, index), true);
+	}
 	const auto track = queue.tracks[index];
 	const auto token = ++queue.pendingToken;
 	queue.index = index;
@@ -506,6 +590,9 @@ void PlayIndex(int index) {
 			Media::Player::instance()->play(
 				AudioMsgId(document, FullMsgId()),
 				std::nullopt);
+			if (queue.stream && int(queue.tracks.size()) - index - 1 <= 3) {
+				RefillStream();
+			}
 			// Следующий трек качаем заранее, чтобы переход был без паузы.
 			if (index + 1 < int(queue.tracks.size())
 				&& !IsTelegramTrack(queue.tracks[index + 1])) {
@@ -735,6 +822,9 @@ void PlayFromResults(int resultIndex) {
 	const auto track = queue.results[resultIndex];
 	if (!queue.custom) {
 		queue.tracks = queue.results;
+		queue.stream = false;
+		++queue.streamEpoch;
+		queue.refilling = false;
 		PlayIndex(resultIndex);
 		return;
 	}
@@ -958,6 +1048,16 @@ void PlayAll(const std::vector<Track> &tracks) {
 	}
 	queue.custom = false;
 	queue.tracks = tracks;
+	queue.stream = StreamEnabled();
+	queue.refilling = false;
+	queue.waiting = false;
+	++queue.streamEpoch;
+	queue.autoIds.clear();
+	if (queue.stream) {
+		for (const auto &t : tracks) {
+			queue.autoIds.insert(t.id);
+		}
+	}
 	PlayIndex(0);
 }
 
@@ -1301,7 +1401,7 @@ private:
 
 };
 
-enum class Glyph { Previous, Next, Play, Add, Shuffle, Repeat };
+enum class Glyph { Previous, Next, Play, Add, Shuffle, Repeat, More, Block };
 
 class RoundGlyph final : public Ui::AbstractButton {
 public:
@@ -1362,6 +1462,24 @@ private:
 				p.setBrush(Qt::NoBrush);
 			}
 			p.drawPath(heart);
+			return;
+		}
+		if (_glyph == Glyph::More || _glyph == Glyph::Block) {
+			const auto pen = QPen(
+				isOver() ? QColor(st::windowActiveTextFg->c) : QColor(st::windowFg->c),
+				2.,
+				Qt::SolidLine,
+				Qt::RoundCap,
+				Qt::RoundJoin);
+			p.setPen(pen);
+			p.setBrush(Qt::NoBrush);
+			if (_glyph == Glyph::More) {
+				p.drawLine(c + QPointF(-8, 0), c + QPointF(8, 0));
+				p.drawLine(c + QPointF(0, -8), c + QPointF(0, 8));
+			} else {
+				p.drawEllipse(c, 9., 9.);
+				p.drawLine(c + QPointF(-6.4, 6.4), c + QPointF(6.4, -6.4));
+			}
 			return;
 		}
 		if (_glyph == Glyph::Shuffle || _glyph == Glyph::Repeat) {
@@ -1910,6 +2028,7 @@ bool NextAvailable() {
 	const auto &settings = Core::App().settings();
 	return !queue.tracks.empty()
 		&& (queue.index + 1 < int(queue.tracks.size())
+			|| (queue.stream && StreamEnabled())
 			|| settings.playerRepeatMode() == Media::RepeatMode::All
 			|| settings.playerOrderMode() == Media::OrderMode::Shuffle);
 }
@@ -1922,6 +2041,50 @@ bool PreviousAvailable() {
 				== Media::RepeatMode::All);
 }
 
+[[nodiscard]] bool FeedbackAllowed() {
+	const auto &queue = QueueState();
+	return !queue.current.id.isEmpty()
+		&& !IsTelegramTrack(queue.current)
+		&& OwnsTrack(Media::Player::instance()->current(AudioMsgId::Type::Song));
+}
+
+// «Больше такого»: усиливает вкус и пересобирает предстоящие авто-треки.
+void MoreLikeThis() {
+	if (!FeedbackAllowed()) {
+		return;
+	}
+	auto &queue = QueueState();
+	BoostTrack(queue.current);
+	if (queue.stream && StreamEnabled()) {
+		DropUpcoming([](const Track &) { return true; }, queue.index + 1, true);
+		++queue.streamEpoch;
+		queue.refilling = false;
+		RefillStream();
+	}
+	if (const auto controller = queue.controller.get()) {
+		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Учту: больше такого")));
+	}
+}
+
+// «Не нравится автор»: в чёрный список, из очереди убираем, переключаем дальше.
+void DislikeArtist() {
+	if (!FeedbackAllowed()) {
+		return;
+	}
+	auto &queue = QueueState();
+	const auto track = queue.current;
+	BlockArtist(track);
+	DropUpcoming([=](const Track &t) {
+		return IsArtistBlocked(t);
+	}, queue.index, false);
+	if (const auto controller = queue.controller.get()) {
+		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Автор скрыт: ")) + track.artist);
+	}
+	if (NextAvailable()) {
+		Step(1);
+	}
+}
+
 void Step(int delta) {
 	auto &queue = QueueState();
 	const auto count = int(queue.tracks.size());
@@ -1929,7 +2092,13 @@ void Step(int delta) {
 		return;
 	}
 	auto target = queue.index + delta;
-	if (delta > 0
+	if (delta > 0 && queue.stream && StreamEnabled()) {
+		if (target >= count) {
+			queue.waiting = true;
+			RefillStream();
+			return;
+		}
+	} else if (delta > 0
 		&& Core::App().settings().playerOrderMode()
 			== Media::OrderMode::Shuffle
 		&& count > 1) {
@@ -2135,7 +2304,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			p.setFont(big);
 			p.setPen(st::windowFg);
 			const auto textWidth = info->width() - 48 - 48
-				- (OwnsTrack(current) ? 56 : 0);
+				- (OwnsTrack(current) ? 120 : 0);
 			const auto metrics = QFontMetrics(big);
 			p.drawText(
 				QRect(24, art.bottom() + 28, textWidth, 30),
@@ -2168,7 +2337,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		const auto updateArtistButton = [=] {
 			const auto current = instance->current(AudioMsgId::Type::Song);
 			const auto textWidth = info->width() - 48 - 48
-				- (OwnsTrack(current) ? 56 : 0);
+				- (OwnsTrack(current) ? 120 : 0);
 			auto font = st::normalFont->f;
 			font.setPixelSize(16);
 			const auto artistWidth = std::min(
@@ -2202,6 +2371,17 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		) | rpl::on_next([=](int width) {
 			heart->move(width - 24 - 40 - 40, coverRect().bottom() + 34);
 		}, heart->lifetime());
+		const auto more = Ui::CreateChild<RoundGlyph>(info, Glyph::More, 40);
+		const auto block = Ui::CreateChild<RoundGlyph>(info, Glyph::Block, 40);
+		more->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Больше такого")));
+		block->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Не нравится автор")));
+		info->widthValue(
+		) | rpl::on_next([=](int width) {
+			more->move(width - 24 - 40 - 40 - 40, coverRect().bottom() + 34);
+			block->move(width - 24 - 40 - 40 - 80, coverRect().bottom() + 34);
+		}, more->lifetime());
+		more->setClickedCallback([=] { MoreLikeThis(); });
+		block->setClickedCallback([=] { DislikeArtist(); });
 
 		// Перемотка и время.
 		const auto seek = content->add(
@@ -2372,6 +2552,8 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			share->setVisible(!track.id.isEmpty());
 			share->setDisabled(!CanForwardTrack(track));
 			heart->setVisible(own);
+			more->setVisible(own);
+			block->setVisible(own);
 			heart->setLiked(own && IsLiked(PlayingTrack().id));
 			play->setPlaying(state.state == Media::Player::State::Playing
 				|| state.state == Media::Player::State::Starting
