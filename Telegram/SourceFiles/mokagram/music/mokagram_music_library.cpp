@@ -377,7 +377,7 @@ void BuildForYou(
 			pool.push_back(ranked[i]);
 		}
 	}
-	for (auto picked = 0; picked != 5 && !pool.empty(); ++picked) {
+	for (auto picked = 0; picked != 8 && !pool.empty(); ++picked) {
 		const auto at = base::RandomIndex(int(pool.size()));
 		seeds.push_back(pool[at]);
 		pool.erase(pool.begin() + at);
@@ -408,13 +408,13 @@ void BuildForYou(
 			const auto &t = c.track;
 			auto score = 1.6 * std::min(1., c.seedHits / 1.5);
 			const auto artistAffinity = Get(profile->artist, t.artistId);
-			score += 1.0 * std::tanh(artistAffinity);
-			score += 0.7 * std::tanh(Get(profile->genre, t.genre));
+			score += 0.3 * std::tanh(artistAffinity);
+			score += 0.9 * std::tanh(Get(profile->genre, t.genre));
 			auto tagAffinity = 0.;
 			for (const auto &tag : t.tags) {
 				tagAffinity += std::tanh(Get(profile->tag, tag));
 			}
-			score += 0.5 * std::min(1., tagAffinity / 2.);
+			score += 0.9 * std::min(1., tagAffinity / 2.);
 			score += 0.25 * std::clamp(std::log10(t.playbackCount + 1.) / 7., 0., 1.);
 			if (t.playbackCount > 0) {
 				score += 0.2 * std::min(1., (t.likesCount / double(t.playbackCount)) * 25.);
@@ -458,8 +458,12 @@ void BuildForYou(
 					&& genreCount[c.track.genre] > int(result.size()) / 2 + 1) {
 					value -= 0.3;
 				}
-				if (!c.known && unknown < int(count * 0.3)) {
-					value += 0.3;
+				// Подборка по вайбу, а не по знакомым авторам: новые исполнители
+				// в приоритете, знакомых не больше четверти.
+				if (!c.known) {
+					value += 0.5;
+				} else if (int(result.size()) - unknown >= int(count * 0.25)) {
+					value -= 0.8;
 				}
 				if (!result.empty() && result.back().artistId == c.track.artistId) {
 					value -= 0.6;
@@ -483,7 +487,7 @@ void BuildForYou(
 		}
 		// Немного знакомого: пара любимых треков внутри подборки.
 		if (lib.liked.size() >= 5 && result.size() > 6) {
-			for (const auto position : { 2, 8, 16 }) {
+			for (const auto position : { 8 }) {
 				if (position < int(result.size())) {
 					const auto &pick = lib.liked[base::RandomIndex(int(lib.liked.size()))];
 					const auto exists = std::any_of(result.begin(), result.end(), [&](const Track &t) {
@@ -516,13 +520,9 @@ void BuildForYou(
 			});
 		});
 	}
-	for (const auto &artist : topArtists) {
-		jobs.push_back([=] {
-			UserTracks(artist, 12, [=](std::vector<Track> list) {
-				Gather(collector, std::move(list), 0.6, false);
-			});
-		});
-	}
+	// Треки любимых исполнителей больше не запрашиваем: подборка должна быть
+	// про похожее звучание (related, жанры, теги), а не про авторов из лайков.
+	Q_UNUSED(topArtists);
 	for (const auto &genre : topGenres) {
 		jobs.push_back([=] {
 			SearchLimited(genre, 20, [=](std::vector<Track> list) {
