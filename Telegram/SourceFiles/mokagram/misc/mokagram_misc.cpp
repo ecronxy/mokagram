@@ -546,6 +546,30 @@ Ui::BotVerifyDetails Synthetic(not_null<UserData*> user) {
 	};
 }
 
+void SaveCache() {
+	const auto &state = Data();
+	auto users = QJsonArray();
+	for (const auto id : state.remote) {
+		users.append(QString::number(id));
+	}
+	auto customArray = QJsonArray();
+	for (const auto &[id, value] : state.custom) {
+		customArray.append(QJsonArray{
+			QString::number(id),
+			QString::number(value.icon),
+			value.text,
+		});
+	}
+	auto file = QFile(cWorkingDir() + u"tdata/moka_badges_cache.json"_q);
+	if (file.open(QIODevice::WriteOnly)) {
+		file.write(QJsonDocument(QJsonObject{
+			{ u"emoji_id"_q, QString::number(state.icon) },
+			{ u"users"_q, users },
+			{ u"custom"_q, customArray },
+		}).toJson(QJsonDocument::Compact));
+	}
+}
+
 // Список выданных галочек пришёл (из бота или из файла): обновляем значки у уже загруженных людей.
 void ApplyRemote(
 		const std::vector<quint64> &ids,
@@ -569,28 +593,7 @@ void ApplyRemote(
 	for (const auto id : ids) {
 		state.remote.emplace(id);
 	}
-	{
-		auto users = QJsonArray();
-		for (const auto id : state.remote) {
-			users.append(QString::number(id));
-		}
-		auto customArray = QJsonArray();
-		for (const auto &[id, value] : state.custom) {
-			customArray.append(QJsonArray{
-				QString::number(id),
-				QString::number(value.icon),
-				value.text,
-			});
-		}
-		auto file = QFile(cWorkingDir() + u"tdata/moka_badges_cache.json"_q);
-		if (file.open(QIODevice::WriteOnly)) {
-			file.write(QJsonDocument(QJsonObject{
-				{ u"emoji_id"_q, QString::number(state.icon) },
-				{ u"users"_q, users },
-				{ u"custom"_q, customArray },
-			}).toJson(QJsonDocument::Compact));
-		}
-	}
+	SaveCache();
 	auto all = old;
 	for (const auto id : state.remote) {
 		all.emplace(id);
@@ -647,6 +650,8 @@ void RefreshInline(Fn<void()> fail) {
 	RefreshPage(0, std::make_shared<PagesState>(), fail);
 }
 
+void RefreshApi(Fn<void()> fail);
+
 void Refresh(int index = 0) {
 	Load();
 	if (index == 0) {
@@ -657,9 +662,11 @@ void Refresh(int index = 0) {
 		state.inFlight = true;
 		// Запрос мог потеряться: через 15 с разрешаем новый.
 		QTimer::singleShot(15000, [] { Data().inFlight = false; });
-		RefreshInline([] {
-			Data().inFlight = false;
-			Refresh(1);
+		RefreshApi([] {
+			RefreshInline([] {
+				Data().inFlight = false;
+				Refresh(1);
+			});
 		});
 		return;
 	}
@@ -693,6 +700,173 @@ void Refresh(int index = 0) {
 	});
 }
 
+constexpr auto kApiBadgesUrl = "https://api.moka.wtf/v1/badges";
+constexpr auto kApiEventsUrl = "https://api.moka.wtf/v1/events";
+
+[[nodiscard]] QNetworkAccessManager *Manager() {
+	static auto result = new QNetworkAccessManager();
+	return result;
+}
+
+// Главный путь: JSON с api.moka.wtf (см. https://api.moka.wtf/docs/).
+void RefreshApi(Fn<void()> fail) {
+	auto request = QNetworkRequest(QUrl(QString::fromLatin1(kApiBadgesUrl)));
+	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
+	request.setTransferTimeout(8000);
+	const auto reply = Manager()->get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		const auto document = (reply->error() == QNetworkReply::NoError)
+			? QJsonDocument::fromJson(reply->readAll())
+			: QJsonDocument();
+		if (!document.isObject() || !document.object().value(u"badges"_q).isArray()) {
+			if (fail) {
+				fail();
+			}
+			return;
+		}
+		const auto object = document.object();
+		auto ids = std::vector<quint64>();
+		auto custom = std::map<quint64, Custom>();
+		for (const auto &value : object.value(u"badges"_q).toArray()) {
+			const auto row = value.toObject();
+			const auto user = row.value(u"userId"_q).toVariant().toULongLong();
+			if (!user) {
+				continue;
+			}
+			ids.push_back(user);
+			const auto emoji = row.value(u"emojiId"_q).toVariant().toString().toULongLong();
+			const auto text = row.value(u"signature"_q).toString().left(64);
+			if (emoji || !text.isEmpty()) {
+				custom[user] = Custom{ .icon = emoji, .text = text };
+			}
+		}
+		ApplyRemote(
+			ids,
+			object.value(u"defaultEmojiId"_q).toVariant().toString().toULongLong(),
+			std::move(custom));
+	});
+}
+
+// Одно изменение из потока событий: не перезагружаем весь список.
+void ApplyOne(quint64 user, const QJsonValue &badge) {
+	auto &state = Data();
+	if (badge.isObject()) {
+		const auto row = badge.toObject();
+		state.remote.emplace(user);
+		const auto emoji = row.value(u"emojiId"_q).toVariant().toString().toULongLong();
+		const auto text = row.value(u"signature"_q).toString().left(64);
+		if (emoji || !text.isEmpty()) {
+			state.custom[user] = Custom{ .icon = emoji, .text = text };
+		} else {
+			state.custom.erase(user);
+		}
+	} else {
+		state.remote.erase(user);
+		state.custom.erase(user);
+	}
+	SaveCache();
+	const auto account = Core::App().domain().maybeLastOrSomeAuthedAccount();
+	if (const auto session = account ? account->maybeSession() : nullptr) {
+		if (const auto loaded = session->data().userLoaded(UserId(user))) {
+			loaded->setBotVerifyDetails(Synthetic(loaded));
+		}
+	}
+}
+
+// Постоянное соединение (SSE): галочки меняются у всех сразу после выдачи или снятия.
+struct EventStream {
+	QNetworkReply *reply = nullptr;
+	QByteArray buffer;
+	qint64 lastId = 0;
+	int failures = 0;
+	bool connected = false;
+	qint64 lastDataMs = 0;
+};
+
+[[nodiscard]] EventStream &Events() {
+	static auto result = EventStream();
+	return result;
+}
+
+void HandleEvent(const QString &name, const QByteArray &data) {
+	const auto object = QJsonDocument::fromJson(data).object();
+	if (name == u"hello"_q) {
+		if (object.value(u"resync"_q).toBool()) {
+			Refresh(0);
+		}
+		return;
+	}
+	if (name != u"badge"_q) {
+		return;
+	}
+	const auto user = object.value(u"userId"_q).toVariant().toULongLong();
+	if (user) {
+		ApplyOne(user, object.value(u"badge"_q));
+	}
+}
+
+void ParseEvents() {
+	auto &stream = Events();
+	for (;;) {
+		const auto end = stream.buffer.indexOf("\n\n");
+		if (end < 0) {
+			return;
+		}
+		const auto block = stream.buffer.left(end);
+		stream.buffer.remove(0, end + 2);
+		auto name = QString();
+		auto data = QByteArray();
+		for (const auto &line : block.split('\n')) {
+			if (line.startsWith("event:")) {
+				name = QString::fromUtf8(line.mid(6).trimmed());
+			} else if (line.startsWith("data:")) {
+				data += line.mid(5).trimmed();
+			} else if (line.startsWith("id:")) {
+				stream.lastId = std::max(stream.lastId, line.mid(3).trimmed().toLongLong());
+			}
+		}
+		if (!name.isEmpty()) {
+			HandleEvent(name, data);
+		}
+	}
+}
+
+void ConnectEvents() {
+	auto &stream = Events();
+	if (stream.reply) {
+		return;
+	}
+	auto request = QNetworkRequest(QUrl(QString::fromLatin1(kApiEventsUrl)));
+	request.setRawHeader("Accept", "text/event-stream");
+	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
+	if (stream.lastId) {
+		request.setRawHeader("Last-Event-ID", QByteArray::number(stream.lastId));
+	}
+	stream.buffer.clear();
+	stream.lastDataMs = QDateTime::currentMSecsSinceEpoch();
+	const auto reply = Manager()->get(request);
+	stream.reply = reply;
+	QObject::connect(reply, &QNetworkReply::readyRead, [=] {
+		auto &stream = Events();
+		stream.connected = true;
+		stream.failures = 0;
+		stream.lastDataMs = QDateTime::currentMSecsSinceEpoch();
+		stream.buffer += reply->readAll().replace("\r", "");
+		ParseEvents();
+	});
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		auto &stream = Events();
+		reply->deleteLater();
+		stream.reply = nullptr;
+		stream.connected = false;
+		stream.failures = std::min(stream.failures + 1, 10);
+		QTimer::singleShot(std::min(3000 * stream.failures, 30000), [] {
+			ConnectEvents();
+		});
+	});
+}
+
 void Start() {
 	// Сначала кеш с диска (значки видны сразу), потом запрос к боту, как только появится сессия.
 	Load();
@@ -709,12 +883,23 @@ void Start() {
 			Refresh(0);
 		}
 	});
+	ConnectEvents();
 	static auto timer = new QTimer();
 	timer->setInterval(3000);
 	QObject::connect(timer, &QTimer::timeout, [] {
 		static auto ticks = 0;
-		// Пока список не получен, повторяем каждые 3 с, потом раз в минуту (20 тиков).
-		if (!Data().fresh || ++ticks >= 20) {
+		auto &stream = Events();
+		// Сервер шлёт ping раз в 20 с: тишина дольше минуты значит мёртвое соединение (сон, смена сети).
+		if (stream.reply
+			&& stream.connected
+			&& QDateTime::currentMSecsSinceEpoch() - stream.lastDataMs > 60000) {
+			stream.reply->abort();
+		}
+		ConnectEvents();
+		// Пока список не получен, повторяем каждые 3 с; дальше раз в минуту,
+		// а при живом потоке событий раз в 5 минут, только для подстраховки.
+		const auto period = stream.connected ? 100 : 20;
+		if (!Data().fresh || ++ticks >= period) {
 			ticks = 0;
 			Refresh(0);
 		}
