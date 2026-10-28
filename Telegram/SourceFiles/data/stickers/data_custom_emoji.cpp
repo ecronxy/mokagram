@@ -342,11 +342,18 @@ void CustomEmojiLoader::lookupDone(
 	}
 	const auto tag = _tag;
 	const auto sizeOverride = int(_sizeOverride);
+	const auto shotScale = _shot;
 	auto loader = [=] {
-		return std::make_unique<CustomEmojiLoader>(
+		// Mokagram: выгруженный эмодзи снимка должен вернуться крупным.
+		auto &scale = Ui::CustomEmoji::ShotScale();
+		const auto old = scale;
+		scale = shotScale;
+		auto result = std::make_unique<CustomEmojiLoader>(
 			document,
 			tag,
 			sizeOverride);
+		scale = old;
+		return result;
 	};
 	auto done = std::move(lookup->process->loaded);
 	done(Ui::CustomEmoji::Cached(
