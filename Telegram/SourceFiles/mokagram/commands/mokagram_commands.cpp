@@ -159,7 +159,7 @@ namespace S = Mokagram::Settings;
 		U(Mokagram::Lang::Tr(".del N удаляет твои последние N сообщений (с ответом: N сообщений того человека)")),
 		U(Mokagram::Lang::Tr(".del all с ответом удаляет все сообщения человека в группе, без ответа все твои загруженные")),
 		U(Mokagram::Lang::Tr(".pin / .unpin закрепляет или открепляет сообщение (ответом)")),
-		U(Mokagram::Lang::Tr(".gif превращает видео (ответом) в гиф без звука и сохраняет в «Мои GIF»")),
+		U(Mokagram::Lang::Tr(".gif превращает видео или фото (ответом) в гиф без звука и сохраняет в «Мои GIF»")),
 		U(Mokagram::Lang::Tr(".id показывает ID автора, чата и сообщения, ссылку на сообщение")),
 		U(Mokagram::Lang::Tr(".save пересылает сообщение (ответом) в «Избранное»")),
 	};
@@ -430,7 +430,8 @@ void ConvertAndSendGif(
 		not_null<Window::SessionController*> controller,
 		not_null< ::History*> history,
 		const QString &source,
-		FullReplyTo replyTo) {
+		FullReplyTo replyTo,
+		bool still = false) {
 	const auto output = QStandardPaths::writableLocation(
 		QStandardPaths::TempLocation)
 		+ u"/mokagram_gif_"_q
@@ -472,8 +473,14 @@ void ConvertAndSendGif(
 				U(Mokagram::Lang::Tr("Нужен ffmpeg в системе")));
 		}
 	});
-	process->start(u"ffmpeg"_q, {
-		u"-y"_q, u"-i"_q, source,
+	auto args = QStringList{ u"-y"_q };
+	if (still) {
+		// Фото: короткий зацикленный ролик из одного кадра.
+		args << u"-loop"_q << u"1"_q << u"-framerate"_q << u"15"_q
+			<< u"-t"_q << u"3"_q;
+	}
+	args << u"-i"_q << source;
+	args << QStringList{
 		u"-an"_q,
 		u"-c:v"_q, u"libx264"_q,
 		u"-pix_fmt"_q, u"yuv420p"_q,
@@ -481,7 +488,8 @@ void ConvertAndSendGif(
 		u"-vf"_q, u"scale='min(720,iw)':-2"_q,
 		u"-movflags"_q, u"+faststart"_q,
 		output,
-	});
+	};
+	process->start(u"ffmpeg"_q, args);
 }
 
 void WaitForVideoAndConvert(
@@ -658,12 +666,40 @@ bool Handle(
 		return true;
 	}
 	if (command == u"gif"_q) {
-		const auto document = (replied && replied->media())
-			? replied->media()->document()
-			: nullptr;
+		const auto media = replied ? replied->media() : nullptr;
+		const auto document = media ? media->document() : nullptr;
+		const auto photo = media ? media->photo() : nullptr;
+		if (photo) {
+			toast(U(Mokagram::Lang::Tr("Делаю гиф…")));
+			const auto itemId = replied->fullId();
+			const auto view = photo->createMediaView();
+			photo->load(itemId);
+			const auto attempt = std::make_shared<Fn<void(int)>>();
+			*attempt = [=](int left) {
+				const auto image = view->image(Data::PhotoSize::Large);
+				if (image && !image->isNull()) {
+					const auto path = QStandardPaths::writableLocation(
+						QStandardPaths::TempLocation)
+						+ u"/mokagram_gif_src_"_q
+						+ QString::number(photo->id)
+						+ u".png"_q;
+					if (image->original().save(path, "PNG")) {
+						ConvertAndSendGif(controller, history, path, replyTo, true);
+					} else {
+						toast(U(Mokagram::Lang::Tr("Не получилось сохранить")));
+					}
+				} else if (left > 0) {
+					QTimer::singleShot(700, [=] { (*attempt)(left - 1); });
+				} else {
+					toast(U(Mokagram::Lang::Tr("Не получилось скачать фото")));
+				}
+			};
+			(*attempt)(8);
+			return true;
+		}
 		if (!document
 			|| !(document->isVideoFile() || document->isAnimation())) {
-			toast(U(Mokagram::Lang::Tr("Ответь командой на видео")));
+			toast(U(Mokagram::Lang::Tr("Ответь командой на видео или фото")));
 			return true;
 		}
 		toast(U(Mokagram::Lang::Tr("Делаю гиф…")));

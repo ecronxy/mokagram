@@ -35,6 +35,15 @@
 #include "window/window_peer_menu.h"
 #include "styles/style_menu_icons.h"
 #include "storage/localimageloader.h"
+#include "storage/serialize_document.h"
+#include "chat_helpers/stickers_lottie.h"
+#include "chat_helpers/tabbed_panel.h"
+#include "chat_helpers/tabbed_selector.h"
+#include "core/version.h"
+#include "history/view/media/history_view_media_common.h"
+#include "history/view/media/history_view_sticker_player.h"
+#include "lottie/lottie_single_player.h"
+#include "styles/style_chat_helpers.h"
 
 #include "core/file_location.h"
 #include "data/data_document.h"
@@ -47,6 +56,7 @@
 #include <QtWidgets/QGraphicsEffect>
 #include <array>
 #include "ui/image/image.h"
+#include "ui/image/image_prepare.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
@@ -79,6 +89,7 @@
 #include <QtGui/QClipboard>
 #include <QtGui/QLinearGradient>
 #include <QtGui/QRadialGradient>
+#include <QtGui/QTextLayout>
 #include <QtGui/QGuiApplication>
 #include <QtCore/QPointer>
 #include <array>
@@ -943,6 +954,63 @@ void DrawHeart(QPainter &p, const QRectF &r, bool filled, const QColor &color) {
 	return color;
 }
 
+constexpr auto kLikeDuration = crl::time(650);
+
+[[nodiscard]] bool LikeAnimationsEnabled() {
+	return !PowerSaving::On(PowerSaving::kAnimations);
+}
+
+// Масштаб сердца по ходу анимации лайка: затухающая пружина к 1.
+[[nodiscard]] float64 LikeScale(float64 progress, bool liked) {
+	const auto from = liked ? 0.4 : 0.75;
+	return 1.
+		- (1. - from) * std::exp(-7. * progress) * std::cos(14. * progress);
+}
+
+// Вспышка вокруг сердца при лайке: расходящееся кольцо и искры.
+void DrawLikeBurst(
+		QPainter &p,
+		QPointF center,
+		float64 radius,
+		float64 progress,
+		const QColor &color) {
+	const auto easeOut = [](float64 t) {
+		return 1. - std::pow(1. - t, 3);
+	};
+	p.save();
+	if (progress < 0.45) {
+		const auto t = progress / 0.45;
+		auto ring = color;
+		ring.setAlphaF(0.9 * (1. - t));
+		const auto width = std::max(radius * 0.3 * (1. - t), 0.5);
+		const auto r = radius * (0.35 + 0.6 * easeOut(t)) - width / 2.;
+		p.setPen(QPen(ring, width));
+		p.setBrush(Qt::NoBrush);
+		p.drawEllipse(center, r, r);
+	}
+	const auto t = std::clamp((progress - 0.12) / 0.6, 0., 1.);
+	if (t > 0. && t < 1.) {
+		static const auto spark = QColor(255, 179, 71);
+		const auto distance = radius * (0.55 + 0.35 * easeOut(t));
+		const auto size = radius * 0.12 * (1. - t);
+		constexpr auto kCount = 7;
+		p.setPen(Qt::NoPen);
+		for (auto i = 0; i != kCount; ++i) {
+			const auto angle = -M_PI / 2. + i * 2. * M_PI / kCount;
+			const auto big = center
+				+ QPointF(std::cos(angle), std::sin(angle)) * distance;
+			const auto side = angle + 0.35;
+			const auto small = center
+				+ QPointF(std::cos(side), std::sin(side)) * distance * 0.8;
+			p.setBrush(color);
+			p.drawEllipse(big, size, size);
+			p.setBrush(spark);
+			p.drawEllipse(small, size * 0.7, size * 0.7);
+		}
+	}
+	p.restore();
+}
+
 class TabPill final : public Ui::AbstractButton {
 public:
 	TabPill(QWidget *parent, const QString &text)
@@ -1160,7 +1228,13 @@ public:
 		setClickedCallback([=] {
 			if (!IsTelegramTrack(_track)
 				&& heartRect().contains(mapFromGlobal(QCursor::pos()))) {
+				// Во вкладке «Любимые» LikesChanged пересобирает список и удаляет эту строку.
+				const auto weak = base::make_weak(this);
 				SetLiked(_track, !IsLiked(_track.id));
+				if (weak && LikeAnimationsEnabled()) {
+					_likeAnimation.stop();
+					_likeAnimation.start([=] { update(); }, 0., 1., kLikeDuration);
+				}
 				return;
 			}
 			if (_mode == RowMode::Queue) {
@@ -1181,6 +1255,12 @@ public:
 		}) | rpl::on_next([=](not_null<QEvent*>) {
 			showMenu(controller, index);
 		}, lifetime());
+	}
+
+	// Строка лежит на цветном фоне плеера: подсветка белым с прозрачностью, а не серым.
+	void setOnGlass(bool glass) {
+		_glass = glass;
+		update();
 	}
 
 protected:
@@ -1260,7 +1340,9 @@ private:
 		const auto over = isOver() || isDown();
 		if (playing || over) {
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowBgOver);
+			p.setBrush(_glass
+				? QColor(255, 255, 255, playing ? 34 : 20)
+				: st::windowBgOver->c);
 			p.drawRoundedRect(rect().marginsRemoved({ 10, 3, 10, 3 }), 18, 18);
 		}
 		const auto art = QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize);
@@ -1314,9 +1396,21 @@ private:
 		const auto liked = IsLiked(_track.id);
 		const auto heart = heartRect();
 		if (!IsTelegramTrack(_track)) {
+			const auto progress = _likeAnimation.value(1.);
+			auto glyph = QRectF(heart).adjusted(5, 6, -5, -5);
+			if (progress < 1.) {
+				if (liked) {
+					DrawLikeBurst(p, glyph.center(), 14., progress, HeartColor());
+				}
+				const auto scale = LikeScale(progress, liked);
+				const auto center = glyph.center();
+				glyph = QRectF(
+					center - QPointF(glyph.width(), glyph.height()) * scale / 2.,
+					glyph.size() * scale);
+			}
 			DrawHeart(
 				p,
-				QRectF(heart).adjusted(5, 6, -5, -5),
+				glyph,
 				liked,
 				liked ? HeartColor() : QColor(st::windowSubTextFg->c));
 		}
@@ -1346,9 +1440,11 @@ private:
 	double _equalizerPhase = 0.;
 	Track _track;
 	RowMode _mode;
+	bool _glass = false;
 	QImage _art;
 	std::shared_ptr<Data::DocumentMedia> _media;
 	base::unique_qptr<Ui::PopupMenu> _menu;
+	Ui::Animations::Simple _likeAnimation;
 
 };
 
@@ -1380,6 +1476,145 @@ void Row::hideEvent(QHideEvent *e) {
 	_equalizerTimer.stop();
 	AbstractButton::hideEvent(e);
 }
+
+// Альбом в результатах поиска: обложка, название, исполнитель и число треков.
+class AlbumRow final : public Ui::AbstractButton {
+public:
+	AlbumRow(QWidget *parent, const Album &album, Fn<void()> open)
+	: AbstractButton(parent)
+	, _album(album) {
+		resize(width(), kRowHeight);
+		setPointerCursor(true);
+		setClickedCallback(std::move(open));
+		LoadImage(ArtUrl(album.artworkUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
+			_art = std::move(image);
+			update();
+		}));
+		paintRequest(
+		) | rpl::on_next([=](QRect) {
+			paint();
+		}, lifetime());
+	}
+
+private:
+	void paint() {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		if (isOver() || isDown()) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(rect().marginsRemoved({ 10, 3, 10, 3 }), 18, 18);
+		}
+		const auto art = QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize);
+		auto path = QPainterPath();
+		path.addRoundedRect(art, 10, 10);
+		if (_art.isNull()) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawPath(path);
+		} else {
+			p.save();
+			p.setClipPath(path);
+			p.drawImage(art, _art);
+			p.restore();
+		}
+		const auto left = art.right() + 16;
+		const auto right = width() - 24;
+		// Стрелка «открыть».
+		p.setPen(QPen(st::windowSubTextFg, 2., Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.setBrush(Qt::NoBrush);
+		const auto cy = height() / 2.;
+		p.drawPolyline(QPolygonF({
+			QPointF(right - 5, cy - 6),
+			QPointF(right + 1, cy),
+			QPointF(right - 5, cy + 6) }));
+		const auto textWidth = right - 20 - left;
+		p.setFont(st::semiboldFont);
+		p.setPen(st::windowFg);
+		p.drawText(
+			QRect(left, height() / 2 - 24, textWidth, 22),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			st::semiboldFont->elided(_album.title, textWidth));
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		const auto subtitle = _album.artist
+			+ u" · "_q
+			+ QString::fromUtf8(Mokagram::Lang::Tr("треков: %1")).arg(_album.trackCount);
+		p.drawText(
+			QRect(left, height() / 2 + 2, textWidth, 20),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			st::normalFont->elided(subtitle, textWidth));
+	}
+
+	Album _album;
+	QImage _art;
+
+};
+
+// Шапка открытого альбома: слева «назад» с названием, справа «Слушать альбом».
+class AlbumBar final : public Ui::AbstractButton {
+public:
+	AlbumBar(QWidget *parent, const QString &title, Fn<void()> back, Fn<void()> play)
+	: AbstractButton(parent)
+	, _title(title) {
+		resize(width(), 40);
+		setPointerCursor(true);
+		setMouseTracking(true);
+		setClickedCallback([=] {
+			if (playRect().contains(mapFromGlobal(QCursor::pos()))) {
+				play();
+			} else {
+				back();
+			}
+		});
+		paintRequest(
+		) | rpl::on_next([=](QRect) {
+			auto p = QPainter(this);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto onPlay = playRect().contains(mapFromGlobal(QCursor::pos()));
+			const auto onBack = isOver() && !onPlay;
+			p.setPen(QPen(
+				onBack ? st::windowFg : st::windowSubTextFg,
+				2.,
+				Qt::SolidLine,
+				Qt::RoundCap,
+				Qt::RoundJoin));
+			const auto cy = height() / 2.;
+			p.drawPolyline(QPolygonF({
+				QPointF(16, cy - 6),
+				QPointF(10, cy),
+				QPointF(16, cy + 6) }));
+			const auto available = playRect().left() - 12 - 26;
+			p.setFont(st::semiboldFont);
+			p.setPen(st::windowFg);
+			p.drawText(
+				QRect(26, 0, available, height()),
+				Qt::AlignVCenter | Qt::AlignLeft,
+				st::semiboldFont->elided(_title, available));
+			p.setPen(onPlay ? st::windowFg : st::windowActiveTextFg);
+			p.drawText(
+				playRect(),
+				Qt::AlignVCenter | Qt::AlignRight,
+				QString::fromUtf8(Mokagram::Lang::Tr("Слушать альбом")));
+		}, lifetime());
+	}
+
+protected:
+	void mouseMoveEvent(QMouseEvent *e) override {
+		AbstractButton::mouseMoveEvent(e);
+		update();
+	}
+
+private:
+	[[nodiscard]] QRect playRect() const {
+		const auto w = st::semiboldFont->width(
+			QString::fromUtf8(Mokagram::Lang::Tr("Слушать альбом")));
+		return QRect(width() - 8 - w, 0, w, height());
+	}
+
+	QString _title;
+
+};
 
 // ---- полноценный плеер ----
 
@@ -1484,33 +1719,70 @@ private:
 
 };
 
-// Пустой поиск: анимированный стикер посередине.
+constexpr auto kHintStickerKey = "music.hint_sticker";
+
+// Свой стикер вместо стандартного: документ целиком, с версией формата,
+// чтобы после перезапуска не зависеть от загруженных наборов.
+[[nodiscard]] DocumentData *LoadHintSticker(not_null<Main::Session*> session) {
+	const auto encoded = Mokagram::Settings::String(
+		QString::fromLatin1(kHintStickerKey));
+	if (encoded.isEmpty()) {
+		return nullptr;
+	}
+	auto bytes = QByteArray::fromBase64(encoded.toLatin1());
+	auto stream = QDataStream(&bytes, QIODevice::ReadOnly);
+	stream.setVersion(QDataStream::Qt_5_1);
+	auto version = qint32();
+	stream >> version;
+	const auto document = Serialize::Document::readFromStream(
+		session,
+		version,
+		stream);
+	return (stream.status() == QDataStream::Ok
+		&& document
+		&& document->sticker())
+		? document
+		: nullptr;
+}
+
+void SaveHintSticker(DocumentData *document) {
+	const auto key = QString::fromLatin1(kHintStickerKey);
+	if (!document) {
+		Mokagram::Settings::Reset(key);
+		return;
+	}
+	auto bytes = QByteArray();
+	{
+		auto stream = QDataStream(&bytes, QIODevice::WriteOnly);
+		stream.setVersion(QDataStream::Qt_5_1);
+		stream << qint32(AppVersion);
+		Serialize::Document::writeToStream(stream, document);
+	}
+	Mokagram::Settings::SetString(key, QString::fromLatin1(bytes.toBase64()));
+}
+
+// Пустой поиск: анимированный стикер посередине. Правой кнопкой его
+// можно сменить на любой свой стикер.
 class StickerHint final : public Ui::RpWidget {
 public:
-	explicit StickerHint(QWidget *parent) : RpWidget(parent) {
+	StickerHint(
+		QWidget *parent,
+		not_null<Main::Session*> session,
+		Fn<void(QPoint)> showMenu)
+	: RpWidget(parent)
+	, _session(session)
+	, _showMenu(std::move(showMenu)) {
 		_sheet = QPixmap(u":/gui/art/mokagram_music_hint.png"_q);
 		_sheet.setDevicePixelRatio(2.);
 		resize(width(), kSide + 56);
 		paintRequest(
 		) | rpl::on_next([=](QRect) {
-			if (_sheet.isNull()) {
-				return;
-			}
-			const auto frame = _started
-				? int(((crl::now() - _started) / kFrameDuration) % kFrames)
-				: 0;
-			auto p = QPainter(this);
-			auto hq = PainterHighQualityEnabler(p);
-			// Кадр в листе задан в пикселях устройства, а целевой квадрат —
-			// в логических, иначе при DPR 2 картинка ужимается и уезжает влево.
-			p.drawPixmap(
-				QRect((width() - kSide) / 2, 28, kSide, kSide),
-				_sheet,
-				QRect(
-					(frame % kColumns) * kSource,
-					(frame / kColumns) * kSource,
-					kSource,
-					kSource));
+			paint();
+		}, lifetime());
+		Mokagram::Settings::StringValue(
+			QString::fromLatin1(kHintStickerKey)
+		) | rpl::on_next([=](const QString &) {
+			loadSticker();
 		}, lifetime());
 		if (!PowerSaving::On(PowerSaving::kAnimations)) {
 			_started = crl::now();
@@ -1522,16 +1794,119 @@ public:
 		}
 	}
 
+protected:
+	void contextMenuEvent(QContextMenuEvent *e) override {
+		if (_showMenu) {
+			_showMenu(e->globalPos());
+		}
+	}
+
 private:
+	void loadSticker() {
+		_playerLifetime.destroy();
+		_player = nullptr;
+		_custom = LoadHintSticker(_session);
+		update();
+		if (!_custom) {
+			return;
+		}
+		const auto document = not_null<DocumentData*>(_custom);
+		const auto media = document->createMediaView();
+		media->checkStickerLarge();
+		media->goodThumbnailWanted();
+		rpl::single() | rpl::then(
+			_session->downloaderTaskFinished()
+		) | rpl::filter([=] {
+			return media->loaded();
+		}) | rpl::take(1) | rpl::on_next([=] {
+			using namespace HistoryView;
+			const auto info = document->sticker();
+			const auto box = QSize(kSide, kSide);
+			if (info->isLottie()) {
+				_player = std::make_shared<LottiePlayer>(
+					ChatHelpers::LottiePlayerFromDocument(
+						media.get(),
+						ChatHelpers::StickerLottieSize::ChatIntroHelloSticker,
+						box,
+						Lottie::Quality::High));
+			} else if (info->isWebm()) {
+				_player = std::make_shared<WebmPlayer>(
+					media->owner()->location(),
+					media->bytes(),
+					box);
+			} else {
+				_player = std::make_shared<StaticStickerPlayer>(
+					media->owner()->location(),
+					media->bytes(),
+					box);
+			}
+			_player->setRepaintCallback([=] { update(); });
+			update();
+		}, _playerLifetime);
+	}
+
+	void paint() {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto target = QRect((width() - kSide) / 2, 28, kSide, kSide);
+		if (_custom) {
+			// Пока свой стикер грузится, место остаётся пустым,
+			// чтобы стандартный не мелькал перед ним.
+			if (!_player || !_player->ready()) {
+				return;
+			}
+			const auto paused = !_started || !window()->isActiveWindow();
+			const auto frame = _player->frame(
+				QSize(kSide, kSide),
+				QColor(0, 0, 0, 0),
+				false,
+				crl::now(),
+				paused).image;
+			const auto size = HistoryView::DownscaledSize(
+				frame.size() / style::DevicePixelRatio(),
+				QSize(kSide, kSide));
+			p.drawImage(
+				QRect(
+					target.x() + (kSide - size.width()) / 2,
+					target.y() + (kSide - size.height()) / 2,
+					size.width(),
+					size.height()),
+				frame);
+			_player->markFrameShown();
+			return;
+		}
+		if (_sheet.isNull()) {
+			return;
+		}
+		const auto frame = _started
+			? int(((crl::now() - _started) / kFrameDuration) % kFrames)
+			: 0;
+		// Кадр в листе задан в пикселях устройства, а целевой квадрат —
+		// в логических, иначе при DPR 2 картинка ужимается и уезжает влево.
+		p.drawPixmap(
+			target,
+			_sheet,
+			QRect(
+				(frame % kColumns) * kSource,
+				(frame / kColumns) * kSource,
+				kSource,
+				kSource));
+	}
+
 	static constexpr auto kSource = 192;
 	static constexpr auto kSide = kSource / 2;
 	static constexpr auto kColumns = 9;
 	static constexpr auto kFrames = 49;
 	static constexpr auto kFrameDuration = crl::time(1000 / 15);
 
+	const not_null<Main::Session*> _session;
+	const Fn<void(QPoint)> _showMenu;
 	QPixmap _sheet;
 	Ui::Animations::Basic _animation;
 	crl::time _started = 0;
+	DocumentData *_custom = nullptr;
+	std::shared_ptr<HistoryView::StickerPlayer> _player;
+	rpl::lifetime _playerLifetime;
 
 };
 
@@ -1688,6 +2063,13 @@ public:
 			update();
 		}
 	}
+	void animateLike(bool liked) {
+		setLiked(liked);
+		if (LikeAnimationsEnabled()) {
+			_likeAnimation.stop();
+			_likeAnimation.start([=] { update(); }, 0., 1., kLikeDuration);
+		}
+	}
 	// Кнопки полноэкранного плеера: белые значки, тёмный полупрозрачный круг.
 	void setOverlay(bool overlay) {
 		_overlay = overlay;
@@ -1714,12 +2096,15 @@ private:
 		auto c = r.center();
 		const auto over = _hover.value(isOver() ? 1. : 0.);
 		const auto down = _press.value(isDown() ? 1. : 0.);
+		const auto play = (_glyph == Glyph::Play);
 		const auto dark = (_glyph == Glyph::Add
 			|| _glyph == Glyph::Queue
-			|| _glyph == Glyph::Collapse
-			|| _glyph == Glyph::Play);
+			|| _glyph == Glyph::Collapse);
 		p.setPen(Qt::NoPen);
-		p.setBrush(dark
+		// Play: тёмный полупрозрачный круг с белым значком, как кнопки в шапке.
+		p.setBrush(play
+			? QColor(255, 255, 255, int(31 + 20 * over))
+			: dark
 			? QColor(0, 0, 0, int(80 + 50 * over))
 			: QColor(255, 255, 255, int(40 * over)));
 		p.translate(c);
@@ -1728,7 +2113,6 @@ private:
 		p.translate(-c);
 		p.drawEllipse(r);
 		const auto pen = QPen(Qt::white, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-		const auto accent = QColor(0x0a, 0x84, 0xff);
 		const auto u = r.width() / 48.;
 		if (_glyph == Glyph::Collapse) {
 			p.setPen(pen);
@@ -1780,15 +2164,24 @@ private:
 				: mode == Media::RepeatMode::One
 				? st::mediaPlayerRepeatOneIcon
 				: st::mediaPlayerRepeatDisabledIcon;
+			// Включённый режим: яркий значок и точка под ним, выключенный приглушён.
+			if (active) {
+				p.setBrush(Qt::white);
+				p.drawEllipse(QPointF(c.x(), c.y() + 17. * u), 2. * u, 2. * u);
+			}
 			const auto scale = 28. / std::max(icon.width(), icon.height());
 			p.translate(
 				c.x() - icon.width() * scale / 2.,
 				c.y() - icon.height() * scale / 2.);
 			p.scale(scale, scale);
-			icon.paint(p, QPoint(), icon.width(), active ? accent : QColor(Qt::white));
+			icon.paint(
+				p,
+				QPoint(),
+				icon.width(),
+				active ? QColor(Qt::white) : QColor(255, 255, 255, 150));
 			return;
 		}
-		p.setBrush(Qt::white);
+		p.setBrush(QColor(Qt::white));
 		p.setPen(Qt::NoPen);
 		if (_glyph == Glyph::Play) {
 			if (_playing) {
@@ -1837,6 +2230,16 @@ private:
 				c + QPointF(14, -1),
 				c + QPointF(0, 8.5));
 			heart.closeSubpath();
+			const auto progress = _likeAnimation.value(1.);
+			if (progress < 1.) {
+				if (_liked) {
+					DrawLikeBurst(p, c, 18., progress, QColor(0xFF, 0x3B, 0x5C));
+				}
+				const auto scale = LikeScale(progress, _liked);
+				p.translate(c);
+				p.scale(scale, scale);
+				p.translate(-c);
+			}
 			if (_liked) {
 				p.setPen(Qt::NoPen);
 				p.setBrush(QColor(0xFF, 0x3B, 0x5C));
@@ -1934,6 +2337,7 @@ private:
 	Glyph _glyph;
 	bool _playing = false;
 	bool _liked = false;
+	Ui::Animations::Simple _likeAnimation;
 	bool _overlay = false;
 	Ui::Animations::Simple _hover;
 	Ui::Animations::Simple _press;
@@ -2032,8 +2436,14 @@ public:
 		_big = big;
 		_plasma = false;
 		_heights.clear();
+		_layouts.clear();
 		updateTimer();
 		update();
+	}
+	// Полноэкранный плеер рисует сюда свой фон: тогда при перерисовке текста родитель не трогается.
+	void setBackground(Fn<void(QPainter&, QRect)> paint) {
+		_background = std::move(paint);
+		setAttribute(Qt::WA_OpaquePaintEvent, _background != nullptr);
 	}
 	void setPlasma(bool on) {
 		_plasma = on;
@@ -2139,7 +2549,9 @@ private:
 		_manualUntil = 0;
 		_scrollReady = false;
 		_heights.clear();
+		_layouts.clear();
 		_weights.clear();
+		_fill = 0.;
 	}
 
 	// Позиция трека между обновлениями плеера: плавнее подсветка строк.
@@ -2195,43 +2607,145 @@ private:
 				changed |= (std::abs(goal - _weights[i]) > 0.001f);
 				_weights[i] += (goal - _weights[i]) * fade;
 			}
+			const auto fill = (_current >= 0)
+				? lineProgress(_current, livePosition())
+				: 0.;
+			changed |= (std::abs(fill - _fill) > 0.0005);
+			_fill = fill;
 		}
 		if (changed) {
 			update();
 		}
 	}
 
-	[[nodiscard]] double kScaleMax() const {
-		return _big ? 1.16 : 1.12;
+	// Доля спетого в строке (0..1); не медленнее ~6 знаков/с, чтобы проигрыш не растягивал заливку.
+	[[nodiscard]] double lineProgress(int index, qint64 at) const {
+		const auto &lines = _lyrics.lines;
+		const auto start = lines[index].timeMs;
+		auto span = qint64(std::max(int(lines[index].text.size()), 1)) * 170;
+		if (index + 1 < int(lines.size())) {
+			span = std::min(span, lines[index + 1].timeMs - start - 150);
+		}
+		span = std::max<qint64>(span, 250);
+		return std::clamp((at - start) / double(span), 0., 1.);
 	}
+
 	[[nodiscard]] double anchorY() const {
 		return height() * (_big ? 0.38 : 0.5);
 	}
 	[[nodiscard]] int textWidth() const {
-		return int((width() - (_big ? 0 : 56)) / kScaleMax());
+		return width() - (_big ? 0 : 56);
+	}
+	// Переливы фона панели: рисуются в маленькую картинку и растягиваются, всё равно размыты.
+	[[nodiscard]] QImage plasmaFrame(const QColor &accent) {
+		constexpr auto kDown = 6;
+		const auto size = QSize(width() / kDown + 1, height() / kDown + 1);
+		if (_plasmaFrame.size() != size) {
+			_plasmaFrame = QImage(size, QImage::Format_ARGB32_Premultiplied);
+		}
+		_plasmaFrame.fill(Qt::transparent);
+		auto q = QPainter(&_plasmaFrame);
+		q.scale(1. / kDown, 1. / kDown);
+		const auto w = width();
+		const auto h = height();
+		for (auto i = 0; i != 3; ++i) {
+			auto color = QColor::fromHsvF(
+				std::fmod(accent.hsvHueF() + 0.09 * (i - 1) + 1., 1.),
+				accent.hsvSaturationF() < 0.05
+					? 0.
+					: std::min(1., accent.hsvSaturationF() + 0.1),
+				std::min(1., accent.valueF() + 0.1 * i));
+			const auto cx = w * (0.5 + 0.38 * std::sin(_phase * (1. + 0.4 * i) + i * 2.1));
+			const auto cy = h * (0.5 + 0.34 * std::cos(_phase * (0.8 + 0.3 * i) + i * 1.3));
+			auto gradient = QRadialGradient(cx, cy, w * 0.55);
+			color.setAlpha(120);
+			gradient.setColorAt(0., color);
+			color.setAlpha(0);
+			gradient.setColorAt(1., color);
+			q.fillRect(rect(), gradient);
+		}
+		q.fillRect(rect(), QColor(0, 0, 0, 90));
+		q.end();
+		return _plasmaFrame;
 	}
 	[[nodiscard]] QFont lineFont() const {
 		auto font = st::semiboldFont->f;
-		font.setPixelSize(_big ? style::ConvertScale(30) : 19);
+		font.setPixelSize(_big ? style::ConvertScale(34) : 19);
 		if (_big) {
 			font.setWeight(QFont::ExtraBold);
 		}
 		return font;
+	}
+	[[nodiscard]] const QTextLayout &layoutOf(int index) {
+		if (_layouts.size() != _lyrics.lines.size()) {
+			_layouts.clear();
+			_layouts.resize(_lyrics.lines.size());
+		}
+		auto &layout = _layouts[index];
+		if (!layout) {
+			const auto &text = _lyrics.lines[index].text;
+			layout = std::make_unique<QTextLayout>(
+				text.isEmpty() ? u" "_q : text,
+				lineFont());
+			auto option = QTextOption(_big ? Qt::AlignLeft : Qt::AlignHCenter);
+			option.setWrapMode(QTextOption::WordWrap);
+			layout->setTextOption(option);
+			layout->beginLayout();
+			auto y = 0.;
+			for (auto line = layout->createLine(); line.isValid(); line = layout->createLine()) {
+				line.setLineWidth(textWidth());
+				line.setPosition(QPointF(0., y));
+				y += line.height();
+			}
+			layout->endLayout();
+		}
+		return *layout;
 	}
 	[[nodiscard]] int heightOf(int index) {
 		if (_heights.size() != _lyrics.lines.size()) {
 			_heights.assign(_lyrics.lines.size(), -1);
 		}
 		if (_heights[index] < 0) {
-			const auto text = _lyrics.lines[index].text.isEmpty()
-				? u" "_q
-				: _lyrics.lines[index].text;
-			_heights[index] = QFontMetrics(lineFont()).boundingRect(
-				QRect(0, 0, textWidth(), 10000),
-				Qt::TextWordWrap | (_big ? Qt::AlignLeft : Qt::AlignHCenter),
-				text).height() + (_big ? style::ConvertScale(22) : 20);
+			_heights[index] = int(std::ceil(layoutOf(index).boundingRect().height()))
+				+ (_big ? style::ConvertScale(26) : 20);
 		}
 		return _heights[index];
+	}
+	// Строка поверх фона; fill >= 0 заливает спетую часть белым слева направо с мягким краем.
+	void drawLayout(
+			QPainter &p,
+			const QTextLayout &layout,
+			QPointF origin,
+			double fill,
+			double sung,
+			double unsung) const {
+		const auto white = [](double alpha) {
+			auto color = QColor(255, 255, 255);
+			color.setAlphaF(std::clamp(alpha, 0., 1.));
+			return color;
+		};
+		const auto position = fill * layout.text().size();
+		const auto feather = style::ConvertScale(_big ? 16 : 10);
+		for (auto i = 0; i != layout.lineCount(); ++i) {
+			const auto line = layout.lineAt(i);
+			const auto from = line.textStart();
+			const auto till = from + line.textLength();
+			if (fill < 0. || position >= till) {
+				p.setPen(white(sung));
+			} else if (position <= from) {
+				p.setPen(white(unsung));
+			} else {
+				const auto index = int(position);
+				const auto left = line.cursorToX(index);
+				const auto right = line.cursorToX(std::min(index + 1, till));
+				const auto x = origin.x() + left + (right - left) * (position - index);
+				auto gradient = QLinearGradient(x - feather, 0., x + feather, 0.);
+				gradient.setColorAt(0., white(sung));
+				gradient.setColorAt(1., white(unsung));
+				p.setPen(QPen(QBrush(gradient), 1.));
+			}
+			line.draw(&p, origin);
+		}
 	}
 	// Центр строки index в координатах содержимого.
 	[[nodiscard]] double centerOf(int index) {
@@ -2245,33 +2759,23 @@ private:
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
-		if (!_big) {
-			auto path = QPainterPath();
-			path.addRoundedRect(QRectF(rect()), 20, 20);
-			p.setClipPath(path);
-			p.fillRect(rect(), st::windowBgOver);
-		}
-		const auto accent = CurrentCoverAccent();
-		if (_plasma && accent.isValid()) {
-			const auto w = width();
-			const auto h = height();
-			for (auto i = 0; i != 3; ++i) {
-				auto color = QColor::fromHsvF(
-					std::fmod(accent.hsvHueF() + 0.09 * (i - 1) + 1., 1.),
-					accent.hsvSaturationF() < 0.05
-						? 0.
-						: std::min(1., accent.hsvSaturationF() + 0.1),
-					std::min(1., accent.valueF() + 0.1 * i));
-				const auto cx = w * (0.5 + 0.38 * std::sin(_phase * (1. + 0.4 * i) + i * 2.1));
-				const auto cy = h * (0.5 + 0.34 * std::cos(_phase * (0.8 + 0.3 * i) + i * 1.3));
-				auto gradient = QRadialGradient(cx, cy, w * 0.55);
-				color.setAlpha(120);
-				gradient.setColorAt(0., color);
-				color.setAlpha(0);
-				gradient.setColorAt(1., color);
-				p.fillRect(rect(), gradient);
+		auto rounded = QPainterPath();
+		if (_big) {
+			if (_background) {
+				_background(p, e->rect());
 			}
-			p.fillRect(rect(), QColor(0, 0, 0, 90));
+		} else {
+			// Скругление нужно только подложке и затуханию, текст рисуется без маски.
+			rounded.addRoundedRect(QRectF(rect()), 20, 20);
+			p.save();
+			p.setClipPath(rounded);
+			p.fillRect(rect(), st::windowBgOver);
+			if (_plasma) {
+				if (const auto accent = CurrentCoverAccent(); accent.isValid()) {
+					p.drawImage(rect(), plasmaFrame(accent));
+				}
+			}
+			p.restore();
 		}
 		if (!_lyrics.found) {
 			p.setPen(_big ? QColor(255, 255, 255, 140) : st::windowSubTextFg->c);
@@ -2288,45 +2792,36 @@ private:
 				const auto w = (_lyrics.synced && i < int(_weights.size()))
 					? double(_weights[i])
 					: 0.;
-				// Дальние строки тусклее, текущая белая и крупнее.
+				// Дальние строки тусклее, уже спетые ещё тусклее, текущая белая.
 				const auto distance = _lyrics.synced
 					? std::abs(i - std::max(_current, 0))
 					: 1;
-				const auto rest = std::max(0.2, 0.55 - 0.07 * distance);
-				auto color = QColor(255, 255, 255);
+				const auto past = _lyrics.synced && i < _current;
+				const auto rest = !_lyrics.synced
+					? 0.78
+					: std::max(0.16, (past ? 0.34 : 0.44) - 0.06 * distance);
 				const auto cy = top + lineHeight / 2.;
-				auto alpha = rest + (1. - rest) * w;
+				auto edge = 1.;
 				if (_big) {
 					// Края текста растворяются в фоне плавно.
-					const auto edge = [](double t) {
+					const auto smooth = [](double t) {
 						t = std::clamp(t, 0., 1.);
 						return t * t * (3. - 2. * t);
 					};
-					alpha *= edge(cy / (height() * 0.2))
-						* edge((height() - cy) / (height() * 0.28));
+					edge = smooth(cy / (height() * 0.2))
+						* smooth((height() - cy) / (height() * 0.28));
 				}
-				color.setAlphaF(alpha);
-				p.setPen(color);
-				const auto scale = 1. + (kScaleMax() - 1.) * w;
-				p.save();
-				if (_big) {
-					p.translate(0., cy);
-				} else {
-					p.translate(width() / 2., cy);
-				}
-				p.scale(scale, scale);
-				if (_big) {
-					p.drawText(
-						QRectF(0., -lineHeight / 2. + style::ConvertScale(11), textWidth(), lineHeight - style::ConvertScale(11)),
-						Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
-						_lyrics.lines[i].text);
-				} else {
-				p.drawText(
-					QRectF(-textWidth() / 2., -lineHeight / 2. + 10, textWidth(), lineHeight - 10),
-					Qt::TextWordWrap | Qt::AlignHCenter | Qt::AlignTop,
-					_lyrics.lines[i].text);
-				}
-				p.restore();
+				// Без масштабирования: текст с трансформацией не берётся из кэша глифов и тормозит.
+				const auto origin = _big
+					? QPointF(0., top + style::ConvertScale(13))
+					: QPointF((width() - textWidth()) / 2., top + 10);
+				drawLayout(
+					p,
+					layoutOf(i),
+					origin,
+					(_lyrics.synced && i == _current) ? _fill : -1.,
+					(rest + (1. - rest) * w) * edge,
+					rest * edge);
 			}
 			top += lineHeight;
 			if (top > height() + 400) {
@@ -2337,6 +2832,7 @@ private:
 			return;
 		}
 		// Мягкое затухание сверху и снизу.
+		p.setClipPath(rounded);
 		auto fadeTop = QLinearGradient(0, 0, 0, 56);
 		fadeTop.setColorAt(0., QColor(0, 0, 0, 140));
 		fadeTop.setColorAt(1., QColor(0, 0, 0, 0));
@@ -2352,7 +2848,11 @@ private:
 	QTimer _timer;
 	QElapsedTimer _clock;
 	std::vector<int> _heights;
+	std::vector<std::unique_ptr<QTextLayout>> _layouts;
+	Fn<void(QPainter&, QRect)> _background;
+	QImage _plasmaFrame;
 	std::vector<float> _weights;
+	double _fill = 0.;
 	qint64 _position = 0;
 	qint64 _positionAt = 0;
 	qint64 _last = 0;
@@ -2397,6 +2897,7 @@ void LyricsView::hideEvent(QHideEvent *e) {
 
 void LyricsView::resizeEvent(QResizeEvent *e) {
 	_heights.clear();
+	_layouts.clear();
 	RpWidget::resizeEvent(e);
 }
 
@@ -2715,6 +3216,21 @@ private:
 	return { first, other, fixup(first, 0.28) };
 }
 
+// Обложка, уменьшенная и сильно размытая: фон полноэкранного плеера.
+[[nodiscard]] QImage CoverBackdrop(const QImage &cover) {
+	if (cover.isNull()) {
+		return QImage();
+	}
+	return Images::BlurLargeImage(
+		cover.scaled(
+			96,
+			96,
+			Qt::KeepAspectRatioByExpanding,
+			Qt::SmoothTransformation).convertToFormat(
+				QImage::Format_ARGB32_Premultiplied),
+		16);
+}
+
 constexpr auto kFullscreenSide = 56;
 
 // Полноэкранный плеер: размытый цветной фон, крупный текст песни, тонкая полоса времени.
@@ -2738,7 +3254,11 @@ public:
 	, _next(Ui::CreateChild<RoundGlyph>(this, Glyph::Next, 52))
 	, _repeat(Ui::CreateChild<RoundGlyph>(this, Glyph::Repeat, 44)) {
 		setFocusPolicy(Qt::StrongFocus);
+		setMouseTracking(true);
 		_view->setBig(true);
+		_view->setBackground([=](QPainter &p, QRect area) {
+			paintBackgroundPart(p, area, _view->pos() + area.topLeft());
+		});
 		_seek->setThin(true);
 		_volume->setThin(true);
 		_volume->setProgress(Core::App().settings().songVolume());
@@ -2896,6 +3416,53 @@ protected:
 	}
 	void mousePressEvent(QMouseEvent *e) override {
 		setFocus();
+		if (e->button() != Qt::LeftButton) {
+			return;
+		}
+		const auto hover = infoAt(e->pos());
+		if (hover == InfoHover::None) {
+			return;
+		}
+		const auto track = PlayingTrack();
+		const auto artist = track.artist.trimmed();
+		const auto controller = _controller;
+		if (hover == InfoHover::Title) {
+			// Альбомы с этим треком, затем остальные альбомы исполнителя.
+			const auto query = artist.isEmpty() ? track.title.trimmed() : artist;
+			const auto trackId = IsTelegramTrack(track) ? QString() : track.id;
+			close();
+			ShowAlbumsBox(controller, query, trackId);
+		} else if (!artist.isEmpty()) {
+			close();
+			ShowMusicBox(controller, artist);
+		}
+	}
+	void mouseMoveEvent(QMouseEvent *e) override {
+		setHover(infoAt(e->pos()));
+	}
+	void leaveEventHook(QEvent *e) override {
+		setHover(InfoHover::None);
+	}
+	enum class InfoHover { None, Title, Artist };
+	[[nodiscard]] QFont titleFont() const {
+		auto result = st::semiboldFont->f;
+		result.setPixelSize(style::ConvertScale(26));
+		result.setWeight(QFont::Bold);
+		return result;
+	}
+	[[nodiscard]] QFont artistFont() const {
+		auto result = st::normalFont->f;
+		result.setPixelSize(style::ConvertScale(16));
+		return result;
+	}
+	void setHover(InfoHover hover) {
+		if (_hover != hover) {
+			_hover = hover;
+			setCursor((hover == InfoHover::None)
+				? style::cur_default
+				: style::cur_pointer);
+			update(computeLayout().info);
+		}
 	}
 	struct Layout {
 		QRect left;
@@ -2930,7 +3497,7 @@ protected:
 			std::max(rightEdge - result.left.right() - 1 - gap, 0),
 			cardHeight);
 		const auto pad = s(24);
-		const auto below = s(20) + s(56) + s(14) + _seek->height() + s(18) + s(4) + _play->height() + s(14) + _volume->height();
+		const auto below = s(24) + s(64) + s(14) + _seek->height() + s(18) + s(4) + _play->height() + s(14) + _volume->height();
 		const auto side = std::max(
 			std::min(result.left.width() - 2 * pad, cardHeight - 2 * pad - below),
 			s(120));
@@ -2938,11 +3505,39 @@ protected:
 		const auto top = result.left.y() + std::max((cardHeight - total) / 2, pad / 2);
 		const auto x = result.left.x() + (result.left.width() - side) / 2;
 		result.cover = QRect(x, top, side, side);
-		result.info = QRect(x, top + side + s(20), side, s(56));
+		result.info = QRect(x, top + side + s(24), side, s(64));
 		result.seekTop = result.info.bottom() + 1 + s(14);
 		result.controlsTop = result.seekTop + _seek->height() + s(18) + s(4);
 		result.volumeTop = result.controlsTop + _play->height() + s(14);
 		return result;
+	}
+	[[nodiscard]] int infoAvailable(const Layout &layout) const {
+		return layout.info.width()
+			- (_heart->isHidden() ? 0 : _heart->width() + style::ConvertScale(12));
+	}
+	// Где под курсором название или исполнитель (по ширине самого текста, не всей строки).
+	[[nodiscard]] InfoHover infoAt(QPoint point) const {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto layout = computeLayout();
+		const auto available = infoAvailable(layout);
+		const auto textWidth = [&](const QFont &font, const QString &text) {
+			return std::min(QFontMetrics(font).horizontalAdvance(text), available);
+		};
+		const auto title = QRect(
+			layout.info.x(),
+			layout.info.y(),
+			textWidth(titleFont(), _title),
+			s(36));
+		const auto artist = QRect(
+			layout.info.x(),
+			layout.info.y() + s(38),
+			textWidth(artistFont(), _artist),
+			s(24));
+		return title.contains(point)
+			? InfoHover::Title
+			: (artist.contains(point) && !_artist.trimmed().isEmpty())
+			? InfoHover::Artist
+			: InfoHover::None;
 	}
 	[[nodiscard]] QColor accentColor() const {
 		const auto mix = _colorAnim.value(1.);
@@ -3040,12 +3635,13 @@ protected:
 			}
 		}
 		for (auto i = 0; i != int(tracks.size()); ++i) {
-			_queueList->add(object_ptr<Row>(
+			const auto row = _queueList->add(object_ptr<Row>(
 				_queueList,
 				_controller,
 				tracks[i],
 				i,
 				inQueue ? RowMode::Queue : RowMode::Context));
+			row->setOnGlass(true);
 		}
 		_queueList->resizeToWidth(_queueScroll->width());
 		auto at = inQueue ? queue.index : -1;
@@ -3064,14 +3660,15 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		p.fillRect(rect(), QColor(0x1c, 0x1c, 0x1c));
+		paintBackgroundPart(p, e->rect(), e->rect().topLeft());
 		const auto layout = computeLayout();
+		// Обложка и текст лежат прямо на фоне, очередь на полупрозрачной подложке.
 		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(0x28, 0x28, 0x28));
-		p.drawRoundedRect(layout.left, s(26), s(26));
-		p.drawRoundedRect(layout.right, s(26), s(26));
+		p.setBrush(QColor(255, 255, 255, 16));
 		if (layout.wide) {
 			p.drawRoundedRect(layout.queue, s(26), s(26));
+		} else if (_queueShown) {
+			p.drawRoundedRect(layout.right, s(26), s(26));
 		}
 		if (layout.wide || _queueShown) {
 			auto headerFont = st::semiboldFont->f;
@@ -3111,6 +3708,16 @@ protected:
 			p.translate(coverRect.center());
 			p.scale(scale, scale);
 			p.translate(-coverRect.center());
+			// Мягкая тень под обложкой: стопка полупрозрачных скруглений.
+			p.setPen(Qt::NoPen);
+			p.setBrush(QColor(0, 0, 0, 12));
+			for (auto i = 1; i <= 8; ++i) {
+				const auto grow = s(3) * i;
+				p.drawRoundedRect(
+					coverRect.adjusted(-grow, -grow + s(14), grow, grow + s(14)),
+					s(20) + grow,
+					s(20) + grow);
+			}
 			auto path = QPainterPath();
 			path.addRoundedRect(coverRect, s(20), s(20));
 			p.setClipPath(path);
@@ -3124,31 +3731,36 @@ protected:
 		drawCover(_coverWas, 1. - fade);
 		drawCover(_cover, fade);
 
-		// Название и исполнитель.
-		const auto available = layout.info.width() - (_heart->isHidden() ? 0 : _heart->width() + s(12));
-		const auto drawInfo = [&](const QString &title, const QString &artist, double opacity) {
+		// Название и исполнитель; под курсором подчёркнуты: по ним открываются альбомы и поиск исполнителя.
+		const auto available = infoAvailable(layout);
+		const auto drawInfo = [&](
+				const QString &title,
+				const QString &artist,
+				double opacity,
+				bool current) {
 			if (opacity <= 0.) {
 				return;
 			}
-			auto titleFont = st::semiboldFont->f;
-			titleFont.setPixelSize(s(21));
-			p.setFont(titleFont);
+			auto font = titleFont();
+			font.setUnderline(current && _hover == InfoHover::Title);
+			p.setFont(font);
 			p.setPen(QColor(255, 255, 255, int(255 * opacity)));
 			p.drawText(
-				QRect(layout.info.x(), layout.info.y(), available, s(30)),
+				QRect(layout.info.x(), layout.info.y(), available, s(36)),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(titleFont).elidedText(title, Qt::ElideRight, available));
-			auto artistFont = st::normalFont->f;
-			artistFont.setPixelSize(s(15));
-			p.setFont(artistFont);
-			p.setPen(QColor(255, 255, 255, int(150 * opacity)));
+				QFontMetrics(font).elidedText(title, Qt::ElideRight, available));
+			const auto artistHover = current && _hover == InfoHover::Artist;
+			font = artistFont();
+			font.setUnderline(artistHover);
+			p.setFont(font);
+			p.setPen(QColor(255, 255, 255, int((artistHover ? 235 : 170) * opacity)));
 			p.drawText(
-				QRect(layout.info.x(), layout.info.y() + s(32), available, s(22)),
+				QRect(layout.info.x(), layout.info.y() + s(38), available, s(24)),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(artistFont).elidedText(artist, Qt::ElideRight, available));
+				QFontMetrics(font).elidedText(artist, Qt::ElideRight, available));
 		};
-		drawInfo(_wasTitle, _wasArtist, 1. - fade);
-		drawInfo(_title, _artist, fade);
+		drawInfo(_wasTitle, _wasArtist, 1. - fade, false);
+		drawInfo(_title, _artist, fade, true);
 
 		// Время под полосой.
 		auto timeFont = st::normalFont->f;
@@ -3167,6 +3779,82 @@ protected:
 	}
 
 private:
+	// Фон собирается раз на трек в маленькую картинку и растягивается: он всё равно размыт.
+	void ensureBackground() {
+		const auto ratio = style::DevicePixelRatio();
+		if (!_backgroundDirty && _background.size() == size() * ratio) {
+			return;
+		}
+		_backgroundDirty = false;
+		constexpr auto kDown = 4;
+		auto small = QImage(
+			QSize(width() / kDown + 1, height() / kDown + 1),
+			QImage::Format_ARGB32_Premultiplied);
+		small.fill(Qt::black);
+		{
+			auto q = QPainter(&small);
+			auto hq = PainterHighQualityEnabler(q);
+			q.scale(1. / kDown, 1. / kDown);
+			composeBackground(q);
+		}
+		_background = QPixmap::fromImage(small.scaled(
+			size() * ratio,
+			Qt::IgnoreAspectRatio,
+			Qt::SmoothTransformation));
+		_background.setDevicePixelRatio(ratio);
+	}
+	// Кусок фона (area у painter, from у плеера); при смене трека старый кадр перетекает в новый.
+	void paintBackgroundPart(QPainter &p, QRect area, QPoint from) {
+		ensureBackground();
+		const auto ratio = style::DevicePixelRatio();
+		const auto source = QRect(from * ratio, area.size() * ratio);
+		const auto mix = _colorAnim.value(1.);
+		if (mix < 1. && _backgroundWas.size() == _background.size()) {
+			p.drawPixmap(area, _backgroundWas, source);
+			p.setOpacity(mix);
+			p.drawPixmap(area, _background, source);
+			p.setOpacity(1.);
+		} else {
+			p.drawPixmap(area, _background, source);
+		}
+	}
+	void composeBackground(QPainter &q) {
+		if (!_ready || !Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
+			q.fillRect(rect(), QColor(0x14, 0x14, 0x14));
+			return;
+		}
+		const auto color = [&](int i) {
+			return _to[i];
+		};
+		q.fillRect(rect(), color(2));
+		// Размытая обложка с запасом по краям: у размытия края темнее.
+		const auto side = std::max(width(), height()) * 1.3;
+		const auto target = QRectF(
+			(width() - side) / 2.,
+			(height() - side) / 2.,
+			side,
+			side);
+		if (!_backdrop.isNull()) {
+			q.drawImage(target, _backdrop);
+		}
+		const auto glow = [&](QColor c, QPointF center, double radius, int alpha) {
+			auto gradient = QRadialGradient(center, radius);
+			c.setAlpha(alpha);
+			gradient.setColorAt(0., c);
+			c.setAlpha(0);
+			gradient.setColorAt(1., c);
+			q.fillRect(rect(), gradient);
+		};
+		glow(color(0), QPointF(width() * 0.12, height() * 0.08), width() * 0.7, 110);
+		glow(color(1), QPointF(width() * 0.92, height() * 0.96), width() * 0.6, 80);
+		// Затемнение, чтобы белый текст читался на любой обложке.
+		q.fillRect(rect(), QColor(0, 0, 0, 105));
+		auto shade = QLinearGradient(0., 0., 0., height());
+		shade.setColorAt(0., QColor(0, 0, 0, 0));
+		shade.setColorAt(1., QColor(0, 0, 0, 90));
+		q.fillRect(rect(), shade);
+	}
+
 	void refresh() {
 		const auto track = PlayingTrack();
 		if (track.id.isEmpty()) {
@@ -3203,7 +3891,9 @@ private:
 					size,
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
-			if (!_cover.isNull()) {
+			_backdrop = CoverBackdrop(cover);
+			if (_ready) {
+				_backgroundWas = _background;
 			}
 			const auto palette = CoverPalette(cover, CurrentCoverAccent());
 			const auto mix = _colorAnim.value(1.);
@@ -3212,8 +3902,18 @@ private:
 				_to[i] = palette[i];
 			}
 			_ready = true;
-			_colorAnim.start([=] { _seek->setFillColor(accentColor()); update(); }, 0., 1., 1200, anim::easeOutCubic);
+			_backgroundDirty = true;
+			_colorAnim.start([=] {
+				_seek->setFillColor(accentColor());
+				if (!_colorAnim.animating()) {
+					_backgroundWas = QPixmap();
+				}
+				// Текст рисует свой кусок фона сам: без этого он остаётся в цветах прошлого трека.
+				_view->update();
+				update();
+			}, 0., 1., 900, anim::easeOutCubic);
 			_seek->setFillColor(accentColor());
+			_view->update();
 			update();
 		}
 		const auto playing = state.state == Media::Player::State::Playing
@@ -3289,6 +3989,10 @@ private:
 	std::array<QColor, 3> _to;
 	QPixmap _cover;
 	QPixmap _coverWas;
+	QImage _backdrop;
+	QPixmap _background;
+	QPixmap _backgroundWas;
+	bool _backgroundDirty = true;
 	qint64 _coverKey = 0;
 	QString _title;
 	QString _artist;
@@ -3300,6 +4004,7 @@ private:
 	bool _isPlaying = true;
 	bool _closing = false;
 	bool _ready = false;
+	InfoHover _hover = InfoHover::None;
 
 };
 
@@ -3345,6 +4050,26 @@ void RefreshAvailability() {
 			if (state.id == id && state.found != lyrics.found) {
 				state.found = lyrics.found;
 				state.changes.fire({});
+			}
+		});
+	// У трека из чата обложка — мелкая миниатюра документа: ищем ту же
+	// обложку в высоком качестве тем же поиском, что и текст.
+	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
+	const auto document = current.audio();
+	if (!document
+		|| OwnsTrack(current)
+		|| !CoverForDocument(document->id).isNull()) {
+		return;
+	}
+	const auto documentId = document->id;
+	FetchArtwork(
+		id,
+		track.title,
+		track.artist,
+		track.durationMs,
+		[=](QImage image) {
+			if (!image.isNull()) {
+				SetCover(documentId, std::move(image));
 			}
 		});
 }
@@ -3438,6 +4163,8 @@ QImage CoverForPlayback(const AudioMsgId &current) {
 		return {};
 	} else if (OwnsTrack(current)) {
 		return CoverForDocument(document->id);
+	} else if (auto hq = CoverForDocument(document->id); !hq.isNull()) {
+		return hq;
 	}
 	if (const auto media = document->activeMediaView()) {
 		if (const auto image = media->thumbnail()) {
@@ -3987,6 +4714,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			if (OwnsTrack(instance->current(AudioMsgId::Type::Song))
 				&& !queue.current.id.isEmpty()) {
 				SetLiked(queue.current, !IsLiked(queue.current.id));
+				heart->animateLike(IsLiked(queue.current.id));
 			}
 		});
 		previous->setClickedCallback([=] { step(-1); });
@@ -4146,10 +4874,19 @@ void DebugSaveTrack(int index) {
 	}
 }
 
-void ShowMusicBox(
+namespace {
+
+void ShowMusicBoxWith(
 		not_null<Window::SessionController*> controller,
-		const QString &initialQuery) {
+		const QString &initialQuery,
+		bool albumsMode,
+		const QString &albumsTrackId) {
 	BindController(controller);
+	if (albumsMode) {
+		// Альбомы есть только у SoundCloud.
+		QueueState().telegramSearch = false;
+		QueueState().tab = 0;
+	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		Mokagram::Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();
@@ -4240,6 +4977,34 @@ void ShowMusicBox(
 			QMargins(16, 0, 16, 4),
 			style::al_justify);
 		chooseChat->resize(chooseChat->width(), 36);
+
+		// Что искать на SoundCloud: треки или альбомы.
+		const auto kinds = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(16, 0, 16, 0));
+		kinds->resize(kinds->width(), 44);
+		const auto kindSwitch = Ui::CreateChild<SourceSwitch>(
+			kinds,
+			QString::fromUtf8(Mokagram::Lang::Tr("Треки")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Альбомы")));
+		kinds->widthValue(
+		) | rpl::on_next([=](int width) {
+			kindSwitch->setGeometry(0, 4, width, 36);
+		}, kinds->lifetime());
+		struct AlbumsState {
+			bool active = false;
+			std::vector<Album> found;
+			std::optional<Album> opened;
+			std::vector<Track> openedTracks;
+			QString lastQuery;
+			QString trackId;
+			int generation = 0;
+		};
+		const auto albums = box->lifetime().make_state<AlbumsState>();
+		albums->active = albumsMode;
+		albums->trackId = albumsTrackId;
+		kindSwitch->setChats(albumsMode);
+		kindSwitch->finishAnimating();
 
 		// Вкладки: поиск, лайкнутые, подборка.
 		const auto tabs = content->add(
@@ -4341,10 +5106,83 @@ void ShowMusicBox(
 		const auto searchState = box->lifetime().make_state<SearchState>();
 		const auto runSearch = std::make_shared<Fn<void()>>();
 
+		// Правая кнопка по стикеру: сменить на свой или вернуть стандартный.
+		struct HintStickerState {
+			base::unique_qptr<Ui::PopupMenu> menu;
+			base::unique_qptr<ChatHelpers::TabbedPanel> panel;
+		};
+		const auto hintSticker = box->lifetime().make_state<HintStickerState>();
+		const auto chooseHintSticker = [=](QPoint global) {
+			const auto outer = box->getDelegate()->outerContainer();
+			if (!outer) {
+				return;
+			}
+			if (!hintSticker->panel) {
+				using Selector = ChatHelpers::TabbedSelector;
+				hintSticker->panel = base::make_unique_q<ChatHelpers::TabbedPanel>(
+					outer.data(),
+					controller,
+					object_ptr<Selector>(
+						nullptr,
+						controller->uiShow(),
+						Window::GifPauseReason::Layer,
+						Selector::Mode::StickersOnly));
+				const auto panel = hintSticker->panel.get();
+				panel->setDropDown(false);
+				panel->setDesiredHeightValues(
+					1.,
+					st::emojiPanMinHeight / 2,
+					st::emojiPanMinHeight);
+				panel->hide();
+				panel->selector()->setCurrentPeer(controller->session().user());
+				panel->selector()->fileChosen(
+				) | rpl::on_next([=](ChatHelpers::FileChosen data) {
+					SaveHintSticker(data.document);
+					panel->hideAnimated();
+				}, panel->lifetime());
+			}
+			const auto panel = hintSticker->panel.get();
+			const auto local = outer->mapFromGlobal(global);
+			panel->moveBottomRight(local.y(), local.x() + panel->width() / 2);
+			panel->showAnimated();
+		};
+		const auto showHintMenu = [=](QPoint global) {
+			hintSticker->menu = base::make_unique_q<Ui::PopupMenu>(
+				box,
+				st::popupMenuWithIcons);
+			const auto menu = hintSticker->menu.get();
+			menu->addAction(
+				QString::fromUtf8(Mokagram::Lang::Tr("Сменить стикер")),
+				[=] { chooseHintSticker(global); },
+				&st::menuIconStickers);
+			if (!Mokagram::Settings::String(
+					QString::fromLatin1(kHintStickerKey)).isEmpty()) {
+				menu->addAction(
+					QString::fromUtf8(Mokagram::Lang::Tr("Вернуть стандартный")),
+					[] { SaveHintSticker(nullptr); },
+					&st::menuIconRestore);
+			}
+			menu->popup(global);
+		};
+
 		// Список: сверху строка действий (для подборки) и пояснение, дальше треки.
+		const auto openAlbum = std::make_shared<Fn<void(Album)>>();
+		const auto closeAlbum = std::make_shared<Fn<void()>>();
 		const auto fill = [=] {
 			list->clear();
 			const auto &queue = QueueState();
+			const auto albumsShown = albums->active
+				&& queue.tab == 0
+				&& !queue.telegramSearch;
+			if (albumsShown && albums->opened) {
+				list->add(
+					object_ptr<AlbumBar>(
+						list,
+						albums->opened->title,
+						[=] { crl::on_main(box, [=] { (*closeAlbum)(); }); },
+						[=] { PlayAll(albums->openedTracks); }),
+					QMargins(10, 0, 16, 6));
+			}
 			if (queue.tab == 2 && !queue.forYou.empty()) {
 				list->add(
 					object_ptr<PicksBar>(
@@ -4358,13 +5196,23 @@ void ShowMusicBox(
 					QMargins(16, 4, 16, 10));
 			}
 			if (*statusSticker) {
-				list->add(object_ptr<StickerHint>(list));
+				list->add(object_ptr<StickerHint>(
+					list,
+					&controller->session(),
+					showHintMenu));
 			} else if (!statusText->isEmpty() && *statusLoading) {
 				list->add(object_ptr<LoadingView>(list, *statusText));
 			} else if (!statusText->isEmpty()) {
 				list->add(
 					object_ptr<Ui::FlatLabel>(list, *statusText, st::boxLabel),
 					QMargins(24, 8, 24, 8));
+			}
+			if (albumsShown && !albums->opened) {
+				for (const auto &album : albums->found) {
+					list->add(object_ptr<AlbumRow>(list, album, [=] {
+						crl::on_main(box, [=] { (*openAlbum)(album); });
+					}));
+				}
 			}
 			for (auto i = 0; i != int(queue.results.size()); ++i) {
 				list->add(object_ptr<Row>(list, controller, queue.results[i], i));
@@ -4397,6 +5245,98 @@ void ShowMusicBox(
 			*statusLoading = loading;
 			*statusSticker = sticker;
 			fill();
+		};
+		const auto albumsTop = [=] {
+			return tabs->y() + tabs->height();
+		};
+		*openAlbum = [=](Album album) {
+			animateChange(albumsTop(), 1, [=] {
+				++albums->generation;
+				albums->opened = album;
+				albums->openedTracks.clear();
+				QueueState().results.clear();
+				showStatus(QString::fromUtf8(Mokagram::Lang::Tr("Загружаю альбом…")), true);
+			});
+			const auto generation = albums->generation;
+			AlbumTracks(album.id, crl::guard(box, [=](std::vector<Track> tracks, QString error) {
+				if (generation != albums->generation) {
+					return;
+				}
+				albums->openedTracks = std::move(tracks);
+				auto &queue = QueueState();
+				if (!albums->active || queue.tab != 0 || queue.telegramSearch) {
+					return;
+				}
+				queue.results = albums->openedTracks;
+				showStatus(!error.isEmpty()
+					? error
+					: albums->openedTracks.empty()
+					? QString::fromUtf8(Mokagram::Lang::Tr("В альбоме нет доступных треков"))
+					: QString());
+			}));
+		};
+		*closeAlbum = [=] {
+			animateChange(albumsTop(), -1, [=] {
+				++albums->generation;
+				albums->opened.reset();
+				albums->openedTracks.clear();
+				QueueState().results.clear();
+				showStatus(albums->found.empty()
+					? QString::fromUtf8(Mokagram::Lang::Tr("Альбомы не найдены"))
+					: QString());
+			});
+		};
+		const auto searchAlbums = [=](const QString &query) {
+			const auto generation = ++albums->generation;
+			albums->lastQuery = query;
+			albums->opened.reset();
+			albums->openedTracks.clear();
+			albums->found.clear();
+			QueueState().results.clear();
+			showStatus(QString::fromUtf8(Mokagram::Lang::Tr("Ищу альбомы…")), true);
+			const auto finish = [=](
+					const std::vector<Album> &first,
+					const std::vector<Album> &rest,
+					const QString &error) {
+				if (generation != albums->generation) {
+					return;
+				}
+				auto seen = base::flat_set<QString>();
+				albums->found.clear();
+				for (const auto list : { &first, &rest }) {
+					for (const auto &album : *list) {
+						if (seen.emplace(album.id).second) {
+							albums->found.push_back(album);
+						}
+					}
+				}
+				if (!albums->active
+					|| QueueState().tab != 0
+					|| QueueState().telegramSearch) {
+					return;
+				}
+				showStatus(!albums->found.empty()
+					? QString()
+					: !error.isEmpty()
+					? error
+					: QString::fromUtf8(Mokagram::Lang::Tr("Альбомы не найдены")));
+			};
+			const auto byQuery = [=](std::vector<Album> first) {
+				if (query.isEmpty()) {
+					finish(first, {}, QString());
+					return;
+				}
+				SearchAlbums(query, 20, crl::guard(box, [=](std::vector<Album> rest, QString error) {
+					finish(first, rest, error);
+				}));
+			};
+			// Альбомы с играющим треком первыми; только для запроса, с которым окно открыли.
+			const auto trackId = std::exchange(albums->trackId, QString());
+			if (!trackId.isEmpty()) {
+				TrackAlbums(trackId, crl::guard(box, byQuery));
+			} else {
+				byQuery({});
+			}
 		};
 		searchState->chats = std::make_unique<ChatMusicSearch>(
 			&controller->session(),
@@ -4437,6 +5377,9 @@ void ShowMusicBox(
 			queue.tab = tab;
 			sources->setVisible(tab == 0);
 			sources->resize(sources->width(), (tab == 0) ? 48 : 0);
+			const auto kindsShown = (tab == 0) && !queue.telegramSearch;
+			kinds->setVisible(kindsShown);
+			kinds->resize(kinds->width(), kindsShown ? 44 : 0);
 			chooseChat->setVisible(tab == 0 && queue.telegramSearch);
 			chooseChat->resize(chooseChat->width(), queue.telegramSearch ? 36 : 0);
 			tabs->resize(tabs->width(), queue.telegramSearch ? 0 : 36);
@@ -4445,7 +5388,15 @@ void ShowMusicBox(
 			tabSearch->setActive(tab == 0);
 			tabLiked->setActive(tab == 1);
 			tabForYou->setActive(tab == 2);
-			if (tab == 0) {
+			if (tab == 0 && kindsShown && albums->active) {
+				queue.results = albums->opened
+					? albums->openedTracks
+					: std::vector<Track>();
+				showStatus(
+					QString(),
+					false,
+					!albums->opened && albums->found.empty());
+			} else if (tab == 0) {
 				queue.results = queue.searchResults;
 				showStatus(QString(), false, queue.searchResults.empty());
 			} else if (tab == 1) {
@@ -4491,6 +5442,16 @@ void ShowMusicBox(
 		const auto search = [=] {
 			const auto query = input->getLastText().trimmed();
 			auto &queue = QueueState();
+			if (albums->active && !queue.telegramSearch) {
+				if (query.isEmpty() && albums->trackId.isEmpty()) {
+					return;
+				}
+				if (queue.tab != 0) {
+					switchTab(0);
+				}
+				searchAlbums(query);
+				return;
+			}
 			if (query.isEmpty() && !queue.telegramSearch) {
 				return;
 			}
@@ -4567,6 +5528,9 @@ void ShowMusicBox(
 			chooseChat->setVisible(chats && QueueState().tab == 0);
 			chooseChat->resize(chooseChat->width(), chats ? 36 : 0);
 			tabs->resize(tabs->width(), chats ? 0 : 36);
+			const auto kindsShown = !chats && QueueState().tab == 0;
+			kinds->setVisible(kindsShown);
+			kinds->resize(kinds->width(), kindsShown ? 44 : 0);
 			if (QueueState().selectedChat) {
 				if (const auto peer = controller->session().data().peer(QueueState().selectedChat)) {
 					chooseChat->setText(rpl::single(
@@ -4589,6 +5553,8 @@ void ShowMusicBox(
 			input->setPlaceholder(rpl::single(input->getLastText().isEmpty()
 				? QString::fromUtf8(Mokagram::Lang::Tr(chats
 					? "Поиск музыки в чатах и группах"
+					: albums->active
+					? "Поиск альбомов на SoundCloud"
 					: "Поиск на SoundCloud"))
 				: QString()));
 		};
@@ -4615,11 +5581,33 @@ void ShowMusicBox(
 				chats ? 1 : -1,
 				[=] { setSource(chats); });
 		});
+		kindSwitch->setChangedCallback([=](bool toAlbums) {
+			animateChange(
+				kinds->y() + kinds->height(),
+				toAlbums ? 1 : -1,
+				[=] {
+					albums->active = toAlbums;
+					kindSwitch->setChats(toAlbums);
+					updateSource();
+					const auto query = input->getLastText().trimmed();
+					const auto last = toAlbums
+						? albums->lastQuery
+						: QueueState().lastQuery;
+					if (!query.isEmpty() && query != last) {
+						search();
+					} else {
+						setTab(0);
+					}
+				});
+		});
 		// Поиск по мере набора: запускаем после короткой паузы между буквами.
 		const auto typingTimer = box->lifetime().make_state<base::Timer>();
 		typingTimer->setCallback([=] {
 			const auto query = input->getLastText().trimmed();
-			if (query.size() >= 2 && query != QueueState().lastQuery) {
+			const auto last = (albums->active && !QueueState().telegramSearch)
+				? albums->lastQuery
+				: QueueState().lastQuery;
+			if (query.size() >= 2 && query != last) {
 				search();
 			}
 		});
@@ -4632,8 +5620,9 @@ void ShowMusicBox(
 			search();
 		}, input->lifetime());
 		input->setFocusFast();
-		if (!initialQuery.isEmpty()) {
+		if (!initialQuery.isEmpty() || albumsMode) {
 			input->setText(initialQuery);
+			setTab(0);
 			search();
 		} else {
 			if (!QueueState().lastQuery.isEmpty()) {
@@ -4648,6 +5637,21 @@ void ShowMusicBox(
 		updateSource();
 		sourceSwitch->finishAnimating();
 	}));
+}
+
+} // namespace
+
+void ShowMusicBox(
+		not_null<Window::SessionController*> controller,
+		const QString &initialQuery) {
+	ShowMusicBoxWith(controller, initialQuery, false, QString());
+}
+
+void ShowAlbumsBox(
+		not_null<Window::SessionController*> controller,
+		const QString &query,
+		const QString &trackId) {
+	ShowMusicBoxWith(controller, query, true, trackId);
 }
 
 } // namespace Mokagram::Music

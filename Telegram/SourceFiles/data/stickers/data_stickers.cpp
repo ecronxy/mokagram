@@ -524,7 +524,8 @@ void Stickers::checkFavedLimit(
 		std::shared_ptr<ChatHelpers::Show> show) {
 	const auto session = &_owner->session();
 	const auto limits = Data::PremiumLimits(session);
-	if (set.stickers.size() <= limits.stickersFavedCurrent()) {
+	// Избранное без лимита (свой хвост держится локально).
+	if (true || set.stickers.size() <= limits.stickersFavedCurrent()) {
 		return;
 	}
 	auto removing = set.stickers.back();
@@ -898,6 +899,14 @@ void Stickers::specialSetReceived(
 				auto index = custom->stickers.indexOf(document);
 				if (index >= 0) {
 					custom->stickers.removeAt(index);
+				}
+			}
+		}
+		if (setId == FavedSetId) {
+			// Сервер режет избранное по своему лимиту, хвост держим локально.
+			for (const auto &old : set->stickers) {
+				if (pack.indexOf(old) < 0) {
+					pack.push_back(old);
 				}
 			}
 		}

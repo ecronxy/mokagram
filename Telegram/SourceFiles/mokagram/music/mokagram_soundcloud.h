@@ -65,6 +65,30 @@ void UserTracks(
 	int limit,
 	Fn<void(std::vector<Track>)> done);
 
+struct Album {
+	QString id;
+	QString title;
+	QString artist;
+	QString artworkUrl;
+	int trackCount = 0;
+};
+
+// Альбомы по запросу.
+void SearchAlbums(
+	const QString &query,
+	int limit,
+	Fn<void(std::vector<Album>, QString error)> done);
+
+// Альбомы, в которые входит трек.
+void TrackAlbums(
+	const QString &trackId,
+	Fn<void(std::vector<Album>)> done);
+
+// Треки альбома по порядку: недостающие в ответе подгружаются отдельно по id.
+void AlbumTracks(
+	const QString &albumId,
+	Fn<void(std::vector<Track>, QString error)> done);
+
 // Поиск с произвольным лимитом (для подбора кандидатов).
 void SearchLimited(
 	const QString &query,

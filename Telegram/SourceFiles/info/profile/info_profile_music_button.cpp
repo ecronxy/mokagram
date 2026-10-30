@@ -40,7 +40,8 @@ bool MusicShown() {
 bool MusicAttachedTo(not_null<QWidget*> bar) {
 	const auto bottom = bar->mapToGlobal(QPoint(0, bar->height())).y();
 	for (const auto widget : MusicWidgets) {
-		if (std::abs(widget->mapToGlobal(QPoint()).y() - bottom) <= 2) {
+		// Зазор между шапкой и плашкой бывает больше пикселя (масштаб, отступы).
+		if (std::abs(widget->mapToGlobal(QPoint()).y() - bottom) <= 40) {
 			return true;
 		}
 	}
