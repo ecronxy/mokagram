@@ -28,6 +28,12 @@ void ShowMusicBox(
 	not_null<Window::SessionController*> controller,
 	const QString &initialQuery = QString());
 
+// Окно музыки сразу в поиске альбомов; альбомы с треком trackId (SoundCloud) идут первыми.
+void ShowAlbumsBox(
+	not_null<Window::SessionController*> controller,
+	const QString &query,
+	const QString &trackId = QString());
+
 // Мост к плееру клиента: если играет трек из очереди SoundCloud, кнопки
 // «вперёд/назад», повтор и перемешивание работают по этой очереди.
 [[nodiscard]] bool OwnsTrack(const AudioMsgId &id);
