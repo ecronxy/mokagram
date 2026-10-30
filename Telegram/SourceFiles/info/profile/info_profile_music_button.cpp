@@ -20,6 +20,7 @@ namespace Info::Profile {
 namespace {
 
 int MusicCount = 0;
+std::vector<not_null<QWidget*>> MusicWidgets;
 rpl::event_stream<> MusicChanges;
 
 } // namespace
@@ -36,6 +37,16 @@ bool MusicShown() {
 	return MusicCount > 0;
 }
 
+bool MusicAttachedTo(not_null<QWidget*> bar) {
+	const auto bottom = bar->mapToGlobal(QPoint(0, bar->height())).y();
+	for (const auto widget : MusicWidgets) {
+		if (std::abs(widget->mapToGlobal(QPoint()).y() - bottom) <= 2) {
+			return true;
+		}
+	}
+	return false;
+}
+
 rpl::producer<> MusicShownChanges() {
 	return MusicChanges.events();
 }
@@ -49,17 +60,42 @@ MusicButton::MusicButton(
 , _noteWidth(st::normalFont->width(_noteSymbol)) {
 	updateData(std::move(data));
 	setClickedCallback(std::move(handler));
-	++MusicCount;
 	MusicBand = Ui::BlendColors(st::boxDividerBg->c, Qt::black, 0.12);
-	MusicChanges.fire({});
 }
 
 MusicButton::~MusicButton() {
-	--MusicCount;
+	setCounted(false);
+}
+
+// Mokagram: шапка считает только видимые плашки, скрытая (другая вкладка,
+// режим редактирования) не должна оставлять тёмные уголки под шапкой.
+void MusicButton::setCounted(bool counted) {
+	if (_counted == counted) {
+		return;
+	}
+	_counted = counted;
+	MusicCount += counted ? 1 : -1;
+	if (counted) {
+		MusicWidgets.push_back(this);
+	} else {
+		MusicWidgets.erase(
+			ranges::remove(MusicWidgets, not_null<QWidget*>(this)),
+			end(MusicWidgets));
+	}
 	if (!MusicCount) {
 		MusicBand = std::nullopt;
 	}
 	MusicChanges.fire({});
+}
+
+void MusicButton::showEvent(QShowEvent *e) {
+	RippleButton::showEvent(e);
+	setCounted(true);
+}
+
+void MusicButton::hideEvent(QHideEvent *e) {
+	RippleButton::hideEvent(e);
+	setCounted(false);
 }
 
 void MusicButton::updateData(MusicButtonData data) {

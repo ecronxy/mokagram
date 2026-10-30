@@ -2908,7 +2908,10 @@ void TopBar::paintUserpic(QPainter &p, const QRect &geometry) {
 
 void TopBar::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
-	if (!MusicShown()) {
+	// Mokagram: прямой низ и заливка уголков нужны, только если плашка музыки
+	// реально стоит под шапкой; у свёрнутой шапки плашка уходит за экран.
+	const auto music = MusicShown() && MusicAttachedTo(this);
+	if (!music) {
 		// Mokagram: без музыки шапка (и свёрнутая тоже) скруглена целиком.
 		auto path = QPainterPath();
 		path.addRoundedRect(QRectF(rect()), 32., 32.);
@@ -2955,7 +2958,7 @@ void TopBar::paintEvent(QPaintEvent *e) {
 			constexpr auto radius = 32;
 			auto clipPath = QPainterPath();
 			clipPath.addRoundedRect(
-				rect() + QMargins{ 0, 0, 0, MusicShown() ? radius + 1 : 0 },
+				rect() + QMargins{ 0, 0, 0, music ? radius + 1 : 0 },
 				radius,
 				radius);
 			auto hq = PainterHighQualityEnabler(p);
@@ -2982,7 +2985,7 @@ void TopBar::paintEvent(QPaintEvent *e) {
 
 	paintTabSubtitle(p);
 
-	if (MusicShown()) {
+	if (music) {
 		const auto radius = std::min({ 32, width() / 2, height() / 2 });
 		p.setClipping(false);
 		auto hq = PainterHighQualityEnabler(p);

@@ -8,6 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/player/media_player_widget.h"
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/music/mokagram_music_ui.h"
+#include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/lang/mokagram_lang.h"
 #include "data/data_document.h"
 #include "ui/painter.h"
 #include "styles/style_menu_icons.h"
@@ -26,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/shadow.h"
+#include "ui/abstract_button.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/dropdown_menu.h"
@@ -82,6 +85,7 @@ Widget::Widget(
 , _volumeToggle(rightControls(), st::mediaPlayerVolumeToggle)
 , _repeatToggle(rightControls(), st::mediaPlayerRepeatButton)
 , _orderToggle(rightControls(), st::mediaPlayerOrderButton)
+, _lyricsToggle(rightControls())
 , _speedToggle(rightControls(), st::mediaPlayerSpeedButton)
 , _close(this, st::mediaPlayerClose)
 , _shadow(this)
@@ -167,6 +171,54 @@ Widget::Widget(
 	});
 	_playPause->setClickedCallback([=] {
 		instance()->playPauseCancelClicked(_type);
+	});
+
+	// Mokagram: кнопка «Текст песни», открывает панель справа от чата.
+	_lyricsToggle->resize(st::mediaPlayerRepeatButton.width, st::mediaPlayerRepeatButton.height);
+	_lyricsToggle->setPointerCursor(true);
+	_lyricsToggle->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Текст песни")));
+	_lyricsToggle->paintOn([=](QPainter &p) {
+		const auto on = Mokagram::Settings::Bool(u"lyrics.enabled"_q);
+		const auto usable = on || Mokagram::Music::LyricsAvailable();
+		auto hq = PainterHighQualityEnabler(p);
+		auto color = st::mediaPlayerActiveFg->c;
+		color.setAlphaF(!usable
+			? 0.22
+			: (on || _lyricsToggle->isOver())
+			? 1.
+			: 0.55);
+		auto pen = QPen(color, 1.7);
+		pen.setCapStyle(Qt::RoundCap);
+		p.setPen(pen);
+		const auto x = (_lyricsToggle->width() - 16) / 2.;
+		auto y = (_lyricsToggle->height() - 10) / 2. + 3.;
+		p.drawLine(QPointF(x, y), QPointF(x + 16, y));
+		p.drawLine(QPointF(x, y + 5), QPointF(x + 11, y + 5));
+		p.drawLine(QPointF(x, y + 10), QPointF(x + 14, y + 10));
+	});
+	const auto updateLyricsToggle = [=] {
+		const auto usable = Mokagram::Settings::Bool(u"lyrics.enabled"_q)
+			|| Mokagram::Music::LyricsAvailable();
+		_lyricsToggle->setDisabled(!usable);
+		_lyricsToggle->setPointerCursor(usable);
+		_lyricsToggle->update();
+	};
+	Mokagram::Music::LyricsAvailabilityChanges(
+	) | rpl::on_next(updateLyricsToggle, lifetime());
+	updateLyricsToggle();
+	_lyricsToggle->setClickedCallback([=] {
+		Mokagram::Music::ToggleLyricsPanel(_controller, this);
+		_lyricsToggle->update();
+	});
+	Mokagram::Settings::Changed(
+	) | rpl::filter([](const QString &key) {
+		return key == u"lyrics.enabled"_q;
+	}) | rpl::on_next([=] {
+		updateLyricsToggle();
+		Mokagram::Music::SyncLyricsPanel(_controller, this);
+	}, lifetime());
+	crl::on_main(this, [=] {
+		Mokagram::Music::SyncLyricsPanel(_controller, this);
 	});
 
 	updateVolumeToggleIcon();
@@ -467,6 +519,9 @@ void Widget::updateControlsGeometry() {
 		_orderToggle->moveToRight(right, 0); right += _orderToggle->width();
 	}
 	_volumeToggle->moveToRight(right, 0); right += _volumeToggle->width();
+	if (_type == AudioMsgId::Type::Song) {
+		_lyricsToggle->moveToRight(right, 0); right += _lyricsToggle->width();
+	}
 
 	updateControlsWrapGeometry();
 
@@ -711,19 +766,26 @@ int Widget::songTextWidth() const {
 	auto natural = _nameLabel->naturalWidth();
 	const auto name = SongNameForPlayback(_lastSongId);
 	natural = std::max(natural, st::normalFont->width(name.performer));
-	return std::clamp(natural, 40, std::max(available, 40));
+	const auto beforeButtons = songButtonsLeft() - 12 - getNameLeft();
+	return std::clamp(
+		natural,
+		40,
+		std::max({ std::min(available, beforeButtons), 40 }));
 }
 
 int Widget::songButtonsLeft() const {
 	// По центру между названием и таймером.
 	const auto fade = st::mediaPlayerControlsFade.width();
 	const auto controls = getTimeRight() + _timeLabel->width() + fade;
-	const auto textEnd = getNameLeft() + songTextWidth();
+	// Не зависит от ширины названия, чтобы кнопки не прыгали между треками.
+	const auto textStart = getNameLeft();
 	const auto controlsLeft = _rightControls->x()
 		+ _timeLabel->x()
 		- 12;
 	const auto block = buttonsBlockWidth() - st::mediaPlayerPadding;
-	return textEnd + std::max(12, (controlsLeft - textEnd - block) / 2);
+	return textStart + 40 + std::max(
+		12,
+		(controlsLeft - textStart - 40 - block) / 2);
 }
 
 int Widget::buttonsBlockWidth() const {
@@ -784,7 +846,8 @@ int Widget::getTimeRight() const {
 	auto result = 0;
 	result += _volumeToggle->width();
 	if (_type == AudioMsgId::Type::Song) {
-		result += _repeatToggle->width()
+		result += _lyricsToggle->width()
+			+ _repeatToggle->width()
 			+ _orderToggle->width();
 	}
 	if (hasPlaybackSpeedControl()) {
@@ -858,6 +921,7 @@ bool Widget::hasPlaybackSpeedControl() const {
 void Widget::updateControlsVisibility() {
 	_repeatToggle->setVisible(_type == AudioMsgId::Type::Song);
 	_orderToggle->setVisible(_type == AudioMsgId::Type::Song);
+	_lyricsToggle->setVisible(_type == AudioMsgId::Type::Song);
 	_speedToggle->setVisible(hasPlaybackSpeedControl());
 	if (!_shadow->isHidden()) {
 		_playbackSlider->setVisible(_type == AudioMsgId::Type::Song);

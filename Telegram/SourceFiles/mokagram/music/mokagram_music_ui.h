@@ -18,6 +18,10 @@ namespace Window {
 class SessionController;
 } // namespace Window
 
+namespace Ui {
+class RpWidget;
+} // namespace Ui
+
 namespace Mokagram::Music {
 
 void ShowMusicBox(
@@ -48,6 +52,20 @@ void ShowCurrentTrackMenu(
 
 // Полноценный плеер: обложка, перемотка, кнопки, очередь.
 void ShowPlayerBox(not_null<Window::SessionController*> controller);
+
+// Панель с текстом песни справа от чата. Кнопка в панели плеера переключает её,
+// anchor - сама панель плеера: под ней и начинается текст.
+void ToggleLyricsPanel(
+	not_null<Window::SessionController*> controller,
+	not_null<Ui::RpWidget*> anchor);
+// Показать панель, если она включена (вызывается при создании панели плеера).
+void SyncLyricsPanel(
+	not_null<Window::SessionController*> controller,
+	not_null<Ui::RpWidget*> anchor);
+
+// Найден ли текст для играющего трека (кнопка в плеере неактивна, пока нет).
+[[nodiscard]] bool LyricsAvailable();
+[[nodiscard]] rpl::producer<> LyricsAvailabilityChanges();
 
 void DebugSaveTrack(int index);
 void DebugPlay(int index);
