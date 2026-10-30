@@ -1257,6 +1257,12 @@ public:
 		}, lifetime());
 	}
 
+	// Строка лежит на цветном фоне плеера: подсветка белым с прозрачностью, а не серым.
+	void setOnGlass(bool glass) {
+		_glass = glass;
+		update();
+	}
+
 protected:
 	void showEvent(QShowEvent *e) override;
 	void hideEvent(QHideEvent *e) override;
@@ -1334,7 +1340,9 @@ private:
 		const auto over = isOver() || isDown();
 		if (playing || over) {
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowBgOver);
+			p.setBrush(_glass
+				? QColor(255, 255, 255, playing ? 34 : 20)
+				: st::windowBgOver->c);
 			p.drawRoundedRect(rect().marginsRemoved({ 10, 3, 10, 3 }), 18, 18);
 		}
 		const auto art = QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize);
@@ -1432,6 +1440,7 @@ private:
 	double _equalizerPhase = 0.;
 	Track _track;
 	RowMode _mode;
+	bool _glass = false;
 	QImage _art;
 	std::shared_ptr<Data::DocumentMedia> _media;
 	base::unique_qptr<Ui::PopupMenu> _menu;
@@ -2092,17 +2101,17 @@ private:
 			|| _glyph == Glyph::Queue
 			|| _glyph == Glyph::Collapse);
 		p.setPen(Qt::NoPen);
-		// Play: белый круг с тёмным значком, главная кнопка экрана.
+		// Play: тёмный полупрозрачный круг с белым значком, как кнопки в шапке.
 		p.setBrush(play
-			? QColor(255, 255, 255)
+			? QColor(255, 255, 255, int(31 + 20 * over))
 			: dark
 			? QColor(0, 0, 0, int(80 + 50 * over))
 			: QColor(255, 255, 255, int(40 * over)));
 		p.translate(c);
-		const auto squeeze = (1. - 0.08 * down) * (play ? (1. + 0.04 * over) : 1.);
+		const auto squeeze = 1. - 0.08 * down;
 		p.scale(squeeze, squeeze);
 		p.translate(-c);
-		p.drawEllipse(play ? r.marginsRemoved({ 2., 2., 2., 2. }) : r);
+		p.drawEllipse(r);
 		const auto pen = QPen(Qt::white, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
 		const auto u = r.width() / 48.;
 		if (_glyph == Glyph::Collapse) {
@@ -2172,7 +2181,7 @@ private:
 				active ? QColor(Qt::white) : QColor(255, 255, 255, 150));
 			return;
 		}
-		p.setBrush(play ? QColor(0x12, 0x12, 0x12) : QColor(Qt::white));
+		p.setBrush(QColor(Qt::white));
 		p.setPen(Qt::NoPen);
 		if (_glyph == Glyph::Play) {
 			if (_playing) {
@@ -3626,12 +3635,13 @@ protected:
 			}
 		}
 		for (auto i = 0; i != int(tracks.size()); ++i) {
-			_queueList->add(object_ptr<Row>(
+			const auto row = _queueList->add(object_ptr<Row>(
 				_queueList,
 				_controller,
 				tracks[i],
 				i,
 				inQueue ? RowMode::Queue : RowMode::Context));
+			row->setOnGlass(true);
 		}
 		_queueList->resizeToWidth(_queueScroll->width());
 		auto at = inQueue ? queue.index : -1;
@@ -3898,9 +3908,12 @@ private:
 				if (!_colorAnim.animating()) {
 					_backgroundWas = QPixmap();
 				}
+				// Текст рисует свой кусок фона сам: без этого он остаётся в цветах прошлого трека.
+				_view->update();
 				update();
 			}, 0., 1., 900, anim::easeOutCubic);
 			_seek->setFillColor(accentColor());
+			_view->update();
 			update();
 		}
 		const auto playing = state.state == Media::Player::State::Playing
