@@ -13,9 +13,17 @@
 #include "base/flat_set.h"
 #include "base/weak_ptr.h"
 #include "data/data_chat_participant_status.h"
+#include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "data/data_file_origin.h"
+#include "data/data_media_types.h"
+#include "data/data_photo.h"
+#include "data/data_photo_media.h"
 #include "data/data_session.h"
+#include "data/data_web_page.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/view/controls/history_view_webpage_processor.h"
 #include "main/main_session.h"
 #include "storage/localimageloader.h"
 #include "storage/storage_media_prepare.h"
@@ -25,7 +33,9 @@
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "ui/effects/animations.h"
 #include "ui/layers/generic_box.h"
+#include "ui/image/image.h"
 #include "ui/painter.h"
+#include "ui/text/format_values.h"
 #include "ui/vertical_list.h"
 #include "ui/rp_widget.h"
 #include "ui/widgets/labels.h"
@@ -902,6 +912,232 @@ private:
 
 };
 
+// Карточка ссылки перед скачиванием по превью Telegram, пока грузится — скелетон.
+class PreviewCard final : public Ui::RpWidget {
+public:
+	PreviewCard(
+		QWidget *parent,
+		not_null<Main::Session*> session,
+		const QString &link,
+		const QString &platform,
+		const QString &shown,
+		WebPageData *known)
+	: RpWidget(parent)
+	, _name(platform.isEmpty() ? QUrl(link).host() : platform)
+	, _shown(shown)
+	, _footer(platform.isEmpty() ? shown : (platform + u" · "_q + shown)) {
+		if (known && !known->failed) {
+			setPage(known);
+		} else {
+			_resolver = std::make_unique<HistoryView::Controls::WebpageResolver>(
+				session);
+			_resolver->resolved() | rpl::filter(
+				rpl::mappers::_1 == link
+			) | rpl::on_next([=] {
+				const auto page = _resolver->lookup(link);
+				setPage(page ? *page : nullptr);
+			}, lifetime());
+			_resolver->request(link);
+		}
+		session->data().webPageUpdates(
+		) | rpl::filter([=](not_null<WebPageData*> page) {
+			return (_page == page.get());
+		}) | rpl::on_next([=] {
+			setPage(_page);
+		}, lifetime());
+		session->downloaderTaskFinished(
+		) | rpl::filter([=] {
+			return _photo || _document;
+		}) | rpl::on_next([=] {
+			update();
+		}, lifetime());
+	}
+
+protected:
+	int resizeGetHeight(int newWidth) override {
+		return kHeight;
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(rect(), kRadius, kRadius);
+
+		const auto thumb = QRect(kPadding, kPadding, kThumb, kThumb);
+		const auto withThumb = _loading || _photo || _document;
+		if (withThumb) {
+			paintThumb(p, thumb);
+		}
+		const auto left = withThumb ? (thumb.right() + 1 + kPadding) : kSide;
+		const auto width = this->width() - left - kSide;
+		const auto line = st::normalFont->height;
+		const auto footer = _failed ? QString() : _footer;
+		const auto lines = footer.isEmpty() ? 2 : 3;
+		const auto top = (height() - lines * line - (lines - 1) * kLineSkip) / 2;
+		if (_loading) {
+			p.setBrush(st::windowBgOver);
+			const auto bar = [&](int y, int w) {
+				const auto h = line - 6;
+				p.drawRoundedRect(left, y + 3, w, h, h / 2., h / 2.);
+			};
+			bar(top, width * 2 / 3);
+			bar(top + line + kLineSkip, width * 5 / 6);
+		} else {
+			p.setFont(st::semiboldFont);
+			p.setPen(st::windowFg);
+			p.drawText(
+				left,
+				top + st::semiboldFont->ascent,
+				st::semiboldFont->elided(_title, width));
+			p.setFont(st::normalFont);
+			p.setPen(st::windowSubTextFg);
+			p.drawText(
+				left,
+				top + line + kLineSkip + st::normalFont->ascent,
+				st::normalFont->elided(_description, width));
+		}
+		if (!footer.isEmpty()) {
+			p.setFont(st::normalFont);
+			p.setPen(st::windowSubTextFg);
+			p.drawText(
+				left,
+				top + 2 * (line + kLineSkip) + st::normalFont->ascent,
+				st::normalFont->elided(footer, width));
+		}
+	}
+
+private:
+	static constexpr auto kHeight = 76;
+	static constexpr auto kPadding = 8;
+	static constexpr auto kSide = 14;
+	static constexpr auto kThumb = kHeight - 2 * kPadding;
+	static constexpr auto kRadius = 16.;
+	static constexpr auto kThumbRadius = 11.;
+	static constexpr auto kLineSkip = 1;
+
+	void setPage(WebPageData *page) {
+		_page = page;
+		if (page && page->pendingTill > 0) {
+			// Сервер ещё собирает превью и пришлёт его обновлением.
+			update();
+			return;
+		}
+		_loading = false;
+		_failed = !page || page->failed;
+		if (_failed) {
+			_title = _name;
+			_description = _shown;
+			_photo = nullptr;
+			_document = nullptr;
+			update();
+			return;
+		}
+		_title = !page->title.isEmpty()
+			? page->title
+			: !page->author.isEmpty()
+			? page->author
+			: page->displayedSiteName();
+		_description = page->description.text.simplified();
+		if (_description.isEmpty()) {
+			_description = page->author;
+		}
+		_duration = page->duration;
+		_photo = nullptr;
+		_document = nullptr;
+		const auto origin = Data::FileOriginWebPage{ page->url };
+		if (page->photo) {
+			_photo = page->photo->createMediaView();
+			_photo->wanted(Data::PhotoSize::Thumbnail, origin);
+		} else if (page->document && page->document->hasThumbnail()) {
+			_document = page->document->createMediaView();
+			_document->thumbnailWanted(origin);
+		}
+		update();
+	}
+
+	[[nodiscard]] Image *image() const {
+		if (_photo) {
+			if (const auto large = _photo->image(Data::PhotoSize::Thumbnail)) {
+				return large;
+			} else if (const auto small = _photo->image(Data::PhotoSize::Small)) {
+				return small;
+			}
+			return _photo->thumbnailInline();
+		} else if (_document) {
+			if (const auto thumbnail = _document->thumbnail()) {
+				return thumbnail;
+			}
+			return _document->thumbnailInline();
+		}
+		return nullptr;
+	}
+
+	void paintThumb(QPainter &p, QRect thumb) {
+		auto path = QPainterPath();
+		path.addRoundedRect(QRectF(thumb), kThumbRadius, kThumbRadius);
+		const auto source = image();
+		if (!source) {
+			p.setBrush(st::windowBgOver);
+			p.drawPath(path);
+			return;
+		}
+		const auto ratio = style::DevicePixelRatio();
+		const auto original = source->original();
+		if (_cachedFrom != original.cacheKey()) {
+			_cachedFrom = original.cacheKey();
+			_cached = original.scaled(
+				thumb.size() * ratio,
+				Qt::KeepAspectRatioByExpanding,
+				Qt::SmoothTransformation);
+			_cached = _cached.copy(
+				(_cached.width() - thumb.width() * ratio) / 2,
+				(_cached.height() - thumb.height() * ratio) / 2,
+				thumb.width() * ratio,
+				thumb.height() * ratio);
+			_cached.setDevicePixelRatio(ratio);
+		}
+		p.save();
+		p.setClipPath(path);
+		p.drawImage(thumb, _cached);
+		p.restore();
+		if (_duration > 0) {
+			const auto text = Ui::FormatDurationText(_duration);
+			const auto font = st::normalFont;
+			const auto w = font->width(text) + 8;
+			const auto h = font->height;
+			const auto badge = QRect(
+				thumb.right() + 1 - w - 4,
+				thumb.bottom() + 1 - h - 4,
+				w,
+				h);
+			p.setPen(Qt::NoPen);
+			p.setBrush(QColor(0, 0, 0, 140));
+			p.drawRoundedRect(badge, h / 2., h / 2.);
+			p.setFont(font);
+			p.setPen(QColor(255, 255, 255));
+			p.drawText(badge, Qt::AlignCenter, text);
+		}
+	}
+
+	const QString _name;
+	const QString _shown;
+	const QString _footer;
+	std::unique_ptr<HistoryView::Controls::WebpageResolver> _resolver;
+	WebPageData *_page = nullptr;
+	std::shared_ptr<Data::PhotoMedia> _photo;
+	std::shared_ptr<Data::DocumentMedia> _document;
+	QString _title;
+	QString _description;
+	int _duration = 0;
+	QImage _cached;
+	qint64 _cachedFrom = 0;
+	bool _loading = true;
+	bool _failed = false;
+
+};
+
 [[nodiscard]] not_null<Segments*> AddSegments(
 		not_null<Ui::VerticalLayout*> container,
 		const QString &title,
@@ -923,7 +1159,9 @@ private:
 
 void ChooseBox(
 		not_null<Ui::GenericBox*> box,
+		not_null<Main::Session*> session,
 		const QString &link,
+		WebPageData *known,
 		Fn<void(Choice)> done,
 		Fn<void()> sendAsText) {
 	BoxParts::RoundLayer(box);
@@ -938,18 +1176,15 @@ void ChooseBox(
 	}
 	const auto platform = PlatformName(host);
 	const auto shown = host + url.path();
-	static const auto linkSt = [] {
-		auto result = st::boxDividerLabel;
-		result.minWidth = 1;
-		result.maxHeight = st::boxDividerLabel.style.font->height;
-		return result;
-	}();
 	content->add(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<PreviewCard>(
 			content,
-			platform.isEmpty() ? shown : (platform + u" · "_q + shown),
-			linkSt),
-		QMargins(BoxParts::kOuterSide + 8, 0, BoxParts::kOuterSide + 8, 0));
+			session,
+			link,
+			platform,
+			shown,
+			known),
+		QMargins(BoxParts::kOuterSide, 0, BoxParts::kOuterSide, 0));
 
 	const auto videoOnly = (platform == u"YouTube"_q)
 		|| (platform == u"Twitch"_q)
@@ -1200,21 +1435,33 @@ void AddMessageAction(
 		if (!strong) {
 			return;
 		}
-		strong->show(Box(ChooseBox, link, [=](Choice choice) {
-			const auto window = weak.get();
-			const auto target = window
-				? window->session().data().message(itemId)
-				: nullptr;
-			if (!target) {
-				return;
-			}
-			auto action = Api::SendAction(target->history());
-			action.replyTo = FullReplyTo{
-				.messageId = itemId,
-				.topicRootId = target->topicRootId(),
-			};
-			Download(window, action, link, choice);
-		}, nullptr));
+		const auto target = strong->session().data().message(itemId);
+		const auto media = target ? target->media() : nullptr;
+		const auto known = media ? media->webpage() : nullptr;
+		const auto same = known
+			&& (Normalized(known->url) == link
+				|| Normalized(known->displayUrl) == link);
+		strong->show(Box(
+			ChooseBox,
+			&strong->session(),
+			link,
+			same ? known : nullptr,
+			[=](Choice choice) {
+				const auto window = weak.get();
+				const auto target = window
+					? window->session().data().message(itemId)
+					: nullptr;
+				if (!target) {
+					return;
+				}
+				auto action = Api::SendAction(target->history());
+				action.replyTo = FullReplyTo{
+					.messageId = itemId,
+					.topicRootId = target->topicRootId(),
+				};
+				Download(window, action, link, choice);
+			},
+			nullptr));
 	}, &st::menuIconDownload);
 }
 
@@ -1236,7 +1483,7 @@ bool OfferSendDownload(
 		return false;
 	}
 	const auto weak = base::make_weak(controller);
-	controller->show(Box(ChooseBox, link, [=](Choice choice) {
+	controller->show(Box(ChooseBox, &controller->session(), link, nullptr, [=](Choice choice) {
 		if (const auto window = weak.get()) {
 			clearField();
 			Download(window, action, link, choice);
