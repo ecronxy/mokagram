@@ -35,6 +35,15 @@
 #include "window/window_peer_menu.h"
 #include "styles/style_menu_icons.h"
 #include "storage/localimageloader.h"
+#include "storage/serialize_document.h"
+#include "chat_helpers/stickers_lottie.h"
+#include "chat_helpers/tabbed_panel.h"
+#include "chat_helpers/tabbed_selector.h"
+#include "core/version.h"
+#include "history/view/media/history_view_media_common.h"
+#include "history/view/media/history_view_sticker_player.h"
+#include "lottie/lottie_single_player.h"
+#include "styles/style_chat_helpers.h"
 
 #include "core/file_location.h"
 #include "data/data_document.h"
@@ -922,6 +931,63 @@ void DrawHeart(QPainter &p, const QRectF &r, bool filled, const QColor &color) {
 	return color;
 }
 
+constexpr auto kLikeDuration = crl::time(650);
+
+[[nodiscard]] bool LikeAnimationsEnabled() {
+	return !PowerSaving::On(PowerSaving::kAnimations);
+}
+
+// Масштаб сердца по ходу анимации лайка: затухающая пружина к 1.
+[[nodiscard]] float64 LikeScale(float64 progress, bool liked) {
+	const auto from = liked ? 0.4 : 0.75;
+	return 1.
+		- (1. - from) * std::exp(-7. * progress) * std::cos(14. * progress);
+}
+
+// Вспышка вокруг сердца при лайке: расходящееся кольцо и искры.
+void DrawLikeBurst(
+		QPainter &p,
+		QPointF center,
+		float64 radius,
+		float64 progress,
+		const QColor &color) {
+	const auto easeOut = [](float64 t) {
+		return 1. - std::pow(1. - t, 3);
+	};
+	p.save();
+	if (progress < 0.45) {
+		const auto t = progress / 0.45;
+		auto ring = color;
+		ring.setAlphaF(0.9 * (1. - t));
+		const auto width = std::max(radius * 0.3 * (1. - t), 0.5);
+		const auto r = radius * (0.35 + 0.6 * easeOut(t)) - width / 2.;
+		p.setPen(QPen(ring, width));
+		p.setBrush(Qt::NoBrush);
+		p.drawEllipse(center, r, r);
+	}
+	const auto t = std::clamp((progress - 0.12) / 0.6, 0., 1.);
+	if (t > 0. && t < 1.) {
+		static const auto spark = QColor(255, 179, 71);
+		const auto distance = radius * (0.55 + 0.35 * easeOut(t));
+		const auto size = radius * 0.12 * (1. - t);
+		constexpr auto kCount = 7;
+		p.setPen(Qt::NoPen);
+		for (auto i = 0; i != kCount; ++i) {
+			const auto angle = -M_PI / 2. + i * 2. * M_PI / kCount;
+			const auto big = center
+				+ QPointF(std::cos(angle), std::sin(angle)) * distance;
+			const auto side = angle + 0.35;
+			const auto small = center
+				+ QPointF(std::cos(side), std::sin(side)) * distance * 0.8;
+			p.setBrush(color);
+			p.drawEllipse(big, size, size);
+			p.setBrush(spark);
+			p.drawEllipse(small, size * 0.7, size * 0.7);
+		}
+	}
+	p.restore();
+}
+
 class TabPill final : public Ui::AbstractButton {
 public:
 	TabPill(QWidget *parent, const QString &text)
@@ -1139,7 +1205,13 @@ public:
 		setClickedCallback([=] {
 			if (!IsTelegramTrack(_track)
 				&& heartRect().contains(mapFromGlobal(QCursor::pos()))) {
+				// Во вкладке «Любимые» LikesChanged пересобирает список и удаляет эту строку.
+				const auto weak = base::make_weak(this);
 				SetLiked(_track, !IsLiked(_track.id));
+				if (weak && LikeAnimationsEnabled()) {
+					_likeAnimation.stop();
+					_likeAnimation.start([=] { update(); }, 0., 1., kLikeDuration);
+				}
 				return;
 			}
 			if (_mode == RowMode::Queue) {
@@ -1289,9 +1361,21 @@ private:
 		const auto liked = IsLiked(_track.id);
 		const auto heart = heartRect();
 		if (!IsTelegramTrack(_track)) {
+			const auto progress = _likeAnimation.value(1.);
+			auto glyph = QRectF(heart).adjusted(5, 6, -5, -5);
+			if (progress < 1.) {
+				if (liked) {
+					DrawLikeBurst(p, glyph.center(), 14., progress, HeartColor());
+				}
+				const auto scale = LikeScale(progress, liked);
+				const auto center = glyph.center();
+				glyph = QRectF(
+					center - QPointF(glyph.width(), glyph.height()) * scale / 2.,
+					glyph.size() * scale);
+			}
 			DrawHeart(
 				p,
-				QRectF(heart).adjusted(5, 6, -5, -5),
+				glyph,
 				liked,
 				liked ? HeartColor() : QColor(st::windowSubTextFg->c));
 		}
@@ -1324,6 +1408,7 @@ private:
 	QImage _art;
 	std::shared_ptr<Data::DocumentMedia> _media;
 	base::unique_qptr<Ui::PopupMenu> _menu;
+	Ui::Animations::Simple _likeAnimation;
 
 };
 
@@ -1459,33 +1544,70 @@ private:
 
 };
 
-// Пустой поиск: анимированный стикер посередине.
+constexpr auto kHintStickerKey = "music.hint_sticker";
+
+// Свой стикер вместо стандартного: документ целиком, с версией формата,
+// чтобы после перезапуска не зависеть от загруженных наборов.
+[[nodiscard]] DocumentData *LoadHintSticker(not_null<Main::Session*> session) {
+	const auto encoded = Mokagram::Settings::String(
+		QString::fromLatin1(kHintStickerKey));
+	if (encoded.isEmpty()) {
+		return nullptr;
+	}
+	auto bytes = QByteArray::fromBase64(encoded.toLatin1());
+	auto stream = QDataStream(&bytes, QIODevice::ReadOnly);
+	stream.setVersion(QDataStream::Qt_5_1);
+	auto version = qint32();
+	stream >> version;
+	const auto document = Serialize::Document::readFromStream(
+		session,
+		version,
+		stream);
+	return (stream.status() == QDataStream::Ok
+		&& document
+		&& document->sticker())
+		? document
+		: nullptr;
+}
+
+void SaveHintSticker(DocumentData *document) {
+	const auto key = QString::fromLatin1(kHintStickerKey);
+	if (!document) {
+		Mokagram::Settings::Reset(key);
+		return;
+	}
+	auto bytes = QByteArray();
+	{
+		auto stream = QDataStream(&bytes, QIODevice::WriteOnly);
+		stream.setVersion(QDataStream::Qt_5_1);
+		stream << qint32(AppVersion);
+		Serialize::Document::writeToStream(stream, document);
+	}
+	Mokagram::Settings::SetString(key, QString::fromLatin1(bytes.toBase64()));
+}
+
+// Пустой поиск: анимированный стикер посередине. Правой кнопкой его
+// можно сменить на любой свой стикер.
 class StickerHint final : public Ui::RpWidget {
 public:
-	explicit StickerHint(QWidget *parent) : RpWidget(parent) {
+	StickerHint(
+		QWidget *parent,
+		not_null<Main::Session*> session,
+		Fn<void(QPoint)> showMenu)
+	: RpWidget(parent)
+	, _session(session)
+	, _showMenu(std::move(showMenu)) {
 		_sheet = QPixmap(u":/gui/art/mokagram_music_hint.png"_q);
 		_sheet.setDevicePixelRatio(2.);
 		resize(width(), kSide + 56);
 		paintRequest(
 		) | rpl::on_next([=](QRect) {
-			if (_sheet.isNull()) {
-				return;
-			}
-			const auto frame = _started
-				? int(((crl::now() - _started) / kFrameDuration) % kFrames)
-				: 0;
-			auto p = QPainter(this);
-			auto hq = PainterHighQualityEnabler(p);
-			// Кадр в листе задан в пикселях устройства, а целевой квадрат —
-			// в логических, иначе при DPR 2 картинка ужимается и уезжает влево.
-			p.drawPixmap(
-				QRect((width() - kSide) / 2, 28, kSide, kSide),
-				_sheet,
-				QRect(
-					(frame % kColumns) * kSource,
-					(frame / kColumns) * kSource,
-					kSource,
-					kSource));
+			paint();
+		}, lifetime());
+		Mokagram::Settings::StringValue(
+			QString::fromLatin1(kHintStickerKey)
+		) | rpl::on_next([=](const QString &) {
+			loadSticker();
 		}, lifetime());
 		if (!PowerSaving::On(PowerSaving::kAnimations)) {
 			_started = crl::now();
@@ -1497,16 +1619,119 @@ public:
 		}
 	}
 
+protected:
+	void contextMenuEvent(QContextMenuEvent *e) override {
+		if (_showMenu) {
+			_showMenu(e->globalPos());
+		}
+	}
+
 private:
+	void loadSticker() {
+		_playerLifetime.destroy();
+		_player = nullptr;
+		_custom = LoadHintSticker(_session);
+		update();
+		if (!_custom) {
+			return;
+		}
+		const auto document = not_null<DocumentData*>(_custom);
+		const auto media = document->createMediaView();
+		media->checkStickerLarge();
+		media->goodThumbnailWanted();
+		rpl::single() | rpl::then(
+			_session->downloaderTaskFinished()
+		) | rpl::filter([=] {
+			return media->loaded();
+		}) | rpl::take(1) | rpl::on_next([=] {
+			using namespace HistoryView;
+			const auto info = document->sticker();
+			const auto box = QSize(kSide, kSide);
+			if (info->isLottie()) {
+				_player = std::make_shared<LottiePlayer>(
+					ChatHelpers::LottiePlayerFromDocument(
+						media.get(),
+						ChatHelpers::StickerLottieSize::ChatIntroHelloSticker,
+						box,
+						Lottie::Quality::High));
+			} else if (info->isWebm()) {
+				_player = std::make_shared<WebmPlayer>(
+					media->owner()->location(),
+					media->bytes(),
+					box);
+			} else {
+				_player = std::make_shared<StaticStickerPlayer>(
+					media->owner()->location(),
+					media->bytes(),
+					box);
+			}
+			_player->setRepaintCallback([=] { update(); });
+			update();
+		}, _playerLifetime);
+	}
+
+	void paint() {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto target = QRect((width() - kSide) / 2, 28, kSide, kSide);
+		if (_custom) {
+			// Пока свой стикер грузится, место остаётся пустым,
+			// чтобы стандартный не мелькал перед ним.
+			if (!_player || !_player->ready()) {
+				return;
+			}
+			const auto paused = !_started || !window()->isActiveWindow();
+			const auto frame = _player->frame(
+				QSize(kSide, kSide),
+				QColor(0, 0, 0, 0),
+				false,
+				crl::now(),
+				paused).image;
+			const auto size = HistoryView::DownscaledSize(
+				frame.size() / style::DevicePixelRatio(),
+				QSize(kSide, kSide));
+			p.drawImage(
+				QRect(
+					target.x() + (kSide - size.width()) / 2,
+					target.y() + (kSide - size.height()) / 2,
+					size.width(),
+					size.height()),
+				frame);
+			_player->markFrameShown();
+			return;
+		}
+		if (_sheet.isNull()) {
+			return;
+		}
+		const auto frame = _started
+			? int(((crl::now() - _started) / kFrameDuration) % kFrames)
+			: 0;
+		// Кадр в листе задан в пикселях устройства, а целевой квадрат —
+		// в логических, иначе при DPR 2 картинка ужимается и уезжает влево.
+		p.drawPixmap(
+			target,
+			_sheet,
+			QRect(
+				(frame % kColumns) * kSource,
+				(frame / kColumns) * kSource,
+				kSource,
+				kSource));
+	}
+
 	static constexpr auto kSource = 192;
 	static constexpr auto kSide = kSource / 2;
 	static constexpr auto kColumns = 9;
 	static constexpr auto kFrames = 49;
 	static constexpr auto kFrameDuration = crl::time(1000 / 15);
 
+	const not_null<Main::Session*> _session;
+	const Fn<void(QPoint)> _showMenu;
 	QPixmap _sheet;
 	Ui::Animations::Basic _animation;
 	crl::time _started = 0;
+	DocumentData *_custom = nullptr;
+	std::shared_ptr<HistoryView::StickerPlayer> _player;
+	rpl::lifetime _playerLifetime;
 
 };
 
@@ -1607,6 +1832,13 @@ public:
 			update();
 		}
 	}
+	void animateLike(bool liked) {
+		setLiked(liked);
+		if (LikeAnimationsEnabled()) {
+			_likeAnimation.stop();
+			_likeAnimation.start([=] { update(); }, 0., 1., kLikeDuration);
+		}
+	}
 
 private:
 	void paint() {
@@ -1628,6 +1860,16 @@ private:
 				c + QPointF(14, -1),
 				c + QPointF(0, 8.5));
 			heart.closeSubpath();
+			const auto progress = _likeAnimation.value(1.);
+			if (progress < 1.) {
+				if (_liked) {
+					DrawLikeBurst(p, c, 18., progress, QColor(0xFF, 0x3B, 0x5C));
+				}
+				const auto scale = LikeScale(progress, _liked);
+				p.translate(c);
+				p.scale(scale, scale);
+				p.translate(-c);
+			}
 			if (_liked) {
 				p.setPen(Qt::NoPen);
 				p.setBrush(QColor(0xFF, 0x3B, 0x5C));
@@ -1725,6 +1967,7 @@ private:
 	Glyph _glyph;
 	bool _playing = false;
 	bool _liked = false;
+	Ui::Animations::Simple _likeAnimation;
 
 };
 
@@ -3038,6 +3281,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			if (OwnsTrack(instance->current(AudioMsgId::Type::Song))
 				&& !queue.current.id.isEmpty()) {
 				SetLiked(queue.current, !IsLiked(queue.current.id));
+				heart->animateLike(IsLiked(queue.current.id));
 			}
 		});
 		previous->setClickedCallback([=] { step(-1); });
@@ -3392,6 +3636,65 @@ void ShowMusicBox(
 		const auto searchState = box->lifetime().make_state<SearchState>();
 		const auto runSearch = std::make_shared<Fn<void()>>();
 
+		// Правая кнопка по стикеру: сменить на свой или вернуть стандартный.
+		struct HintStickerState {
+			base::unique_qptr<Ui::PopupMenu> menu;
+			base::unique_qptr<ChatHelpers::TabbedPanel> panel;
+		};
+		const auto hintSticker = box->lifetime().make_state<HintStickerState>();
+		const auto chooseHintSticker = [=](QPoint global) {
+			const auto outer = box->getDelegate()->outerContainer();
+			if (!outer) {
+				return;
+			}
+			if (!hintSticker->panel) {
+				using Selector = ChatHelpers::TabbedSelector;
+				hintSticker->panel = base::make_unique_q<ChatHelpers::TabbedPanel>(
+					outer.data(),
+					controller,
+					object_ptr<Selector>(
+						nullptr,
+						controller->uiShow(),
+						Window::GifPauseReason::Layer,
+						Selector::Mode::StickersOnly));
+				const auto panel = hintSticker->panel.get();
+				panel->setDropDown(false);
+				panel->setDesiredHeightValues(
+					1.,
+					st::emojiPanMinHeight / 2,
+					st::emojiPanMinHeight);
+				panel->hide();
+				panel->selector()->setCurrentPeer(controller->session().user());
+				panel->selector()->fileChosen(
+				) | rpl::on_next([=](ChatHelpers::FileChosen data) {
+					SaveHintSticker(data.document);
+					panel->hideAnimated();
+				}, panel->lifetime());
+			}
+			const auto panel = hintSticker->panel.get();
+			const auto local = outer->mapFromGlobal(global);
+			panel->moveBottomRight(local.y(), local.x() + panel->width() / 2);
+			panel->showAnimated();
+		};
+		const auto showHintMenu = [=](QPoint global) {
+			hintSticker->menu = base::make_unique_q<Ui::PopupMenu>(
+				box,
+				st::popupMenuWithIcons);
+			const auto menu = hintSticker->menu.get();
+			menu->addAction(
+				QString::fromUtf8(Mokagram::Lang::Tr("Сменить стикер")),
+				[=] { chooseHintSticker(global); },
+				&st::menuIconStickers);
+			if (!Mokagram::Settings::String(
+					QString::fromLatin1(kHintStickerKey)).isEmpty()) {
+				menu->addAction(
+					QString::fromUtf8(Mokagram::Lang::Tr("Вернуть стандартный")),
+					[] { SaveHintSticker(nullptr); },
+					&st::menuIconRestore);
+			}
+			menu->popup(global);
+		};
+
 		// Список: сверху строка действий (для подборки) и пояснение, дальше треки.
 		const auto fill = [=] {
 			list->clear();
@@ -3409,7 +3712,10 @@ void ShowMusicBox(
 					QMargins(16, 4, 16, 10));
 			}
 			if (*statusSticker) {
-				list->add(object_ptr<StickerHint>(list));
+				list->add(object_ptr<StickerHint>(
+					list,
+					&controller->session(),
+					showHintMenu));
 			} else if (!statusText->isEmpty() && *statusLoading) {
 				list->add(object_ptr<LoadingView>(list, *statusText));
 			} else if (!statusText->isEmpty()) {

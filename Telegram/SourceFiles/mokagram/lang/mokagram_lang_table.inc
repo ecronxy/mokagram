@@ -530,6 +530,8 @@
 	{ "Средне", "Medium" },
 	{ "Ссылка выдаёт себя за известный сервис, но ведёт на ", "The link pretends to be a well-known service but leads to " },
 	{ "Ссылка скопирована", "Link copied" },
+	{ "Сменить стикер", "Change sticker" },
+	{ "Вернуть стандартный", "Restore default" },
 	{ "Ссылка спрятана за текстом и открывает мини-апп. Так фальшивые «Fragment» и «гаранты» просят номер телефона.", "The link is hidden behind text and opens a mini app. This is how fake \"Fragment\" and \"escrow\" pages ask for a phone number." },
 	{ "Ссылки на ваш профиль", "Links to your profile" },
 	{ "Ставится рядом со временем удалённого сообщения, чтобы его было видно в переписке.", "Placed next to the time of a deleted message so that it is visible in the chat." },
