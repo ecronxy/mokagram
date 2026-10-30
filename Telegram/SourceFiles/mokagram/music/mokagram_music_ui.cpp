@@ -44,8 +44,6 @@
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
 #include "ui/effects/animations.h"
-#include "mokagram/music/mokagram_font_manrope.h"
-#include <QtGui/QFontDatabase>
 #include <QtWidgets/QGraphicsEffect>
 #include <array>
 #include "ui/image/image.h"
@@ -2216,18 +2214,6 @@ private:
 		auto font = st::semiboldFont->f;
 		font.setPixelSize(_big ? style::ConvertScale(30) : 19);
 		if (_big) {
-			static const auto family = [] {
-				const auto id = QFontDatabase::addApplicationFontFromData(
-					QByteArray::fromRawData(
-						reinterpret_cast<const char*>(kManropeExtraBold),
-						int(sizeof(kManropeExtraBold))));
-				return (id < 0)
-					? QString()
-					: QFontDatabase::applicationFontFamilies(id).value(0);
-			}();
-			if (!family.isEmpty()) {
-				font.setFamily(family);
-			}
 			font.setWeight(QFont::ExtraBold);
 		}
 		return font;
@@ -2944,7 +2930,7 @@ protected:
 			std::max(rightEdge - result.left.right() - 1 - gap, 0),
 			cardHeight);
 		const auto pad = s(24);
-		const auto below = s(20) + s(56) + s(14) + _seek->height() + s(18) + s(4) + _play->height();
+		const auto below = s(20) + s(56) + s(14) + _seek->height() + s(18) + s(4) + _play->height() + s(14) + _volume->height();
 		const auto side = std::max(
 			std::min(result.left.width() - 2 * pad, cardHeight - 2 * pad - below),
 			s(120));
@@ -2955,7 +2941,7 @@ protected:
 		result.info = QRect(x, top + side + s(20), side, s(56));
 		result.seekTop = result.info.bottom() + 1 + s(14);
 		result.controlsTop = result.seekTop + _seek->height() + s(18) + s(4);
-		result.volumeTop = result.controlsTop;
+		result.volumeTop = result.controlsTop + _play->height() + s(14);
 		return result;
 	}
 	[[nodiscard]] QColor accentColor() const {
@@ -2983,6 +2969,11 @@ protected:
 			queueArea.width(),
 			std::max(queueArea.height() - s(76) - s(12), 0));
 		_queueList->resizeToWidth(_queueScroll->width());
+		_volume->setGeometry(
+			layout.cover.x() + s(36),
+			layout.volumeTop,
+			std::max(layout.cover.width() - s(36), 0),
+			_volume->height());
 		_heart->move(
 			layout.info.right() + 1 - _heart->width(),
 			layout.info.y() + (layout.info.height() - _heart->height()) / 2);
@@ -3001,25 +2992,12 @@ protected:
 		for (const auto button : row) {
 			widths += button->width();
 		}
-		// Как в Spotify: кнопки слева, громкость справа в той же строке.
-		const auto gap = s(12);
-		const auto controlsWidth = widths + gap * 4;
-		const auto room = layout.cover.width() - controlsWidth - s(20);
-		const auto showVolume = room >= s(28 + 56);
-		const auto volumeWidth = showVolume ? std::min(room, s(28 + 120)) : 0;
-		_volume->setVisible(showVolume);
-		auto x = layout.cover.x() + (showVolume
-			? 0
-			: (layout.cover.width() - controlsWidth) / 2);
+		const auto gap = std::clamp((layout.cover.width() - widths) / 4, 0, s(18));
+		auto x = layout.cover.x() + (layout.cover.width() - widths - gap * 4) / 2;
 		for (const auto button : row) {
 			button->move(x, layout.controlsTop + (_play->height() - button->height()) / 2);
 			x += button->width() + gap;
 		}
-		_volume->setGeometry(
-			layout.cover.right() + 1 - volumeWidth + s(28),
-			layout.controlsTop + (_play->height() - _volume->height()) / 2,
-			std::max(volumeWidth - s(28), 0),
-			_volume->height());
 		updateQueueVisibility();
 		RpWidget::resizeEvent(e);
 	}
@@ -3115,10 +3093,8 @@ protected:
 				: (volume < 0.66)
 				? st::mediaPlayerVolumeIcon1
 				: st::mediaPlayerVolumeToggle.icon;
-			if (!_volume->isHidden()) {
-				const auto box = QRect(_volume->x() - s(28), _volume->y(), s(28), _volume->height());
-				icon.paintInCenter(p, box, QColor(255, 255, 255, 170));
-			}
+			const auto box = QRect(layout.cover.x(), layout.volumeTop, s(28), _volume->height());
+			icon.paintInCenter(p, box, QColor(255, 255, 255, 170));
 		}
 
 		// Обложка: сжимается на паузе, при смене трека плавно перетекает в новую.
