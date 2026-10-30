@@ -15,6 +15,10 @@
 #include "core/application.h"
 #include "ui/image/image.h"
 #include "api/api_common.h"
+#include "api/api_toggling_media.h"
+#include "storage/localimageloader.h"
+#include "storage/storage_media_prepare.h"
+#include "ui/chat/attach/attach_prepare.h"
 #include "api/api_chat_participants.h"
 #include "apiwrap.h"
 #include "base/call_delayed.h"
@@ -51,6 +55,8 @@
 #include "ui/widgets/fields/input_field.h"
 #include "window/window_session_controller.h"
 
+#include <QtCore/QProcess>
+#include <QtCore/QFileInfo>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
@@ -100,7 +106,7 @@ namespace S = Mokagram::Settings;
 		u"mute"_q, u"unmute"_q, u"ban"_q, u"unban"_q, u"kick"_q,
 		u"del"_q, u"pin"_q, u"unpin"_q, u"id"_q, u"save"_q,
 		u"tr"_q, u"calc"_q, u"archive"_q, u"unarchive"_q, u"dl"_q,
-		u"tag"_q, u"note"_q, u"snip"_q,
+		u"tag"_q, u"note"_q, u"snip"_q, u"gif"_q,
 	};
 	return result;
 }
@@ -153,6 +159,7 @@ namespace S = Mokagram::Settings;
 		U(Mokagram::Lang::Tr(".del N удаляет твои последние N сообщений (с ответом: N сообщений того человека)")),
 		U(Mokagram::Lang::Tr(".del all с ответом удаляет все сообщения человека в группе, без ответа все твои загруженные")),
 		U(Mokagram::Lang::Tr(".pin / .unpin закрепляет или открепляет сообщение (ответом)")),
+		U(Mokagram::Lang::Tr(".gif превращает видео (ответом) в гиф без звука и сохраняет в «Мои GIF»")),
 		U(Mokagram::Lang::Tr(".id показывает ID автора, чата и сообщения, ссылку на сообщение")),
 		U(Mokagram::Lang::Tr(".save пересылает сообщение (ответом) в «Избранное»")),
 	};
@@ -386,6 +393,135 @@ void RegisterSettings() {
 	});
 }
 
+// .gif: видео из реплая -> mp4 без звука -> отправка как гиф -> «Мои GIF».
+void WatchSentGif(
+		not_null<Window::SessionController*> controller,
+		not_null< ::History*> history,
+		TimeId since,
+		int left) {
+	const auto weak = base::make_weak(history.get());
+	QTimer::singleShot(1000, [=] {
+		const auto strong = weak.get();
+		if (!strong) {
+			return;
+		}
+		const auto item = strong->lastMessage();
+		if (item
+			&& item->out()
+			&& !item->isSending()
+			&& item->date() >= since
+			&& item->media()
+			&& item->media()->document()
+			&& item->media()->document()->isGifv()) {
+			Api::ToggleSavedGif(
+				controller->uiShow(),
+				item->media()->document(),
+				item->fullId(),
+				true);
+			controller->showToast(
+				U(Mokagram::Lang::Tr("Гиф добавлена в «Мои GIF»")));
+		} else if (left > 0) {
+			WatchSentGif(controller, strong, since, left - 1);
+		}
+	});
+}
+
+void ConvertAndSendGif(
+		not_null<Window::SessionController*> controller,
+		not_null< ::History*> history,
+		const QString &source,
+		FullReplyTo replyTo) {
+	const auto output = QStandardPaths::writableLocation(
+		QStandardPaths::TempLocation)
+		+ u"/mokagram_gif_"_q
+		+ QString::number(base::unixtime::now())
+		+ u".mp4"_q;
+	const auto process = new QProcess(qApp);
+	QObject::connect(process, &QProcess::finished, [=](int code) {
+		process->deleteLater();
+		if (code != 0 || !QFileInfo(output).size()) {
+			controller->showToast(
+				U(Mokagram::Lang::Tr("Не получилось сконвертировать видео")));
+			return;
+		}
+		auto list = Storage::PrepareMediaList(
+			QStringList{ output },
+			st::sendMediaPreviewSize,
+			history->session().premium());
+		if (list.error != Ui::PreparedList::Error::None) {
+			controller->showToast(
+				U(Mokagram::Lang::Tr("Не получилось отправить гиф")));
+			return;
+		}
+		const auto since = base::unixtime::now();
+		auto action = Api::SendAction(history, Api::SendOptions());
+		action.replyTo = replyTo;
+		action.clearDraft = false;
+		history->session().api().sendFiles(
+			std::move(list),
+			SendMediaType::Photo,
+			nullptr,
+			std::move(action));
+		WatchSentGif(controller, history, since - 1, 90);
+	});
+	QObject::connect(process, &QProcess::errorOccurred, [=](
+			QProcess::ProcessError error) {
+		if (error == QProcess::FailedToStart) {
+			process->deleteLater();
+			controller->showToast(
+				U(Mokagram::Lang::Tr("Нужен ffmpeg в системе")));
+		}
+	});
+	process->start(u"ffmpeg"_q, {
+		u"-y"_q, u"-i"_q, source,
+		u"-an"_q,
+		u"-c:v"_q, u"libx264"_q,
+		u"-pix_fmt"_q, u"yuv420p"_q,
+		u"-crf"_q, u"26"_q,
+		u"-vf"_q, u"scale='min(720,iw)':-2"_q,
+		u"-movflags"_q, u"+faststart"_q,
+		output,
+	});
+}
+
+void WaitForVideoAndConvert(
+		not_null<Window::SessionController*> controller,
+		not_null< ::History*> history,
+		not_null<DocumentData*> document,
+		FullMsgId itemId,
+		FullReplyTo replyTo,
+		int left) {
+	const auto path = document->filepath(true);
+	if (!path.isEmpty()) {
+		ConvertAndSendGif(controller, history, path, replyTo);
+		return;
+	}
+	if (left <= 0) {
+		controller->showToast(
+			U(Mokagram::Lang::Tr("Не получилось скачать видео")));
+		return;
+	}
+	const auto weak = base::make_weak(history.get());
+	QTimer::singleShot(700, [=] {
+		const auto strong = weak.get();
+		const auto item = strong
+			? strong->owner().message(itemId)
+			: nullptr;
+		if (!item
+			|| !item->media()
+			|| item->media()->document() != document) {
+			return;
+		}
+		WaitForVideoAndConvert(
+			controller,
+			strong,
+			document,
+			itemId,
+			replyTo,
+			left - 1);
+	});
+}
+
 bool Handle(
 		not_null<Window::SessionController*> controller,
 		not_null< ::History*> history,
@@ -519,6 +655,34 @@ bool Handle(
 					: TextWithTags{ rest });
 			toast(U(Mokagram::Lang::Tr("Сохранено. Пиши ;")) + first.toLower() + U(Mokagram::Lang::Tr(" в тексте")));
 		}
+		return true;
+	}
+	if (command == u"gif"_q) {
+		const auto document = (replied && replied->media())
+			? replied->media()->document()
+			: nullptr;
+		if (!document
+			|| !(document->isVideoFile() || document->isAnimation())) {
+			toast(U(Mokagram::Lang::Tr("Ответь командой на видео")));
+			return true;
+		}
+		toast(U(Mokagram::Lang::Tr("Делаю гиф…")));
+		if (document->filepath(true).isEmpty()) {
+			document->save(
+				replied->fullId(),
+				QStandardPaths::writableLocation(
+					QStandardPaths::TempLocation)
+				+ u"/mokagram_gif_src_"_q
+				+ QString::number(document->id)
+				+ u".mp4"_q);
+		}
+		WaitForVideoAndConvert(
+			controller,
+			history,
+			document,
+			replied->fullId(),
+			replyTo,
+			170);
 		return true;
 	}
 	if (command == u"dl"_q) {
