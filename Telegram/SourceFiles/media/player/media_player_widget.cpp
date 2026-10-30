@@ -86,7 +86,6 @@ Widget::Widget(
 , _repeatToggle(rightControls(), st::mediaPlayerRepeatButton)
 , _orderToggle(rightControls(), st::mediaPlayerOrderButton)
 , _lyricsToggle(rightControls())
-, _fullscreenToggle(rightControls())
 , _speedToggle(rightControls(), st::mediaPlayerSpeedButton)
 , _close(this, st::mediaPlayerClose)
 , _shadow(this)
@@ -196,35 +195,6 @@ Widget::Widget(
 		p.drawLine(QPointF(x, y), QPointF(x + 16, y));
 		p.drawLine(QPointF(x, y + 5), QPointF(x + 11, y + 5));
 		p.drawLine(QPointF(x, y + 10), QPointF(x + 14, y + 10));
-	});
-	// Mokagram: кнопка «Во весь экран», открывает полноэкранный плеер.
-	_fullscreenToggle->resize(st::mediaPlayerRepeatButton.width, st::mediaPlayerRepeatButton.height);
-	_fullscreenToggle->setPointerCursor(true);
-	_fullscreenToggle->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Во весь экран")));
-	_fullscreenToggle->paintOn([=](QPainter &p) {
-		auto hq = PainterHighQualityEnabler(p);
-		auto color = st::mediaPlayerActiveFg->c;
-		color.setAlphaF(_fullscreenToggle->isOver() ? 1. : 0.55);
-		auto pen = QPen(color, 1.7);
-		pen.setCapStyle(Qt::RoundCap);
-		pen.setJoinStyle(Qt::RoundJoin);
-		p.setPen(pen);
-		p.setBrush(Qt::NoBrush);
-		const auto x = (_fullscreenToggle->width() - 12) / 2.;
-		const auto y = (_fullscreenToggle->height() - 12) / 2. + 3.;
-		const auto corner = [&](double cx, double cy, double dx, double dy) {
-			p.drawPolyline(QPolygonF({
-				QPointF(cx + dx * 4, cy),
-				QPointF(cx, cy),
-				QPointF(cx, cy + dy * 4) }));
-		};
-		corner(x, y, 1, 1);
-		corner(x + 12, y, -1, 1);
-		corner(x, y + 12, 1, -1);
-		corner(x + 12, y + 12, -1, -1);
-	});
-	_fullscreenToggle->setClickedCallback([=] {
-		Mokagram::Music::ShowFullscreenPlayer(_controller);
 	});
 	const auto updateLyricsToggle = [=] {
 		const auto usable = Mokagram::Settings::Bool(u"lyrics.enabled"_q)
@@ -551,7 +521,6 @@ void Widget::updateControlsGeometry() {
 	_volumeToggle->moveToRight(right, 0); right += _volumeToggle->width();
 	if (_type == AudioMsgId::Type::Song) {
 		_lyricsToggle->moveToRight(right, 0); right += _lyricsToggle->width();
-		_fullscreenToggle->moveToRight(right, 0); right += _fullscreenToggle->width();
 	}
 
 	updateControlsWrapGeometry();
@@ -878,7 +847,6 @@ int Widget::getTimeRight() const {
 	result += _volumeToggle->width();
 	if (_type == AudioMsgId::Type::Song) {
 		result += _lyricsToggle->width()
-			+ _fullscreenToggle->width()
 			+ _repeatToggle->width()
 			+ _orderToggle->width();
 	}
@@ -954,7 +922,6 @@ void Widget::updateControlsVisibility() {
 	_repeatToggle->setVisible(_type == AudioMsgId::Type::Song);
 	_orderToggle->setVisible(_type == AudioMsgId::Type::Song);
 	_lyricsToggle->setVisible(_type == AudioMsgId::Type::Song);
-	_fullscreenToggle->setVisible(_type == AudioMsgId::Type::Song);
 	_speedToggle->setVisible(hasPlaybackSpeedControl());
 	if (!_shadow->isHidden()) {
 		_playbackSlider->setVisible(_type == AudioMsgId::Type::Song);
