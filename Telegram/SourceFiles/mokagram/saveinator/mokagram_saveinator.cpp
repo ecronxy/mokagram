@@ -9,6 +9,7 @@
 #include "api/api_common.h"
 #include "apiwrap.h"
 #include "base/flat_map.h"
+#include "base/event_filter.h"
 #include "base/flat_set.h"
 #include "base/weak_ptr.h"
 #include "data/data_chat_participant_status.h"
@@ -22,6 +23,7 @@
 #include "ui/chat/attach/attach_send_files_way.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/ui/mokagram_box_parts.h"
+#include "ui/effects/animations.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
 #include "ui/vertical_list.h"
@@ -45,6 +47,7 @@
 #include <QtCore/QRegularExpression>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
+#include <QtGui/QImage>
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
@@ -59,6 +62,8 @@ namespace {
 constexpr auto kEnabledKey = "saveinator.enabled";
 constexpr auto kMediaKey = "saveinator.media";
 constexpr auto kQualityKey = "saveinator.quality";
+constexpr auto kSpotifyPreviewKey = "saveinator.spotify_preview";
+constexpr auto kTranslateKey = "saveinator.translate_lang";
 constexpr auto kApiUrl = "https://saveinator-hooks.xdshka.party";
 constexpr auto kApiKey = "SmPzzuTM6en_vn7AtgUKcLvB_ObB7QqafyGuBGuxl1E";
 constexpr auto kLimit = 10;
@@ -74,13 +79,23 @@ constexpr auto kMaxPollFailures = 3;
 constexpr auto kRequestTimeout = 30 * 1000;
 constexpr auto kMaxJsonSize = 64 * 1024;
 constexpr auto kMaxFileSize = qint64(2) * 1024 * 1024 * 1024;
+constexpr auto kMaxCoverSize = qint64(5) * 1024 * 1024;
 
-constexpr auto kMediaValues = std::array{ "auto", "video", "audio", "photos" };
+constexpr auto kMediaValues = std::array{
+	"auto",
+	"video",
+	"audio",
+	"photos",
+	"article",
+};
+constexpr auto kArticleMedia = 4;
 constexpr auto kHeightValues = std::array{ 0, 1080, 720, 480, 360 };
 
 struct Choice {
 	QString media;
 	int maxHeight = 0;
+	bool preview = false;
+	QString translate;
 };
 
 [[nodiscard]] QStringList MediaTitles() {
@@ -89,6 +104,7 @@ struct Choice {
 		QString::fromUtf8(Mokagram::Lang::Tr("Только видео")),
 		QString::fromUtf8(Mokagram::Lang::Tr("Только звук")),
 		QString::fromUtf8(Mokagram::Lang::Tr("Только фото")),
+		QString::fromUtf8(Mokagram::Lang::Tr("Только статья")),
 	};
 }
 
@@ -104,6 +120,23 @@ struct Choice {
 
 [[nodiscard]] bool MediaHasVideo(int media) {
 	return (media == 0) || (media == 1);
+}
+
+// Текст есть только у «Всё» (пост X) и у статьи: перевод имеет смысл для них.
+[[nodiscard]] bool MediaHasText(int media) {
+	return (media == 0) || (media == kArticleMedia);
+}
+
+// Перевод на один из основных языков, независимо от языка интерфейса.
+// Индекс 0 — без перевода.
+constexpr auto kTranslateValues = std::array{ "", "ru", "en" };
+
+[[nodiscard]] QStringList TranslateTitles() {
+	return {
+		QString::fromUtf8(Mokagram::Lang::Tr("Оригинал")),
+		u"Русский"_q,
+		u"English"_q,
+	};
 }
 
 [[nodiscard]] Choice MakeChoice(int media, int quality) {
@@ -136,6 +169,8 @@ struct Job {
 	int next = 0;
 	QStringList paths;
 	QString text;
+	QString cover;
+	QString coverCaption;
 	QPointer<QNetworkReply> reply;
 	QPointer<QTimer> deadline;
 	int polls = 0;
@@ -165,6 +200,9 @@ auto SendingAsText = false;
 		return QString::fromUtf8(Mokagram::Lang::Tr("Сервис скачивания занят. Попробуйте чуть позже."));
 	} else if (code == u"unsupported_url"_q) {
 		return QString::fromUtf8(Mokagram::Lang::Tr("Эта ссылка пока не поддерживается."));
+	} else if (code == u"invalid_media"_q) {
+		return QString::fromUtf8(
+			Mokagram::Lang::Tr("Сервер скачивания пока не поддерживает этот формат."));
 	} else if (code == u"no_media"_q) {
 		return QString::fromUtf8(Mokagram::Lang::Tr("Медиа для скачивания не найдено."));
 	} else if (code == u"too_large"_q) {
@@ -338,7 +376,7 @@ void Deliver(const std::shared_ptr<Job> &job) {
 	}
 	const auto peer = history->peer;
 	auto &api = history->session().api();
-	if (!job->paths.isEmpty()) {
+	if (!job->paths.isEmpty() || !job->cover.isEmpty()) {
 		const auto error = Data::AnyFileRestrictionError(peer);
 		if (error || !Data::CanSendAnyOf(
 				peer,
@@ -352,6 +390,28 @@ void Deliver(const std::shared_ptr<Job> &job) {
 			}
 			return;
 		}
+	}
+	if (!job->cover.isEmpty()) {
+		// Карточка релиза идёт первой, как в боте: обложка с названием и ссылкой.
+		auto cover = Storage::PrepareMediaList(
+			QStringList{ job->cover },
+			st::sendMediaPreviewSize,
+			history->session().premium());
+		if (cover.error == Ui::PreparedList::Error::None
+			&& cover.files.size() == 1) {
+			cover.files.front().caption = TextWithTags{
+				job->coverCaption.isEmpty()
+					? job->link
+					: (job->coverCaption + '\n' + job->link),
+			};
+			api.sendFiles(
+				std::move(cover),
+				SendMediaType::Photo,
+				nullptr,
+				*job->action);
+		}
+	}
+	if (!job->paths.isEmpty()) {
 		auto list = Storage::PrepareMediaList(
 			job->paths,
 			st::sendMediaPreviewSize,
@@ -385,10 +445,102 @@ void Deliver(const std::shared_ptr<Job> &job) {
 	}
 }
 
+[[nodiscard]] QNetworkRequest PlainRequest(const QUrl &url) {
+	auto result = QNetworkRequest(url);
+	result.setRawHeader("User-Agent", kUserAgent);
+	result.setTransferTimeout(kRequestTimeout);
+	return result;
+}
+
+[[nodiscard]] bool TrustedCover(const QUrl &url) {
+	const auto host = url.host().toLower();
+	return url.isValid()
+		&& (url.scheme() == u"https"_q)
+		&& (host.endsWith(u".spotifycdn.com"_q) || host.endsWith(u".scdn.co"_q));
+}
+
+// oEmbed отдаёт обложку 300px; тот же снимок 640px отличается только префиксом.
+[[nodiscard]] QUrl LargeCover(QUrl url) {
+	url.setPath(url.path().replace(
+		u"/ab67616d00001e02"_q,
+		u"/ab67616d0000b273"_q));
+	return url;
+}
+
+void FetchCover(
+		const std::shared_ptr<Job> &job,
+		const QUrl &url,
+		const QString &title) {
+	const auto reply = Manager()->get(PlainRequest(url));
+	job->reply = reply;
+	QObject::connect(reply, &QNetworkReply::downloadProgress, [=](
+			qint64 received,
+			qint64 total) {
+		if (received > kMaxCoverSize || total > kMaxCoverSize) {
+			reply->abort();
+		}
+	});
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		if (job->finished || job->reply != reply) {
+			return;
+		}
+		job->reply = nullptr;
+		const auto bytes = reply->read(kMaxCoverSize + 1);
+		const auto type = reply->header(
+			QNetworkRequest::ContentTypeHeader).toString();
+		const auto extension = ExtensionFor(type.section(';', 0, 0).trimmed());
+		const auto path = job->directory + u"/cover."_q + extension;
+		if (reply->error() == QNetworkReply::NoError
+			&& bytes.size() <= kMaxCoverSize
+			&& !extension.isEmpty()
+			&& !QImage::fromData(bytes).isNull()) {
+			auto file = QFile(path);
+			if (file.open(QIODevice::WriteOnly)
+				&& file.write(bytes) == bytes.size()) {
+				job->cover = path;
+				job->coverCaption = title;
+			}
+		}
+		// Без обложки треки всё равно уходят в чат.
+		Deliver(job);
+	});
+}
+
+void FetchPreview(const std::shared_ptr<Job> &job) {
+	const auto url = QUrl(
+		u"https://open.spotify.com/oembed?url="_q
+		+ QString::fromLatin1(QUrl::toPercentEncoding(job->link)));
+	const auto reply = Manager()->get(PlainRequest(url));
+	job->reply = reply;
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		if (job->finished || job->reply != reply) {
+			return;
+		}
+		job->reply = nullptr;
+		const auto object = QJsonDocument::fromJson(
+			reply->read(kMaxJsonSize)).object();
+		const auto image = QUrl(object.value(u"thumbnail_url"_q).toString());
+		if (reply->error() != QNetworkReply::NoError || !TrustedCover(image)) {
+			Deliver(job);
+			return;
+		}
+		FetchCover(
+			job,
+			LargeCover(image),
+			object.value(u"title"_q).toString().trimmed());
+	});
+}
+
 void DownloadNext(const std::shared_ptr<Job> &job) {
 	const auto index = job->next++;
 	if (index == int(job->files.size())) {
-		Deliver(job);
+		if (job->choice.preview) {
+			FetchPreview(job);
+		} else {
+			Deliver(job);
+		}
 		return;
 	}
 	const auto &file = job->files[index];
@@ -561,6 +713,9 @@ void Download(
 	if (choice.maxHeight > 0) {
 		fields.insert(u"max_height"_q, choice.maxHeight);
 	}
+	if (!choice.translate.isEmpty()) {
+		fields.insert(u"translate"_q, choice.translate);
+	}
 	const auto body = QJsonDocument(fields).toJson(QJsonDocument::Compact);
 	SendJson(job, Manager()->post(request, body), [=](QJsonObject object) {
 		job->id = object.value(u"id"_q).toString();
@@ -623,15 +778,35 @@ void Download(
 	return QString();
 }
 
+// Что придёт в чат при выбранном формате: подсказка под переключателем.
+[[nodiscard]] QString FormatHint(int media) {
+	switch (media) {
+	case 0: return QString::fromUtf8(Mokagram::Lang::Tr("Видео, фото и звук — всё, что найдётся в посте."));
+	case 1: return QString::fromUtf8(Mokagram::Lang::Tr("Только видео, без отдельных фото."));
+	case 2: return QString::fromUtf8(Mokagram::Lang::Tr("Звуковая дорожка придёт аудиофайлом."));
+	case 3: return QString::fromUtf8(Mokagram::Lang::Tr("Только картинки из поста."));
+	case kArticleMedia: return QString::fromUtf8(Mokagram::Lang::Tr("Пост или тред соберётся в статью Telegraph."));
+	}
+	return QString();
+}
+
 class Segments final : public Ui::RpWidget {
 public:
 	Segments(QWidget *parent, QStringList titles, int active)
 	: RpWidget(parent)
 	, _titles(std::move(titles))
-	, _active(std::clamp(active, 0, int(_titles.size()) - 1)) {
+	, _active(std::clamp(active, 0, int(_titles.size()) - 1))
+	, _shown(_active.current()) {
 		setCursor(style::cur_pointer);
-		_active.changes() | rpl::on_next([=] {
-			update();
+		setMouseTracking(true);
+		_active.changes() | rpl::on_next([=](int index) {
+			_slide.start(
+				[=] { update(); },
+				_shown,
+				index,
+				kSlideDuration,
+				anim::easeOutCubic);
+			_shown = index;
 		}, lifetime());
 	}
 
@@ -654,8 +829,14 @@ protected:
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
 		p.drawRoundedRect(full, full.height() / 2., full.height() / 2.);
-		const auto active = segment(_active.current()).marginsRemoved(
-			QMarginsF(kInset, kInset, kInset, kInset));
+		const auto insets = QMarginsF(kInset, kInset, kInset, kInset);
+		if (_hovered >= 0 && _hovered != _active.current()) {
+			const auto hover = segment(_hovered).marginsRemoved(insets);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(hover, hover.height() / 2., hover.height() / 2.);
+		}
+		const auto active = segment(
+			_slide.value(_active.current())).marginsRemoved(insets);
 		p.setBrush(st::activeButtonBg);
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		for (auto i = 0; i != int(_titles.size()); ++i) {
@@ -664,6 +845,14 @@ protected:
 			p.setPen(selected ? st::activeButtonFg : st::windowFg);
 			p.drawText(segment(i), Qt::AlignCenter, _titles[i]);
 		}
+	}
+
+	void mouseMoveEvent(QMouseEvent *e) override {
+		setHovered(indexAt(e->pos()));
+	}
+
+	void leaveEventHook(QEvent *e) override {
+		setHovered(-1);
 	}
 
 	void mousePressEvent(QMouseEvent *e) override {
@@ -681,8 +870,16 @@ protected:
 private:
 	static constexpr auto kHeight = 40;
 	static constexpr auto kInset = 3.;
+	static constexpr auto kSlideDuration = crl::time(180);
 
-	[[nodiscard]] QRectF segment(int index) const {
+	void setHovered(int index) {
+		if (_hovered != index) {
+			_hovered = index;
+			update();
+		}
+	}
+
+	[[nodiscard]] QRectF segment(float64 index) const {
 		const auto part = width() / float64(_titles.size());
 		return QRectF(part * index, 0, part, height());
 	}
@@ -698,6 +895,9 @@ private:
 
 	QStringList _titles;
 	rpl::variable<int> _active;
+	int _shown = 0;
+	Ui::Animations::Simple _slide;
+	int _hovered = -1;
 	int _pressed = -1;
 
 };
@@ -754,13 +954,22 @@ void ChooseBox(
 	const auto videoOnly = (platform == u"YouTube"_q)
 		|| (platform == u"Twitch"_q)
 		|| (platform == u"VK"_q);
+	// Статью Telegraph из треда сервер собирает только для X.
 	const auto values = IsMusicLink(link)
 		? std::vector<int>{ 2 }
 		: videoOnly
 		? std::vector<int>{ 1, 2 }
+		: (platform == u"X"_q)
+		? std::vector<int>{ 0, 1, 2, 3, kArticleMedia }
 		: std::vector<int>{ 0, 1, 2, 3 };
 	auto titles = QStringList();
-	const auto names = std::array{ Mokagram::Lang::Tr("Всё"), "Видео", Mokagram::Lang::Tr("Звук"), "Фото" };
+	const auto names = std::array{
+		Mokagram::Lang::Tr("Всё"),
+		Mokagram::Lang::Tr("Видео"),
+		Mokagram::Lang::Tr("Звук"),
+		Mokagram::Lang::Tr("Фото"),
+		Mokagram::Lang::Tr("Статья"),
+	};
 	for (const auto value : values) {
 		titles.push_back(QString::fromUtf8(names[value]));
 	}
@@ -776,6 +985,25 @@ void ChooseBox(
 	const auto mediaValue = [=] {
 		return values[media ? media->current() : 0];
 	};
+	if (media) {
+		static const auto hintSt = [] {
+			auto result = st::boxDividerLabel;
+			result.minWidth = 1;
+			return result;
+		}();
+		content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				media->value() | rpl::map([=](int index) {
+					return FormatHint(values[index]);
+				}),
+				hintSt),
+			QMargins(
+				BoxParts::kOuterSide + 8,
+				8,
+				BoxParts::kOuterSide + 8,
+				0));
+	}
 
 	const auto wrap = content->add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
@@ -798,18 +1026,77 @@ void ChooseBox(
 		})) | rpl::type_erased
 		: rpl::single(MediaHasVideo(values.front())));
 	wrap->finishAnimating();
+
+	const auto translateWrap = (platform == u"X"_q)
+		? content->add(
+			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+				content,
+				object_ptr<Ui::VerticalLayout>(content)))
+		: nullptr;
+	const auto translate = translateWrap
+		? AddSegments(
+			translateWrap->entity(),
+			QString::fromUtf8(Mokagram::Lang::Tr("Перевод")),
+			TranslateTitles(),
+			Settings::Int(QString::fromLatin1(kTranslateKey))).get()
+		: nullptr;
+	if (translateWrap) {
+		translateWrap->toggleOn(media
+			? (media->value() | rpl::map([=](int index) {
+				return MediaHasText(values[index]);
+			})) | rpl::type_erased
+			: rpl::single(MediaHasText(values.front())));
+		translateWrap->finishAnimating();
+	}
+
+	const auto preview = (platform == u"Spotify"_q)
+		? AddSegments(
+			content,
+			QString::fromUtf8(Mokagram::Lang::Tr("Превью")),
+			{
+				QString::fromUtf8(Mokagram::Lang::Tr("С обложкой")),
+				QString::fromUtf8(Mokagram::Lang::Tr("Только треки")),
+			},
+			Settings::Bool(QString::fromLatin1(kSpotifyPreviewKey)) ? 0 : 1).get()
+		: nullptr;
 	Ui::AddSkip(content, BoxParts::kOuterSide);
 
 	box->addButton(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Скачать"))), [=] {
 		Settings::SetInt(QString::fromLatin1(kMediaKey), mediaValue());
 		Settings::SetInt(QString::fromLatin1(kQualityKey), quality->current());
-		const auto choice = MakeChoice(mediaValue(), quality->current());
+		auto choice = MakeChoice(mediaValue(), quality->current());
+		if (translate) {
+			const auto index = std::clamp(
+				translate->current(),
+				0,
+				int(kTranslateValues.size()) - 1);
+			Settings::SetInt(QString::fromLatin1(kTranslateKey), index);
+			if (MediaHasText(mediaValue())) {
+				choice.translate = QString::fromLatin1(kTranslateValues[index]);
+			}
+		}
+		if (preview) {
+			choice.preview = (preview->current() == 0);
+			Settings::SetBool(
+				QString::fromLatin1(kSpotifyPreviewKey),
+				choice.preview);
+		}
 		box->closeBox();
 		done(choice);
 	}, BoxParts::PillActive());
+	base::install_event_filter(box, [=](not_null<QEvent*> event) {
+		if (event->type() == QEvent::KeyPress) {
+			const auto key = static_cast<QKeyEvent*>(event.get())->key();
+			if (key == Qt::Key_Enter || key == Qt::Key_Return) {
+				box->triggerButton(0);
+				return base::EventFilterResult::Cancel;
+			}
+		}
+		return base::EventFilterResult::Continue;
+	});
 	if (sendAsText) {
 		box->addLeftButton(
-			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Ссылкой"))),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отправить ссылкой"))),
 			[=] {
 				box->closeBox();
 				SendingAsText = true;
@@ -857,6 +1144,21 @@ void RegisterSettings() {
 		.kind = Settings::Kind::Choice,
 		.defaultValue = 2,
 		.choices = QualityTitles(),
+		.hidden = true,
+	});
+	add({
+		.key = QString::fromLatin1(kTranslateKey),
+		.title = QString::fromLatin1(kTranslateKey),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = TranslateTitles(),
+		.hidden = true,
+	});
+	add({
+		.key = QString::fromLatin1(kSpotifyPreviewKey),
+		.title = QString::fromLatin1(kSpotifyPreviewKey),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = true,
 		.hidden = true,
 	});
 }
