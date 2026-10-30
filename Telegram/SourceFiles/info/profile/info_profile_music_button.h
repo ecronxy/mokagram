@@ -16,6 +16,8 @@ namespace Info::Profile {
 
 // Mokagram: музыка прилегает к шапке, пока показана хотя бы одна плашка.
 [[nodiscard]] bool MusicShown();
+// Плашка стоит прямо под нижним краем шапки (не прокручена в сторону).
+[[nodiscard]] bool MusicAttachedTo(not_null<QWidget*> bar);
 [[nodiscard]] std::optional<QColor> MusicBandColor();
 [[nodiscard]] rpl::producer<> MusicShownChanges();
 
@@ -33,6 +35,9 @@ public:
 
 private:
 	void paintEvent(QPaintEvent *e) override;
+	void setCounted(bool counted);
+	void showEvent(QShowEvent *e) override;
+	void hideEvent(QHideEvent *e) override;
 	int resizeGetHeight(int newWidth) override;
 
 	Ui::Text::String _performer;
@@ -41,6 +46,7 @@ private:
 
 	const QString _noteSymbol;
 	const int _noteWidth;
+	bool _counted = false;
 
 };
 

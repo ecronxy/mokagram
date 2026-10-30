@@ -211,7 +211,7 @@ void RegisterSettings() {
 	playerEntry({
 		.key = u"lyrics.enabled"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Текст песни")),
-		.description = QString::fromUtf8(Mokagram::Lang::Tr("Показывать слова под обложкой, подсвечивая текущую строку.")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Панель со словами справа от чата, текущая строка подсвечивается. Включается кнопкой в панели плеера.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});

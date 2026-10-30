@@ -23,6 +23,7 @@ namespace Ui {
 class FlatLabel;
 class LabelSimple;
 class IconButton;
+class AbstractButton;
 class PlainShadow;
 class FilledSlider;
 template <typename Widget>
@@ -165,6 +166,7 @@ private:
 	object_ptr<Ui::IconButton> _volumeToggle;
 	object_ptr<Ui::IconButton> _repeatToggle;
 	object_ptr<Ui::IconButton> _orderToggle;
+	object_ptr<Ui::AbstractButton> _lyricsToggle;
 	object_ptr<SpeedButton> _speedToggle;
 	object_ptr<Ui::IconButton> _close;
 	object_ptr<Ui::PlainShadow> _shadow = { nullptr };

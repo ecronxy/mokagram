@@ -152,7 +152,18 @@ Telegram/build/docker/centos_env/build_debug.sh
 cmake --build "l:\Telegram\tx64\out" --config Debug --target Telegram
 ```
 
-**Never build Release** - it's extremely heavy and not needed for testing changes.
+**mokaGram builds are Release only (overrides every Debug command in this
+file).** Never build or package the Debug configuration: always use
+`--config Release`, and the product is `out/Release/mokaGram.app`. Debug
+leaves a stale `Telegram.app` with the stock Telegram icon, which is not the
+mokaGram identity. If `out/` was configured with Debug only, reconfigure it
+with `-D CMAKE_CONFIGURATION_TYPES=Release` first.
+
+**On macOS, after every successful Release build, install the app right away**
+by running the `mokagram-build` skill's install step (`.claude/skills/mokagram-build/SKILL.md`):
+quit the running app, replace `/Applications/mokaGram.app` with
+`out/Release/mokaGram.app`, ad-hoc sign it and clear quarantine. Do not leave
+the build only in `out/`. Builds are local; do not use CI to build.
 
 **On macOS, never run an Xcode clean against `out/`** - not `--target clean`,
 not `--clean-first` with any target, not `xcodebuild ... clean` and not a
@@ -308,8 +319,8 @@ user to close that checkout's Telegram/debugger before rebuilding.
 
 ## Best Practices
 
-1. **Always use Debug builds** - Release builds are extremely heavy
-2. **Don't build Release configuration** - it's too heavy for testing
+1. **Always use Release builds** (`--config Release`) - never Debug
+2. **Install into /Applications after every macOS build** - see `mokagram-build`
 
 ## Debug-Only Code
 

@@ -79,7 +79,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Settings {
 
-// Mokagram: «Добавить аккаунт» пилюлей, как остальные пункты меню.
+// Mokagram: строки аккаунтов и «Добавить аккаунт» пилюлей, как остальные
+// пункты меню.
 [[nodiscard]] const style::SettingsButton &PillAccountButtonStyle() {
 	static const auto result = [] {
 		auto copy = st::mainMenuAddAccountButton;
@@ -95,15 +96,6 @@ namespace Settings {
 	return result;
 }
 
-// Mokagram: строки аккаунтов без собственной плашки, как плоское меню.
-[[nodiscard]] const style::SettingsButton &FlatAccountButtonStyle() {
-	static const auto result = [] {
-		auto copy = st::mainMenuAddAccountButton;
-		copy.textBg = st::mainMenuBg;
-		return copy;
-	}();
-	return result;
-}
 namespace {
 
 using namespace Builder;
@@ -916,7 +908,7 @@ void SetupAccountsWrap(
 	auto result = object_ptr<Ui::SettingsButton>(
 		parent,
 		rpl::duplicate(text),
-		FlatAccountButtonStyle());
+		PillAccountButtonStyle());
 	const auto raw = result.data();
 
 	{
@@ -950,7 +942,7 @@ void SetupAccountsWrap(
 		+ userpicSkip * 2;
 	raw->heightValue(
 	) | rpl::on_next([=](int height) {
-		const auto left = st::mainMenuAddAccountButton.iconLeft
+		const auto left = PillAccountButtonStyle().iconLeft
 			+ (st::settingsIconAdd.width() - userpicSize) / 2;
 		const auto top = (height - userpicSize) / 2;
 		state->userpic.setGeometry(left, top, userpicSize, userpicSize);
@@ -1254,12 +1246,17 @@ void AccountsList::rebuild() {
 						std::move(activate));
 				}
 			};
+			// Без вертикальных отступов: перестановка двигает строки
+			// на их высоту и не учитывает поля.
 			button.reset(inner->add(MakeAccountButton(
 				inner,
 				_controller,
 				account,
 				std::move(callback),
-				nextIsLocked)));
+				nextIsLocked), QMargins(10, 0, 10, 0)));
+			Mokagram::Plugins::MakePill(
+				button.get(),
+				[] { return st::mainMenuBg->c; });
 		}
 	}
 	inner->resizeToWidth(_outer->width());

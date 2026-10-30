@@ -10,6 +10,7 @@
 #include "mokagram/music/mokagram_lyrics.h"
 #include "mokagram/settings/mokagram_settings.h"
 
+#include "base/timer.h"
 #include "base/unixtime.h"
 #include "base/options.h"
 #include "mainwindow.h"
@@ -42,17 +43,23 @@
 #include "main/main_session.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
+#include "ui/effects/animations.h"
 #include "ui/image/image.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
+#include "ui/ui_utility.h"
 #include "ui/power_saving.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/vertical_list.h"
+#include "ui/resize_area.h"
+#include "styles/style_chat.h"
+#include "styles/style_window.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
+#include "mainwidget.h"
 #include "window/window_peer_menu.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
@@ -77,6 +84,9 @@ namespace Mokagram::Music {
 namespace {
 
 constexpr auto kRowHeight = 76;
+constexpr auto kSwitchDuration = crl::time(220);
+constexpr auto kCoverFadeDuration = crl::time(320);
+constexpr auto kTypingDelay = crl::time(400);
 constexpr auto kArtSize = 56;
 
 struct Queue {
@@ -968,15 +978,22 @@ public:
 		p.drawRoundedRect(rect(), height() / 2., height() / 2.);
 		const auto margin = 4;
 		const auto half = (width() - 2 * margin) / 2;
-		const auto selected = _chats
-			? QRect(margin + half, margin, width() - margin - (margin + half), height() - 2 * margin)
-			: QRect(margin, margin, half, height() - 2 * margin);
+		const auto progress = _animation.value(_chats ? 1. : 0.);
+		// Плашка едет к выбранной половине и слегка вытягивается на ходу.
+		const auto stretch = int(base::SafeRound(
+			half * 0.18 * (1. - std::abs(2. * progress - 1.))));
+		const auto left = margin + int(base::SafeRound(half * progress));
+		const auto selected = QRect(
+			left - stretch / 2,
+			margin,
+			half + stretch,
+			height() - 2 * margin);
 		p.setBrush(st::windowActiveTextFg->c);
 		p.drawRoundedRect(selected, selected.height() / 2., selected.height() / 2.);
 		p.setFont(st::semiboldFont);
 		for (auto i = 0; i != 2; ++i) {
-			const auto active = (_chats == (i == 1));
-			p.setPen(active ? st::windowFg : st::windowSubTextFg);
+			const auto active = (i == 1) ? progress : (1. - progress);
+			p.setPen(anim::color(st::windowSubTextFg, st::windowFg, active));
 			p.drawText(QRect(i * width() / 2, 0, width() / 2, height()), Qt::AlignCenter, _labels[i]);
 		}
 	}, lifetime());
@@ -984,15 +1001,25 @@ public:
 	void setChats(bool chats) {
 		if (_chats != chats) {
 			_chats = chats;
-			update();
+			_animation.start(
+				[=] { update(); },
+				_chats ? 0. : 1.,
+				_chats ? 1. : 0.,
+				kSwitchDuration,
+				anim::easeOutCubic);
 		}
 	}
 	void setChangedCallback(Fn<void(bool)> callback) {
 		_changed = std::move(callback);
 	}
+	void finishAnimating() {
+		_animation.stop();
+		update();
+	}
 
 private:
 	const std::array<QString, 2> _labels;
+	Ui::Animations::Simple _animation;
 	Fn<void(bool)> _changed;
 	bool _chats = false;
 
@@ -1330,6 +1357,158 @@ void Row::hideEvent(QHideEvent *e) {
 }
 
 // ---- полноценный плеер ----
+
+// Загрузка списка: бегущая полоска, подпись и мерцающие заглушки строк.
+class LoadingView final : public Ui::RpWidget {
+public:
+	LoadingView(QWidget *parent, const QString &text)
+	: RpWidget(parent)
+	, _text(text) {
+		resize(width(), kHeaderHeight + kRows * kRowStep + 8);
+		paintRequest(
+		) | rpl::on_next([=](QRect) {
+			paint();
+		}, lifetime());
+		if (!PowerSaving::On(PowerSaving::kAnimations)) {
+			_started = crl::now();
+			_animation.init([=](crl::time) {
+				update();
+				return true;
+			});
+			_animation.start();
+		}
+	}
+
+private:
+	static constexpr auto kHeaderHeight = 44;
+	static constexpr auto kRows = 4;
+	static constexpr auto kRowStep = 60;
+
+	void paint() {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto time = _started ? (crl::now() - _started) : crl::time(0);
+		const auto skeleton = [&] {
+			auto color = st::windowSubTextFg->c;
+			color.setAlphaF(0.16);
+			return color;
+		}();
+
+		// Подпись слегка «дышит».
+		auto textColor = st::windowSubTextFg->c;
+		textColor.setAlphaF(_started
+			? 0.6 + 0.4 * (0.5 + 0.5 * std::sin(time / 260.))
+			: 1.);
+		p.setPen(textColor);
+		p.setFont(st::normalFont);
+		p.drawText(
+			QRect(24, 0, width() - 48, 24),
+			Qt::AlignLeft | Qt::AlignVCenter,
+			_text);
+
+		// Неопределённая полоска: сегмент бежит слева направо.
+		const auto barRect = QRectF(24, 28, width() - 48, 4);
+		p.setPen(Qt::NoPen);
+		p.setBrush(skeleton);
+		p.drawRoundedRect(barRect, 2, 2);
+		const auto phase = std::fmod(time / 1100., 1.);
+		const auto eased = 1. - std::pow(1. - phase, 2.);
+		const auto segment = barRect.width() * 0.32;
+		const auto x = barRect.left()
+			- segment
+			+ (barRect.width() + segment) * eased;
+		p.save();
+		auto clip = QPainterPath();
+		clip.addRoundedRect(barRect, 2, 2);
+		p.setClipPath(clip);
+		p.setBrush(st::windowActiveTextFg->c);
+		p.drawRoundedRect(QRectF(x, barRect.top(), segment, barRect.height()), 2, 2);
+		p.restore();
+
+		// Заглушки строк с бегущим бликом.
+		const auto sweep = _started
+			? std::fmod(time / 1400., 1.) * (width() + 160) - 80
+			: -1000.;
+		for (auto i = 0; i != kRows; ++i) {
+			const auto top = kHeaderHeight + i * kRowStep;
+			auto shape = QPainterPath();
+			shape.addRoundedRect(QRectF(16, top + 6, 44, 44), 8, 8);
+			shape.addRoundedRect(QRectF(72, top + 12, width() * 0.45 - i * 14, 10), 5, 5);
+			shape.addRoundedRect(QRectF(72, top + 32, width() * 0.28, 9), 4.5, 4.5);
+			p.setPen(Qt::NoPen);
+			p.setBrush(skeleton);
+			p.drawPath(shape);
+			p.save();
+			p.setClipPath(shape);
+			auto glow = QLinearGradient(sweep - 70, 0, sweep + 70, 0);
+			auto edge = st::windowFg->c;
+			edge.setAlphaF(0.);
+			auto mid = st::windowFg->c;
+			mid.setAlphaF(0.10);
+			glow.setColorAt(0., edge);
+			glow.setColorAt(0.5, mid);
+			glow.setColorAt(1., edge);
+			p.fillRect(QRectF(0, top, width(), kRowStep), glow);
+			p.restore();
+		}
+	}
+
+	const QString _text;
+	Ui::Animations::Basic _animation;
+	crl::time _started = 0;
+
+};
+
+// Пустой поиск: анимированный стикер посередине.
+class StickerHint final : public Ui::RpWidget {
+public:
+	explicit StickerHint(QWidget *parent) : RpWidget(parent) {
+		_sheet = QPixmap(u":/gui/art/mokagram_music_hint.png"_q);
+		_sheet.setDevicePixelRatio(2.);
+		resize(width(), kSide + 56);
+		paintRequest(
+		) | rpl::on_next([=](QRect) {
+			if (_sheet.isNull()) {
+				return;
+			}
+			const auto frame = _started
+				? int(((crl::now() - _started) / kFrameDuration) % kFrames)
+				: 0;
+			auto p = QPainter(this);
+			auto hq = PainterHighQualityEnabler(p);
+			// Кадр в листе задан в пикселях устройства, а целевой квадрат —
+			// в логических, иначе при DPR 2 картинка ужимается и уезжает влево.
+			p.drawPixmap(
+				QRect((width() - kSide) / 2, 28, kSide, kSide),
+				_sheet,
+				QRect(
+					(frame % kColumns) * kSource,
+					(frame / kColumns) * kSource,
+					kSource,
+					kSource));
+		}, lifetime());
+		if (!PowerSaving::On(PowerSaving::kAnimations)) {
+			_started = crl::now();
+			_animation.init([=](crl::time) {
+				update();
+				return true;
+			});
+			_animation.start();
+		}
+	}
+
+private:
+	static constexpr auto kSource = 192;
+	static constexpr auto kSide = kSource / 2;
+	static constexpr auto kColumns = 9;
+	static constexpr auto kFrames = 49;
+	static constexpr auto kFrameDuration = crl::time(1000 / 15);
+
+	QPixmap _sheet;
+	Ui::Animations::Basic _animation;
+	crl::time _started = 0;
+
+};
 
 class SeekBar final : public Ui::RpWidget {
 public:
@@ -1963,7 +2142,346 @@ void LyricsView::resizeEvent(QResizeEvent *e) {
 	RpWidget::resizeEvent(e);
 }
 
+constexpr auto kLyricsPanelWidth = 340;
+constexpr auto kLyricsHeaderHeight = 56;
+
+// Колонка справа от чата: название трека и синхронный текст.
+class LyricsPanel final : public Ui::RpWidget {
+public:
+	LyricsPanel(
+		not_null<Ui::RpWidget*> parent,
+		not_null<Window::SessionController*> controller,
+		not_null<Ui::RpWidget*> anchor)
+	: RpWidget(parent.get())
+	, _controller(controller)
+	, _anchor(anchor)
+	, _view(Ui::CreateChild<LyricsView>(this)) {
+		_view->setPlasma(Mokagram::Settings::Bool(u"lyrics.plasma"_q));
+		_close = Mokagram::Plugins::MakeHeaderButton(this, true, [] {
+			Mokagram::Settings::SetBool(u"lyrics.enabled"_q, false);
+		});
+
+		// Левый край тянется, как у третьей колонки: ширина общая с ней.
+		_resize = Ui::CreateChild<Ui::ResizeArea>(this);
+		_resize->addMoveLeftCallback([=](int globalLeft) {
+			if (const auto parent = parentWidget()) {
+				Core::App().settings().setThirdColumnWidth(
+					parent->mapToGlobal(QPoint(parent->width(), 0)).x()
+						- globalLeft);
+			}
+		});
+		_resize->addMoveFinishedCallback([=] {
+			Core::App().settings().setThirdColumnWidth(std::clamp(
+				Core::App().settings().thirdColumnWidth(),
+				st::columnMinimalWidthThird,
+				st::columnMaximalWidthThird));
+			Core::App().saveSettingsDelayed();
+		});
+
+		parent->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::Resize;
+		}) | rpl::on_next([=] {
+			updateGeometryFromAnchor();
+		}, lifetime());
+		anchor->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::Resize || e->type() == QEvent::Move;
+		}) | rpl::on_next([=] {
+			updateGeometryFromAnchor();
+		}, lifetime());
+		controller->adaptive().changes(
+		) | rpl::on_next([=] {
+			updateGeometryFromAnchor();
+		}, lifetime());
+		Core::App().settings().thirdColumnWidthChanges(
+		) | rpl::on_next([=](int) {
+			updateGeometryFromAnchor();
+		}, lifetime());
+		anchor->shownValue(
+		) | rpl::on_next([=](bool) {
+			updateGeometryFromAnchor();
+			refresh();
+		}, lifetime());
+		const auto weak = QPointer<LyricsPanel>(this);
+		anchor->lifetime().add([=] {
+			if (weak) {
+				weak->deleteLater();
+			}
+		});
+
+		Mokagram::Settings::Changed(
+		) | rpl::on_next([=](const QString &key) {
+			if (key == u"lyrics.plasma"_q) {
+				_view->setPlasma(Mokagram::Settings::Bool(key));
+			} else if (key == u"lyrics.enabled"_q
+				&& !Mokagram::Settings::Bool(key)) {
+				deleteLater();
+			}
+		}, lifetime());
+
+		const auto instance = Media::Player::instance();
+		instance->updatedNotifier(
+		) | rpl::on_next([=] {
+			refresh();
+		}, lifetime());
+		QueueState().changes.events(
+		) | rpl::on_next([=] {
+			refresh();
+		}, lifetime());
+		CoversChanged() | rpl::on_next([=] {
+			_view->update();
+		}, lifetime());
+
+		// Нажатие на строку перематывает трек на её время.
+		_view->lineClicked(
+		) | rpl::on_next([=](qint64 ms) {
+			const auto state = instance->getState(AudioMsgId::Type::Song);
+			const auto lengthMs = state.length * 1000
+				/ std::max<int64>(state.frequency, 1);
+			if (lengthMs <= 0) {
+				return;
+			}
+			instance->startSeeking(AudioMsgId::Type::Song);
+			instance->finishSeeking(
+				AudioMsgId::Type::Song,
+				std::clamp(float64(ms) / float64(lengthMs), 0., 1.));
+		}, lifetime());
+
+		updateGeometryFromAnchor();
+		refresh();
+		raise();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		p.fillRect(rect(), st::windowBg);
+		p.fillRect(0, 0, st::lineWidth, height(), st::shadowFg);
+		const auto left = 18;
+		const auto available = width() - left - _close->width() - 12;
+		p.setFont(st::semiboldFont);
+		p.setPen(st::windowFg);
+		p.drawText(
+			QRect(left, 8, available, 22),
+			Qt::AlignLeft | Qt::AlignVCenter,
+			st::semiboldFont->elided(_title, available));
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(
+			QRect(left, 30, available, 18),
+			Qt::AlignLeft | Qt::AlignVCenter,
+			st::normalFont->elided(_artist, available));
+	}
+	void resizeEvent(QResizeEvent *e) override {
+		_view->setGeometry(
+			0,
+			kLyricsHeaderHeight,
+			width(),
+			std::max(height() - kLyricsHeaderHeight, 0));
+		_close->move(
+			width() - _close->width() - 6,
+			(kLyricsHeaderHeight - _close->height()) / 2);
+		_resize->setGeometry(0, 0, st::historyResizeWidth, height());
+		_resize->raise();
+		RpWidget::resizeEvent(e);
+	}
+
+private:
+	// Встаём ровно на место третьей колонки: во всю высоту и её ширины, чат
+	// при этом сужается штатно. Если колонку показать нельзя, висим под плеером.
+	void updateGeometryFromAnchor() {
+		const auto parent = parentWidget();
+		if (!parent || !_anchor) {
+			return;
+		}
+		const auto layout = _controller->computeColumnLayout();
+		const auto docked = _controller->adaptive().isThreeColumn()
+			&& layout.thirdWidth > 0;
+		_resize->setVisible(docked);
+		if (docked) {
+			setGeometry(
+				parent->width() - layout.thirdWidth,
+				0,
+				layout.thirdWidth,
+				parent->height());
+		} else {
+			const auto top = _anchor->mapTo(
+				parent,
+				QPoint(0, _anchor->height())).y();
+			const auto width = std::min(kLyricsPanelWidth, parent->width() / 2);
+			setGeometry(
+				parent->width() - width,
+				top,
+				width,
+				std::max(parent->height() - top, 0));
+		}
+		raise();
+	}
+	void refresh() {
+		const auto track = PlayingTrack();
+		const auto shown = _anchor
+			&& _anchor->isVisible()
+			&& !track.id.isEmpty();
+		setVisible(shown);
+		if (!shown) {
+			return;
+		}
+		if (_title != track.title || _artist != track.artist) {
+			_title = track.title;
+			_artist = track.artist;
+			update();
+		}
+		const auto instance = Media::Player::instance();
+		const auto state = instance->getState(AudioMsgId::Type::Song);
+		_view->setPosition(
+			state.position * 1000 / std::max<int64>(state.frequency, 1),
+			state.state == Media::Player::State::Playing
+				|| state.state == Media::Player::State::Starting
+				|| state.state == Media::Player::State::Resuming);
+		if (_lyricsFor == track.id) {
+			return;
+		}
+		_lyricsFor = track.id;
+		_view->setLoading();
+		const auto id = track.id;
+		FetchLyrics(
+			id,
+			track.title,
+			track.artist,
+			track.durationMs,
+			crl::guard(this, [=](Lyrics lyrics) {
+				if (_lyricsFor == id) {
+					_view->setLyrics(std::move(lyrics));
+				}
+			}));
+	}
+
+	const not_null<Window::SessionController*> _controller;
+	const QPointer<Ui::RpWidget> _anchor;
+	const not_null<LyricsView*> _view;
+	Ui::AbstractButton *_close = nullptr;
+	Ui::ResizeArea *_resize = nullptr;
+	QString _lyricsFor;
+	QString _title;
+	QString _artist;
+
+};
+
+[[nodiscard]] QPointer<LyricsPanel> &LyricsPanelInstance() {
+	static auto result = QPointer<LyricsPanel>();
+	return result;
+}
+
+// Третью колонку открыли ради панели текста: при закрытии панели закроем и её.
+[[nodiscard]] bool &ThirdColumnOpenedForLyrics() {
+	static auto result = false;
+	return result;
+}
+
+// Есть ли текст у играющего трека (для состояния кнопки в панели плеера).
+struct LyricsAvailability {
+	QString id;
+	bool found = false;
+	bool started = false;
+	rpl::event_stream<> changes;
+	rpl::lifetime lifetime;
+};
+
+[[nodiscard]] LyricsAvailability &Availability() {
+	static auto result = new LyricsAvailability();
+	return *result;
+}
+
+void RefreshAvailability() {
+	auto &state = Availability();
+	const auto track = PlayingTrack();
+	if (state.id == track.id) {
+		return;
+	}
+	state.id = track.id;
+	state.found = false;
+	state.changes.fire({});
+	if (track.id.isEmpty()) {
+		return;
+	}
+	const auto id = track.id;
+	FetchLyrics(
+		id,
+		track.title,
+		track.artist,
+		track.durationMs,
+		[=](Lyrics lyrics) {
+			auto &state = Availability();
+			if (state.id == id && state.found != lyrics.found) {
+				state.found = lyrics.found;
+				state.changes.fire({});
+			}
+		});
+}
+
 } // namespace
+
+void SyncLyricsPanel(
+		not_null<Window::SessionController*> controller,
+		not_null<Ui::RpWidget*> anchor) {
+	auto &panel = LyricsPanelInstance();
+	if (!Mokagram::Settings::Bool(u"lyrics.enabled"_q)) {
+		if (panel) {
+			panel->deleteLater();
+			panel = nullptr;
+		}
+		if (base::take(ThirdColumnOpenedForLyrics())) {
+			controller->closeThirdSection();
+		}
+		return;
+	}
+	const auto parent = not_null<Ui::RpWidget*>(controller->content());
+	if (panel && panel->parentWidget() != parent.get()) {
+		panel->deleteLater();
+		panel = nullptr;
+	}
+	if (!panel) {
+		panel = Ui::CreateChild<LyricsPanel>(parent.get(), controller, anchor);
+	}
+}
+
+bool LyricsAvailable() {
+	return Availability().found;
+}
+
+rpl::producer<> LyricsAvailabilityChanges() {
+	auto &state = Availability();
+	if (!state.started) {
+		state.started = true;
+		Media::Player::instance()->updatedNotifier(
+		) | rpl::on_next(RefreshAvailability, state.lifetime);
+		QueueState().changes.events(
+		) | rpl::on_next(RefreshAvailability, state.lifetime);
+		RefreshAvailability();
+	}
+	return state.changes.events();
+}
+
+void ToggleLyricsPanel(
+		not_null<Window::SessionController*> controller,
+		not_null<Ui::RpWidget*> anchor) {
+	// Панель стоит на месте третьей колонки: если её нет, открываем (как кнопка
+	// «Информация» в шапке чата) и при закрытии панели закроем обратно.
+	if (!Mokagram::Settings::Bool(u"lyrics.enabled"_q)
+		&& !controller->adaptive().isThreeColumn()
+		&& controller->canShowThirdSection()) {
+		Core::App().settings().setThirdSectionInfoEnabled(true);
+		Core::App().saveSettingsDelayed();
+		controller->resizeForThirdSection();
+		controller->updateColumnLayout();
+		ThirdColumnOpenedForLyrics() = true;
+	}
+	Mokagram::Settings::SetBool(
+		u"lyrics.enabled"_q,
+		!Mokagram::Settings::Bool(u"lyrics.enabled"_q));
+	SyncLyricsPanel(controller, anchor);
+}
 
 QImage CoverForPlayback(const AudioMsgId &current) {
 	const auto document = current.audio();
@@ -2205,6 +2723,17 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			ShowCurrentTrackMenu(controller, QCursor::pos());
 		}, box->lifetime());
 
+		// Смена трека: старая обложка с названием плавно растворяется в новой.
+		struct InfoFade {
+			Ui::Animations::Simple animation;
+			QPixmap was;
+			QPixmap last;
+			QColor tintFrom;
+			QColor tintTo;
+			Ui::Animations::Simple tintAnimation;
+		};
+		const auto fade = box->lifetime().make_state<InfoFade>();
+
 		// Цвет обложки: мягкий градиент сверху, под всем содержимым.
 		const auto tint = Ui::CreateChild<Ui::RpWidget>(box.get());
 		tint->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -2222,7 +2751,12 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			auto path = QPainterPath();
 			path.addRoundedRect(QRectF(tint->rect()), 26, 26);
 			p.setClipPath(path);
-			auto top = accent;
+			auto top = fade->tintAnimation.animating()
+				? anim::color(
+					fade->tintFrom,
+					fade->tintTo,
+					fade->tintAnimation.value(1.))
+				: accent;
 			top.setAlpha(80);
 			auto bottom = accent;
 			bottom.setAlpha(0);
@@ -2275,7 +2809,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			info->resize(width, coverRect().height()
 				+ st::mokagramMusicPlayerInfoTextHeight + 12);
 		}, info->lifetime());
-		info->paintOn([=](QPainter &p) {
+		const auto paintInfo = [=](QPainter &p) {
 			auto hq = PainterHighQualityEnabler(p);
 			const auto art = coverRect();
 			const auto current = instance->current(AudioMsgId::Type::Song);
@@ -2310,7 +2844,24 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 				QRect(24, art.bottom() + 28, textWidth, 30),
 				Qt::AlignLeft | Qt::AlignVCenter,
 				metrics.elidedText(track.title, Qt::ElideRight, textWidth));
+		};
+		info->paintOn([=](QPainter &p) {
+			if (fade->animation.animating() && !fade->was.isNull()) {
+				p.drawPixmap(0, 0, fade->was);
+				p.setOpacity(fade->animation.value(1.));
+			}
+			paintInfo(p);
 		});
+		const auto renderInfo = [=] {
+			const auto ratio = style::DevicePixelRatio();
+			auto result = QPixmap(info->size() * ratio);
+			result.setDevicePixelRatio(ratio);
+			result.fill(Qt::transparent);
+			auto p = QPainter(&result);
+			paintInfo(p);
+			p.end();
+			return result;
+		};
 
 		const auto artistButton = Ui::CreateChild<Ui::AbstractButton>(info);
 		const auto artistHint = QString::fromUtf8(
@@ -2543,6 +3094,31 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			const auto coverKey = CoverForPlayback(current).cacheKey();
 			if (trackChanged || playback->coverKey != coverKey) {
 				playback->coverKey = coverKey;
+				if (!fade->last.isNull()
+					&& !PowerSaving::On(PowerSaving::kAnimations)) {
+					fade->was = fade->last;
+					fade->animation.start(
+						[=] { info->update(); },
+						0.,
+						1.,
+						kCoverFadeDuration,
+						anim::easeOutCubic);
+					const auto accent = CurrentCoverAccent();
+					if (accent.isValid() && fade->tintTo.isValid()) {
+						fade->tintFrom = fade->tintTo;
+						fade->tintTo = accent;
+						fade->tintAnimation.start(
+							[=] { tint->update(); },
+							0.,
+							1.,
+							kCoverFadeDuration,
+							anim::easeOutCubic);
+					}
+				}
+				if (CurrentCoverAccent().isValid()) {
+					fade->tintTo = CurrentCoverAccent();
+				}
+				fade->last = renderInfo();
 				info->update();
 				tint->update();
 			}
@@ -2566,66 +3142,6 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		CoversChanged() | rpl::on_next(refresh, box->lifetime());
 		LikesChanged() | rpl::on_next(refresh, box->lifetime());
 		refresh();
-
-		// Текст песни (LRCLIB), под кнопками.
-		const auto lyricsView = content->add(
-			object_ptr<LyricsView>(content),
-			QMargins(24, 8, 24, 4));
-		lyricsView->setVisible(Mokagram::Settings::Bool(u"lyrics.enabled"_q));
-		lyricsView->setPlasma(Mokagram::Settings::Bool(u"lyrics.plasma"_q));
-		const auto lyricsFor = std::make_shared<QString>();
-		const auto updateLyrics = [=] {
-			const auto track = PlayingTrack();
-			const auto enabled = Mokagram::Settings::Bool(u"lyrics.enabled"_q)
-				&& !track.id.isEmpty();
-			lyricsView->setVisible(enabled);
-			if (!enabled) {
-				lyricsFor->clear();
-				return;
-			} else if (*lyricsFor == track.id) {
-				return;
-			}
-			*lyricsFor = track.id;
-			lyricsView->setLoading();
-			const auto id = track.id;
-			FetchLyrics(
-				id,
-				track.title,
-				track.artist,
-				track.durationMs,
-				crl::guard(lyricsView, [=](Lyrics lyrics) {
-					if (*lyricsFor == id) {
-						lyricsView->setLyrics(std::move(lyrics));
-					}
-				}));
-		};
-		const auto refreshLyrics = [=] {
-			const auto state = instance->getState(AudioMsgId::Type::Song);
-			lyricsView->setPosition(
-				state.position * 1000 / std::max<int64>(state.frequency, 1),
-				state.state == Media::Player::State::Playing
-					|| state.state == Media::Player::State::Starting
-					|| state.state == Media::Player::State::Resuming);
-			updateLyrics();
-		};
-		instance->updatedNotifier(
-		) | rpl::on_next(refreshLyrics, lyricsView->lifetime());
-		QueueState().changes.events(
-		) | rpl::on_next(refreshLyrics, lyricsView->lifetime());
-		refreshLyrics();
-		// Нажатие на строку текста перематывает трек на её время.
-		lyricsView->lineClicked(
-		) | rpl::on_next([=](qint64 ms) {
-			const auto state = instance->getState(AudioMsgId::Type::Song);
-			const auto lengthMs = state.length * 1000 / std::max<int64>(state.frequency, 1);
-			if (lengthMs <= 0) {
-				return;
-			}
-			instance->startSeeking(AudioMsgId::Type::Song);
-			instance->finishSeeking(
-				AudioMsgId::Type::Song,
-				std::clamp(float64(ms) / float64(lengthMs), 0., 1.));
-		}, lyricsView->lifetime());
 
 		// Очередь: живой список, меняется при добавлении, перемещении и смене трека.
 		Ui::AddSubsectionTitle(content, rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Очередь"))));
@@ -2795,7 +3311,78 @@ void ShowMusicBox(
 
 		const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
 		Ui::AddSkip(content, 10);
+
+		// Смена раздела: старое содержимое гаснет и уезжает в сторону,
+		// новое проявляется и въезжает с другой стороны.
+		struct Transition {
+			Ui::Animations::Simple animation;
+			QPixmap was;
+			QPixmap now;
+			int top = 0;
+			int direction = 0;
+			bool changing = false;
+		};
+		const auto transition = box->lifetime().make_state<Transition>();
+		const auto overlay = Ui::CreateChild<Ui::RpWidget>(content);
+		overlay->hide();
+		const auto transitionRect = [=] {
+			const auto bottom = list->y() + list->height();
+			return QRect(
+				0,
+				transition->top,
+				content->width(),
+				std::max(bottom - transition->top, 1));
+		};
+		const auto grabNow = [=] {
+			overlay->hide();
+			const auto rect = transitionRect();
+			transition->now = Ui::GrabWidget(content, rect);
+			overlay->setGeometry(rect);
+			overlay->show();
+			overlay->raise();
+		};
+		overlay->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(overlay);
+			const auto progress = transition->animation.value(1.);
+			const auto shift = 28. * transition->direction;
+			p.fillRect(overlay->rect(), st::boxBg);
+			p.setOpacity(1. - progress);
+			p.drawPixmap(int(base::SafeRound(-shift * progress)), 0, transition->was);
+			p.setOpacity(progress);
+			p.drawPixmap(int(base::SafeRound(shift * (1. - progress))), 0, transition->now);
+		}, overlay->lifetime());
+		const auto animateChange = [=](int top, int direction, Fn<void()> change) {
+			if (transition->changing) {
+				change();
+				return;
+			}
+			overlay->hide();
+			transition->top = top;
+			auto was = Ui::GrabWidget(content, transitionRect());
+			transition->changing = true;
+			change();
+			transition->changing = false;
+			transition->was = std::move(was);
+			transition->direction = direction;
+			grabNow();
+			transition->animation.start([=] {
+				overlay->update();
+				if (!transition->animation.animating()) {
+					overlay->hide();
+					transition->was = transition->now = QPixmap();
+				}
+			}, 0., 1., kSwitchDuration, anim::easeOutCubic);
+		};
+		// Если список обновился прямо во время перехода, подменяем новый кадр.
+		const auto refreshTransition = [=] {
+			if (!transition->changing && transition->animation.animating()) {
+				grabNow();
+			}
+		};
 		const auto statusText = std::make_shared<QString>();
+		const auto statusLoading = std::make_shared<bool>(false);
+		const auto statusSticker = std::make_shared<bool>(false);
 		const auto refreshForYou = std::make_shared<Fn<void()>>();
 		struct SearchState {
 			std::unique_ptr<ChatMusicSearch> chats;
@@ -2817,12 +3404,15 @@ void ShowMusicBox(
 						[=] {
 							QueueState().forYou.clear();
 							QueueState().results.clear();
-							*statusText = QString::fromUtf8(Mokagram::Lang::Tr("Подбираю музыку под ваш вкус…"));
 							(*refreshForYou)();
 						}),
 					QMargins(16, 4, 16, 10));
 			}
-			if (!statusText->isEmpty()) {
+			if (*statusSticker) {
+				list->add(object_ptr<StickerHint>(list));
+			} else if (!statusText->isEmpty() && *statusLoading) {
+				list->add(object_ptr<LoadingView>(list, *statusText));
+			} else if (!statusText->isEmpty()) {
 				list->add(
 					object_ptr<Ui::FlatLabel>(list, *statusText, st::boxLabel),
 					QMargins(24, 8, 24, 8));
@@ -2851,9 +3441,12 @@ void ShowMusicBox(
 					more->setDisabled(true);
 				});
 			}
+			refreshTransition();
 		};
-		const auto showStatus = [=](const QString &text) {
+		const auto showStatus = [=](const QString &text, bool loading = false, bool sticker = false) {
 			*statusText = text;
+			*statusLoading = loading;
+			*statusSticker = sticker;
 			fill();
 		};
 		searchState->chats = std::make_unique<ChatMusicSearch>(
@@ -2874,8 +3467,7 @@ void ShowMusicBox(
 				}
 			});
 		const auto buildForYou = [=] {
-			*statusText = QString::fromUtf8(Mokagram::Lang::Tr("Подбираю музыку под ваш вкус…"));
-			fill();
+			showStatus(QString::fromUtf8(Mokagram::Lang::Tr("Подбираю музыку под ваш вкус…")), true);
 			BuildForYou(30, crl::guard(box, [=](std::vector<Track> tracks, QString note) {
 				auto &queue = QueueState();
 				queue.forYou = std::move(tracks);
@@ -2905,9 +3497,7 @@ void ShowMusicBox(
 			tabForYou->setActive(tab == 2);
 			if (tab == 0) {
 				queue.results = queue.searchResults;
-				showStatus(queue.searchResults.empty()
-					? QString::fromUtf8(Mokagram::Lang::Tr("Введите название или исполнителя и нажмите Enter"))
-					: QString());
+				showStatus(QString(), false, queue.searchResults.empty());
 			} else if (tab == 1) {
 				queue.results = LikedTracks();
 				showStatus(queue.results.empty()
@@ -2923,9 +3513,19 @@ void ShowMusicBox(
 			}
 			fill();
 		};
-		tabSearch->setClickedCallback([=] { setTab(0); });
-		tabLiked->setClickedCallback([=] { setTab(1); });
-		tabForYou->setClickedCallback([=] { setTab(2); });
+		const auto switchTab = [=](int tab) {
+			const auto was = QueueState().tab;
+			if (was == tab) {
+				return;
+			}
+			animateChange(
+				searchWrap->y() + searchWrap->height(),
+				(tab > was) ? 1 : -1,
+				[=] { setTab(tab); });
+		};
+		tabSearch->setClickedCallback([=] { switchTab(0); });
+		tabLiked->setClickedCallback([=] { switchTab(1); });
+		tabForYou->setClickedCallback([=] { switchTab(2); });
 		LikesChanged(
 		) | rpl::filter([=] {
 			return QueueState().tab == 1;
@@ -2945,14 +3545,14 @@ void ShowMusicBox(
 				return;
 			}
 			if (queue.tab != 0) {
-				setTab(0);
+				switchTab(0);
 			}
 			const auto generation = ++searchState->generation;
 			searchState->chats->cancel();
 			queue.lastQuery = query;
 			queue.searchResults.clear();
 			queue.results.clear();
-			showStatus(QString::fromUtf8(Mokagram::Lang::Tr("Ищу…")));
+			showStatus(QString::fromUtf8(Mokagram::Lang::Tr("Ищу…")), true);
 			if (queue.telegramSearch) {
 				if (queue.selectedChat) {
 					searchState->chats->cancel();
@@ -3058,11 +3658,29 @@ void ShowMusicBox(
 			setTab(0);
 			search();
 		};
-		sourceSwitch->setChangedCallback(setSource);
+		sourceSwitch->setChangedCallback([=](bool chats) {
+			// Сам переключатель анимируется отдельно, переход идёт под ним.
+			animateChange(
+				sources->y() + sources->height(),
+				chats ? 1 : -1,
+				[=] { setSource(chats); });
+		});
+		// Поиск по мере набора: запускаем после короткой паузы между буквами.
+		const auto typingTimer = box->lifetime().make_state<base::Timer>();
+		typingTimer->setCallback([=] {
+			const auto query = input->getLastText().trimmed();
+			if (query.size() >= 2 && query != QueueState().lastQuery) {
+				search();
+			}
+		});
 		input->changes() | rpl::on_next([=] {
 			updateSource();
+			typingTimer->callOnce(kTypingDelay);
 		}, input->lifetime());
-		input->submits() | rpl::on_next(search, input->lifetime());
+		input->submits() | rpl::on_next([=] {
+			typingTimer->cancel();
+			search();
+		}, input->lifetime());
 		input->setFocusFast();
 		if (!initialQuery.isEmpty()) {
 			input->setText(initialQuery);
@@ -3078,6 +3696,7 @@ void ShowMusicBox(
 			}
 		}
 		updateSource();
+		sourceSwitch->finishAnimating();
 	}));
 }
 
