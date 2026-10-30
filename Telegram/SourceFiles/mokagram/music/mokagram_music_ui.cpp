@@ -3793,6 +3793,7 @@ void ShowMusicBox(
 			}
 			queue.tab = tab;
 			sources->setVisible(tab == 0);
+			sources->resize(sources->width(), (tab == 0) ? 40 : 0);
 			chooseChat->setVisible(tab == 0 && queue.telegramSearch);
 			chooseChat->resize(chooseChat->width(), queue.telegramSearch ? 36 : 0);
 			tabs->resize(tabs->width(), queue.telegramSearch ? 0 : 36);
