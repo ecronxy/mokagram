@@ -12,6 +12,8 @@
 
 #include <vector>
 
+class QImage;
+
 namespace Mokagram::Music {
 
 struct LyricLine {
@@ -32,6 +34,15 @@ void FetchLyrics(
 	const QString &artist,
 	qint64 durationMs,
 	Fn<void(Lyrics)> done);
+
+// Обложка в высоком качестве из открытых каталогов (iTunes, затем Deezer),
+// только если совпали название, исполнитель и длительность. Пустая, если нет.
+void FetchArtwork(
+	const QString &cacheKey,
+	const QString &title,
+	const QString &artist,
+	qint64 durationMs,
+	Fn<void(QImage)> done);
 
 // Название без хвостов вроде "(Official Video)" и без имени исполнителя в начале.
 [[nodiscard]] QString CleanTitle(const QString &title, const QString &artist);

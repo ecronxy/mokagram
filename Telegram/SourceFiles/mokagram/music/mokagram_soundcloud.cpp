@@ -445,6 +445,141 @@ void SearchLimited(
 	CollectionRequest(u"/search/tracks"_q, q, std::move(done));
 }
 
+namespace {
+
+[[nodiscard]] Album ParseAlbum(const QJsonObject &object) {
+	auto result = Album();
+	result.id = QString::number(object.value("id").toVariant().toLongLong());
+	result.title = object.value("title").toString();
+	const auto user = object.value("user").toObject();
+	result.artist = user.value("username").toString();
+	result.artworkUrl = object.value("artwork_url").toString();
+	if (result.artworkUrl.isEmpty()) {
+		const auto tracks = object.value("tracks").toArray();
+		if (!tracks.isEmpty()) {
+			result.artworkUrl = tracks.first().toObject()
+				.value("artwork_url").toString();
+		}
+	}
+	if (result.artworkUrl.isEmpty()) {
+		result.artworkUrl = user.value("avatar_url").toString();
+	}
+	result.trackCount = object.value("track_count").toInt();
+	return result;
+}
+
+void AlbumsRequest(
+		const QString &path,
+		QUrlQuery query,
+		Fn<void(std::vector<Album>, QString)> done) {
+	ApiGet(
+		QString::fromLatin1(kApi) + path,
+		std::move(query),
+		[=](QByteArray data, QString error) {
+			auto result = std::vector<Album>();
+			if (error.isEmpty()) {
+				const auto root = QJsonDocument::fromJson(data).object();
+				for (const auto &value : root.value("collection").toArray()) {
+					auto album = ParseAlbum(value.toObject());
+					if (album.id != u"0"_q && album.trackCount > 0) {
+						result.push_back(std::move(album));
+					}
+				}
+			}
+			done(std::move(result), error);
+		});
+}
+
+// Подгружает треки по id пачками по 50 и дописывает в found.
+void HydrateTracks(
+		std::shared_ptr<std::map<QString, Track>> found,
+		QStringList missing,
+		Fn<void()> done) {
+	if (missing.isEmpty()) {
+		done();
+		return;
+	}
+	const auto chunk = missing.mid(0, 50);
+	missing = missing.mid(chunk.size());
+	auto q = QUrlQuery();
+	q.addQueryItem(u"ids"_q, chunk.join(','));
+	ApiGet(
+		QString::fromLatin1(kApi) + u"/tracks"_q,
+		q,
+		[=](QByteArray data, QString error) {
+			for (const auto &value : QJsonDocument::fromJson(data).array()) {
+				auto track = ParseTrack(value.toObject());
+				if (!track.transcodingUrl.isEmpty()) {
+					(*found)[track.id] = std::move(track);
+				}
+			}
+			HydrateTracks(found, missing, done);
+		});
+}
+
+} // namespace
+
+void SearchAlbums(
+		const QString &query,
+		int limit,
+		Fn<void(std::vector<Album>, QString error)> done) {
+	auto q = QUrlQuery();
+	q.addQueryItem(u"q"_q, query);
+	q.addQueryItem(u"limit"_q, QString::number(limit));
+	AlbumsRequest(u"/search/albums"_q, q, std::move(done));
+}
+
+void TrackAlbums(
+		const QString &trackId,
+		Fn<void(std::vector<Album>)> done) {
+	auto q = QUrlQuery();
+	q.addQueryItem(u"limit"_q, u"10"_q);
+	AlbumsRequest(
+		u"/tracks/"_q + trackId + u"/albums"_q,
+		q,
+		[=](std::vector<Album> albums, QString) { done(std::move(albums)); });
+}
+
+void AlbumTracks(
+		const QString &albumId,
+		Fn<void(std::vector<Track>, QString error)> done) {
+	ApiGet(
+		QString::fromLatin1(kApi) + u"/playlists/"_q + albumId,
+		QUrlQuery(),
+		[=](QByteArray data, QString error) {
+			if (!error.isEmpty()) {
+				done({}, error);
+				return;
+			}
+			const auto root = QJsonDocument::fromJson(data).object();
+			auto order = QStringList();
+			auto missing = QStringList();
+			const auto found = std::make_shared<std::map<QString, Track>>();
+			for (const auto &value : root.value("tracks").toArray()) {
+				const auto object = value.toObject();
+				const auto id = QString::number(
+					object.value("id").toVariant().toLongLong());
+				order.push_back(id);
+				auto track = ParseTrack(object);
+				if (track.transcodingUrl.isEmpty()) {
+					// В ответе полные данные только у первых треков, остальные приходят одним id.
+					missing.push_back(id);
+				} else {
+					(*found)[id] = std::move(track);
+				}
+			}
+			HydrateTracks(found, missing, [=] {
+				auto result = std::vector<Track>();
+				for (const auto &id : order) {
+					if (const auto i = found->find(id); i != found->end()) {
+						result.push_back(i->second);
+					}
+				}
+				done(std::move(result), QString());
+			});
+		});
+}
+
 QString CacheDir() {
 	return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
 		+ u"/mokagram_music"_q;

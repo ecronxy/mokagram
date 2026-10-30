@@ -167,6 +167,7 @@ private:
 	object_ptr<Ui::IconButton> _repeatToggle;
 	object_ptr<Ui::IconButton> _orderToggle;
 	object_ptr<Ui::AbstractButton> _lyricsToggle;
+	object_ptr<Ui::AbstractButton> _fullscreenToggle;
 	object_ptr<SpeedButton> _speedToggle;
 	object_ptr<Ui::IconButton> _close;
 	object_ptr<Ui::PlainShadow> _shadow = { nullptr };

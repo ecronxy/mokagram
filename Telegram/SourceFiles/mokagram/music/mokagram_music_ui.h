@@ -28,6 +28,12 @@ void ShowMusicBox(
 	not_null<Window::SessionController*> controller,
 	const QString &initialQuery = QString());
 
+// Окно музыки сразу в поиске альбомов; альбомы с треком trackId (SoundCloud) идут первыми.
+void ShowAlbumsBox(
+	not_null<Window::SessionController*> controller,
+	const QString &query,
+	const QString &trackId = QString());
+
 // Мост к плееру клиента: если играет трек из очереди SoundCloud, кнопки
 // «вперёд/назад», повтор и перемешивание работают по этой очереди.
 [[nodiscard]] bool OwnsTrack(const AudioMsgId &id);
@@ -53,6 +59,9 @@ void ShowCurrentTrackMenu(
 // Полноценный плеер: обложка, перемотка, кнопки, очередь.
 void ShowPlayerBox(not_null<Window::SessionController*> controller);
 
+// Полноэкранный плеер поверх окна: открывается по клику на обложку в мини-плеере.
+void ShowFullscreenPlayer(not_null<Window::SessionController*> controller);
+
 // Панель с текстом песни справа от чата. Кнопка в панели плеера переключает её,
 // anchor - сама панель плеера: под ней и начинается текст.
 void ToggleLyricsPanel(
@@ -69,6 +78,7 @@ void SyncLyricsPanel(
 
 void DebugSaveTrack(int index);
 void DebugPlay(int index);
+void DebugGrabFullscreen(const QString &path);
 void DebugLike(int index);
 void DebugTab(int tab);
 
