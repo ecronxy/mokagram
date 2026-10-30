@@ -2715,6 +2715,10 @@ void StartDebugCommands() {
 			Stars::ShowSpendingStatsBox();
 		} else if (cmd == u"ping"_q) {
 			Mokagram::Misc::ShowPingBox();
+		} else if (cmd.startsWith(u"fullshot:"_q)) {
+			Mokagram::Music::DebugGrabFullscreen(cmd.mid(9));
+		} else if (cmd == u"fullplayer"_q) {
+			Mokagram::Music::ShowFullscreenPlayer(controller);
 		} else if (cmd == u"player"_q) {
 			Mokagram::Music::ShowPlayerBox(controller);
 		} else if (cmd.startsWith(u"musictab:"_q)) {
