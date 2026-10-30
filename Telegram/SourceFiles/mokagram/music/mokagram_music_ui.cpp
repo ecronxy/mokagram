@@ -4039,6 +4039,26 @@ void RefreshAvailability() {
 				state.changes.fire({});
 			}
 		});
+	// У трека из чата обложка — мелкая миниатюра документа: ищем ту же
+	// обложку в высоком качестве тем же поиском, что и текст.
+	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
+	const auto document = current.audio();
+	if (!document
+		|| OwnsTrack(current)
+		|| !CoverForDocument(document->id).isNull()) {
+		return;
+	}
+	const auto documentId = document->id;
+	FetchArtwork(
+		id,
+		track.title,
+		track.artist,
+		track.durationMs,
+		[=](QImage image) {
+			if (!image.isNull()) {
+				SetCover(documentId, std::move(image));
+			}
+		});
 }
 
 } // namespace
@@ -4130,6 +4150,8 @@ QImage CoverForPlayback(const AudioMsgId &current) {
 		return {};
 	} else if (OwnsTrack(current)) {
 		return CoverForDocument(document->id);
+	} else if (auto hq = CoverForDocument(document->id); !hq.isNull()) {
+		return hq;
 	}
 	if (const auto media = document->activeMediaView()) {
 		if (const auto image = media->thumbnail()) {

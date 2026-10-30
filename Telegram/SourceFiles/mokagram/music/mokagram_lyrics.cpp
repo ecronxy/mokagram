@@ -17,6 +17,9 @@
 
 #include "logs.h"
 
+#include <crl/crl.h>
+#include <QtGui/QImage>
+
 #include <map>
 
 namespace Mokagram::Music {
@@ -318,6 +321,147 @@ QString CleanTitle(const QString &title, const QString &artist) {
 	return result.simplified();
 }
 
+namespace {
+
+struct SplitResult {
+	QString clean;
+	QString trackName;
+	QString artistName;
+};
+
+[[nodiscard]] SplitResult SplitName(const QString &title, const QString &artist) {
+	auto result = SplitResult{ .clean = CleanTitle(title, QString()) };
+	// "Исполнитель - Название" внутри заголовка: у загрузчика чужое имя.
+	result.trackName = result.clean;
+	result.artistName = artist.trimmed();
+	static const auto separator = QRegularExpression(uR"(\s+[-–—]\s+)"_q);
+	const auto dash = separator.match(result.clean);
+	if (dash.hasMatch() && dash.capturedStart() > 0) {
+		result.artistName = result.clean.left(dash.capturedStart()).trimmed();
+		result.trackName = CleanTitle(
+			result.clean.mid(dash.capturedEnd()),
+			result.artistName);
+	}
+	result.trackName = WithoutBrackets(result.trackName);
+	return result;
+}
+
+// Тот ли это трек: название и исполнитель совпадают, длительность близка.
+[[nodiscard]] bool SameTrack(
+		const SplitResult &wanted,
+		qint64 durationMs,
+		const QString &title,
+		const QString &artist,
+		qint64 sourceMs) {
+	const auto name = WithoutBrackets(CleanTitle(title, artist));
+	if (name.compare(wanted.trackName, Qt::CaseInsensitive) != 0) {
+		return false;
+	}
+	const auto performer = artist.toLower();
+	const auto expected = wanted.artistName.toLower();
+	if (!expected.isEmpty()
+		&& !performer.contains(expected)
+		&& !expected.contains(performer)) {
+		return false;
+	}
+	return durationMs <= 0
+		|| sourceMs <= 0
+		|| std::abs(sourceMs - durationMs) <= 4000;
+}
+
+std::map<QString, QString> &ArtworkUrls() {
+	static auto result = std::map<QString, QString>();
+	return result;
+}
+
+void LoadArtwork(const QString &url, Fn<void(QImage)> done) {
+	if (url.isEmpty()) {
+		done(QImage());
+		return;
+	}
+	auto request = QNetworkRequest(QUrl(url));
+	request.setRawHeader("User-Agent", "Mozilla/5.0");
+	const auto reply = Net().get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		if (reply->error() != QNetworkReply::NoError) {
+			done(QImage());
+			return;
+		}
+		// Большой JPEG декодируется заметное время: не на главном потоке.
+		crl::async([=, bytes = reply->readAll()] {
+			auto image = QImage::fromData(bytes);
+			crl::on_main([=, image = std::move(image)]() mutable {
+				done(std::move(image));
+			});
+		});
+	});
+}
+
+void SearchDeezer(
+		const SplitResult &wanted,
+		qint64 durationMs,
+		Fn<void(QString)> done) {
+	const auto query = u"artist:\"%1\" track:\"%2\""_q
+		.arg(wanted.artistName, wanted.trackName);
+	auto request = QNetworkRequest(QUrl(u"https://api.deezer.com/search?limit=10&q="_q
+		+ QString::fromLatin1(QUrl::toPercentEncoding(query))));
+	request.setRawHeader("User-Agent", "Mozilla/5.0");
+	const auto reply = Net().get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		const auto doc = QJsonDocument::fromJson(reply->readAll());
+		for (const auto &value : doc.object().value("data").toArray()) {
+			const auto item = value.toObject();
+			const auto cover = item.value("album").toObject()
+				.value("cover_xl").toString();
+			if (!cover.isEmpty() && SameTrack(
+					wanted,
+					durationMs,
+					item.value("title").toString(),
+					item.value("artist").toObject().value("name").toString(),
+					qint64(item.value("duration").toDouble() * 1000.))) {
+				done(cover);
+				return;
+			}
+		}
+		done(QString());
+	});
+}
+
+void SearchArtwork(
+		const SplitResult &wanted,
+		qint64 durationMs,
+		Fn<void(QString)> done) {
+	auto request = QNetworkRequest(QUrl(
+		u"https://itunes.apple.com/search?media=music&entity=song&limit=15&term="_q
+		+ QString::fromLatin1(QUrl::toPercentEncoding(
+			wanted.artistName + u" "_q + wanted.trackName))));
+	request.setRawHeader("User-Agent", "Mozilla/5.0");
+	const auto reply = Net().get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		const auto doc = QJsonDocument::fromJson(reply->readAll());
+		for (const auto &value : doc.object().value("results").toArray()) {
+			const auto item = value.toObject();
+			auto artwork = item.value("artworkUrl100").toString();
+			if (!artwork.isEmpty() && SameTrack(
+					wanted,
+					durationMs,
+					item.value("trackName").toString(),
+					item.value("artistName").toString(),
+					qint64(item.value("trackTimeMillis").toDouble()))) {
+				artwork.replace(u"100x100bb"_q, u"1000x1000bb"_q);
+				done(artwork);
+				return;
+			}
+		}
+		SearchDeezer(wanted, durationMs, done);
+	});
+}
+
+} // namespace
+
 void FetchLyrics(
 		const QString &cacheKey,
 		const QString &title,
@@ -329,17 +473,10 @@ void FetchLyrics(
 		done(i->second);
 		return;
 	}
-	const auto clean = CleanTitle(title, QString());
-	// "Исполнитель - Название" внутри заголовка: у загрузчика чужое имя.
-	auto trackName = clean;
-	auto artistName = artist.trimmed();
-	static const auto separator = QRegularExpression(uR"(\s+[-–—]\s+)"_q);
-	const auto dash = separator.match(clean);
-	if (dash.hasMatch() && dash.capturedStart() > 0) {
-		artistName = clean.left(dash.capturedStart()).trimmed();
-		trackName = CleanTitle(clean.mid(dash.capturedEnd()), artistName);
-	}
-	trackName = WithoutBrackets(trackName);
+	const auto split = SplitName(title, artist);
+	const auto clean = split.clean;
+	const auto trackName = split.trackName;
+	const auto artistName = split.artistName;
 	const auto finish = [=](Lyrics result) {
 		// Неудачу не запоминаем: сеть могла моргнуть.
 		if (result.found) {
@@ -376,6 +513,31 @@ void FetchLyrics(
 				RequestFallback(trackName, artistName, durationMs, finish);
 			});
 		});
+	});
+}
+
+void FetchArtwork(
+		const QString &cacheKey,
+		const QString &title,
+		const QString &artist,
+		qint64 durationMs,
+		Fn<void(QImage)> done) {
+	auto &urls = ArtworkUrls();
+	if (const auto i = urls.find(cacheKey); i != urls.end()) {
+		LoadArtwork(i->second, done);
+		return;
+	}
+	const auto wanted = SplitName(title, artist);
+	if (wanted.trackName.isEmpty() || wanted.artistName.isEmpty()) {
+		done(QImage());
+		return;
+	}
+	SearchArtwork(wanted, durationMs, [=](QString url) {
+		// Неудачу не запоминаем: сеть могла моргнуть.
+		if (!url.isEmpty()) {
+			ArtworkUrls()[cacheKey] = url;
+		}
+		LoadArtwork(url, done);
 	});
 }
 
