@@ -61,7 +61,10 @@ MusicButton::MusicButton(
 , _noteWidth(st::normalFont->width(_noteSymbol)) {
 	updateData(std::move(data));
 	setClickedCallback(std::move(handler));
-	MusicBand = Ui::BlendColors(st::boxDividerBg->c, Qt::black, 0.12);
+	// Mokagram: считаем плашку сразу при создании, а не при показе: иначе
+	// заливки уголков шапки появляются с задержкой. Скрытие (другая вкладка)
+	// по-прежнему снимает учёт в hideEvent.
+	setCounted(true);
 }
 
 MusicButton::~MusicButton() {
