@@ -2908,9 +2908,8 @@ void TopBar::paintUserpic(QPainter &p, const QRect &geometry) {
 
 void TopBar::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
-	// Mokagram: прямой низ и заливка уголков нужны, только если плашка музыки
-	// реально стоит под шапкой; у свёрнутой шапки плашка уходит за экран.
-	const auto music = MusicShown() && MusicAttachedTo(this);
+	// Mokagram: прямой низ и заливка уголков, пока плашка музыки показана.
+	const auto music = MusicShown();
 	if (!music) {
 		// Mokagram: без музыки шапка (и свёрнутая тоже) скруглена целиком.
 		auto path = QPainterPath();
