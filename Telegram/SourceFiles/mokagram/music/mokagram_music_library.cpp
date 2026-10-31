@@ -307,7 +307,31 @@ struct Profile {
 	std::map<QString, double> sessionTag;
 	std::vector<QString> recentFinishedIds;  // новые первыми
 	bool likesLong = false;
+	// Доля кириллицы среди лайкнутых и «больше такого»: язык вкуса.
+	// Меньше 0, пока явных сигналов мало.
+	double cyrillicShare = -1.;
 };
+
+[[nodiscard]] bool HasCyrillic(const Track &t) {
+	const auto has = [](const QString &text) {
+		for (const auto ch : text) {
+			const auto code = ch.unicode();
+			if ((code >= 0x0400 && code <= 0x04FF)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	if (has(t.title) || has(t.artist)) {
+		return true;
+	}
+	for (const auto &tag : t.tags) {
+		if (has(tag)) {
+			return true;
+		}
+	}
+	return false;
+}
 
 [[nodiscard]] double Decay(qint64 at, qint64 now) {
 	const auto days = std::max<qint64>(now - at, 0) / 86400.;
@@ -400,6 +424,23 @@ void Remember(
 		const auto &t = item.track;
 		const auto d = Decay(item.at, now);
 		AddSignalEx(p, t.id, t.artistId, t.genre, clean(t.tags), 4. * d, 2. * d, 2. * d, 4. * d);
+	}
+	{
+		auto cyrillic = 0;
+		auto total = 0;
+		const auto count = [&](const Track &t) {
+			++total;
+			cyrillic += HasCyrillic(t) ? 1 : 0;
+		};
+		for (const auto &item : Lib().liked) {
+			count(item.track);
+		}
+		for (const auto &item : Lib().boosted) {
+			count(item.track);
+		}
+		if (total >= 5) {
+			p.cyrillicShare = cyrillic / double(total);
+		}
 	}
 	auto recent = std::vector<const Listen*>();
 	for (const auto &h : Lib().history) {
@@ -732,6 +773,15 @@ void BuildImpl(
 			}
 			if (artistAffinity < -0.8) {
 				score -= 2.;
+			}
+			// Язык вкуса: русский слушатель не хочет латиницу и наоборот.
+			if (profile->cyrillicShare >= 0.) {
+				const auto cyr = HasCyrillic(t);
+				if (profile->cyrillicShare >= 0.6) {
+					score += cyr ? 0.6 : -2.5 * profile->cyrillicShare;
+				} else if (profile->cyrillicShare <= 0.2) {
+					score += cyr ? -2.5 * (1. - profile->cyrillicShare) : 0.3;
+				}
 			}
 			if (within(shownAt, keys, kShownCooldown)) {
 				score -= 2.; // уже предлагали недавно
