@@ -78,6 +78,13 @@ void MusicButton::setCounted(bool counted) {
 	MusicCount += counted ? 1 : -1;
 	if (counted) {
 		MusicWidgets.push_back(this);
+		// Mokagram: старая плашка при уничтожении сбрасывает цвет полосы, а
+		// новая его уже задала в конструкторе: без этого уголки «связки»
+		// шапки красятся фоном списка и видны дырками.
+		MusicBand = Ui::BlendColors(
+			_overrideBg.value_or(QColor(st::boxDividerBg->c)),
+			Qt::black,
+			0.12);
 	} else {
 		MusicWidgets.erase(
 			ranges::remove(MusicWidgets, not_null<QWidget*>(this)),
