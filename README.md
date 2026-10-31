@@ -21,12 +21,12 @@
 
 ## Скачать
 
-Последняя сборка: **[v0.1.0](https://github.com/ecronxy/mokagram/releases/latest)**
+Последняя сборка: **[v0.1.1](https://github.com/ecronxy/mokagram/releases/latest)**
 
 | Система | Файл |
 |---|---|
-| **Windows** | [mokagram-win-x64.zip](https://github.com/ecronxy/mokagram/releases/download/v0.1.0/mokagram-win-x64.zip) |
-| **Linux** | [AppImage](https://github.com/ecronxy/mokagram/releases/download/v0.1.0/mokagram-x86_64.AppImage) · [.deb](https://github.com/ecronxy/mokagram/releases/download/v0.1.0/mokagram_0.1.0_amd64.deb) · [.rpm](https://github.com/ecronxy/mokagram/releases/download/v0.1.0/mokagram-0.1.0-1.x86_64.rpm) · [pacman](https://github.com/ecronxy/mokagram/releases/download/v0.1.0/mokagram-0.1.0-1-x86_64.pkg.tar.zst) · [tar.xz](https://github.com/ecronxy/mokagram/releases/download/v0.1.0/mokagram-linux-x64.tar.xz) |
+| **Windows** | [mokagram-win-x64.zip](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-win-x64.zip) |
+| **Linux** | [AppImage](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-x86_64.AppImage) · [.deb](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram_0.1.1_amd64.deb) · [.rpm](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-0.1.1-1.x86_64.rpm) · [pacman](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-0.1.1-1-x86_64.pkg.tar.zst) · [tar.xz](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-linux-x64.tar.xz) |
 
 Сборка для Windows без подписи разработчика, система может предупредить при первом запуске.
 
