@@ -20,7 +20,10 @@
 #include "storage/storage_media_prepare.h"
 #include "ui/chat/attach/attach_prepare.h"
 #include "api/api_chat_participants.h"
+#include "settings.h"
 #include "apiwrap.h"
+#include "media/audio/media_audio.h"
+#include "core/file_location.h"
 #include "base/call_delayed.h"
 #include "base/unixtime.h"
 #include "data/data_channel.h"
@@ -55,12 +58,22 @@
 #include "ui/widgets/fields/input_field.h"
 #include "window/window_session_controller.h"
 
+#include <QtCore/QFile>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QRandomGenerator>
+#include <QtCore/QDir>
+#include <QtCore/QPointer>
 #include <QtCore/QProcess>
 #include <QtCore/QFileInfo>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
+#include <QtGui/QPainter>
+#include <QtGui/QPainterPath>
+#include <QtGui/QPixmap>
 #include <QtGui/QGuiApplication>
 
 #include <cmath>
@@ -101,12 +114,25 @@ namespace S = Mokagram::Settings;
 		| ChatRestriction::EmbedLinks;
 }
 
+// Необязательный локальный набор данных для .kq и экрана «выберите чат»:
+// <каталог данных>/kotonoha/{lines.json,voice/,frames/}. Нет набора, нет функций.
+[[nodiscard]] QString QuoteDir() {
+	return cWorkingDir() + u"kotonoha"_q;
+}
+
+[[nodiscard]] bool QuoteDataAvailable() {
+	const auto dir = QuoteDir();
+	return QFileInfo::exists(dir + u"/lines.json"_q)
+		&& QFileInfo(dir + u"/voice"_q).isDir()
+		&& QFileInfo(dir + u"/frames"_q).isDir();
+}
+
 [[nodiscard]] const QStringList &KnownCommands() {
 	static const auto result = QStringList{
 		u"mute"_q, u"unmute"_q, u"ban"_q, u"unban"_q, u"kick"_q,
 		u"del"_q, u"pin"_q, u"unpin"_q, u"id"_q, u"save"_q,
 		u"tr"_q, u"calc"_q, u"archive"_q, u"unarchive"_q, u"dl"_q,
-		u"tag"_q, u"note"_q, u"snip"_q, u"gif"_q,
+		u"tag"_q, u"note"_q, u"snip"_q, u"gif"_q, u"gr"_q, u"kq"_q,
 	};
 	return result;
 }
@@ -160,9 +186,13 @@ namespace S = Mokagram::Settings;
 		U(Mokagram::Lang::Tr(".del all с ответом удаляет все сообщения человека в группе, без ответа все твои загруженные")),
 		U(Mokagram::Lang::Tr(".pin / .unpin закрепляет или открепляет сообщение (ответом)")),
 		U(Mokagram::Lang::Tr(".gif превращает видео или фото (ответом) в гиф без звука и сохраняет в «Мои GIF»")),
+		U(Mokagram::Lang::Tr(".gr то же, но чёрно-белая гифка в тёмном контрастном стиле")),
 		U(Mokagram::Lang::Tr(".id показывает ID автора, чата и сообщения, ссылку на сообщение")),
 		U(Mokagram::Lang::Tr(".save пересылает сообщение (ответом) в «Избранное»")),
 	};
+	if (QuoteDataAvailable()) {
+		lines.insert(10, U(Mokagram::Lang::Tr(".kq [слово] отправляет голосовым случайную реплику из локального набора (со словом только те, где оно есть)")));
+	}
 	const auto aliases = ParseAliases(S::String(u"commands.aliases"_q));
 	if (!aliases.empty()) {
 		lines.push_back(QString());
@@ -426,12 +456,110 @@ void WatchSentGif(
 	});
 }
 
+struct QuoteLine {
+	QString file;
+	QString text;
+	QString plain;
+	double dur = 0.;
+	bool ok = false;
+	bool speech = false;
+};
+
+// Нижний регистр, «ё» = «е», всё кроме букв и цифр заменено пробелом.
+[[nodiscard]] QString QuotePlain(const QString &text) {
+	auto result = text.toLower();
+	result.replace(QChar(0x0451), QChar(0x0435));
+	for (auto &ch : result) {
+		if (!ch.isLetterOrNumber()) {
+			ch = ' ';
+		}
+	}
+	return u" "_q + result.simplified() + u" "_q;
+}
+
+[[nodiscard]] const std::vector<QuoteLine> &QuoteLines() {
+	static auto lines = std::vector<QuoteLine>();
+	if (lines.empty()) {
+		auto f = QFile(QuoteDir() + u"/lines.json"_q);
+		if (f.open(QIODevice::ReadOnly)) {
+			const auto array = QJsonDocument::fromJson(f.readAll()).array();
+			for (const auto &v : array) {
+				const auto o = v.toObject();
+				auto line = QuoteLine();
+				line.file = o.value(u"file"_q).toString();
+				line.text = o.value(u"text"_q).toString();
+				line.plain = QuotePlain(line.text);
+				line.dur = o.value(u"dur"_q).toDouble();
+				line.ok = o.value(u"ok"_q).toBool();
+				const auto letters = line.plain.size()
+					- line.plain.count(' ');
+				// Для поиска по слову: 2–20 с и не протяжный вздох.
+				line.speech = (line.dur >= 2. && line.dur <= 20.)
+					&& (line.dur <= letters * 0.3 + 3.);
+				lines.push_back(std::move(line));
+			}
+		}
+	}
+	return lines;
+}
+
+// Случайная реплика. Без query: настоящая фраза (ok), иначе только
+// те, где есть все слова query (по префиксу в 5 букв).
+[[nodiscard]] bool PickQuoteLine(
+		QString &file,
+		QString &text,
+		double &dur,
+		const QString &query = QString()) {
+	auto prefixes = QStringList();
+	for (const auto &word : QuotePlain(query).split(' ', Qt::SkipEmptyParts)) {
+		prefixes.push_back(u" "_q + word.left(5));
+	}
+	auto found = std::vector<const QuoteLine*>();
+	for (const auto &line : QuoteLines()) {
+		if (prefixes.isEmpty()) {
+			if (!line.ok) {
+				continue;
+			}
+		} else {
+			if (!line.speech) {
+				continue;
+			}
+			auto all = true;
+			for (const auto &prefix : prefixes) {
+				if (!line.plain.contains(prefix)) {
+					all = false;
+					break;
+				}
+			}
+			if (!all) {
+				continue;
+			}
+		}
+		found.push_back(&line);
+	}
+	if (found.empty()) {
+		return false;
+	}
+	const auto pick = found[QRandomGenerator::global()->bounded(
+		int(found.size()))];
+	file = pick->file;
+	text = pick->text;
+	dur = pick->dur;
+	return true;
+}
+
+[[nodiscard]] bool PickQuoteLine(QString &file, QString &text) {
+	auto dur = 0.;
+	return PickQuoteLine(file, text, dur);
+}
+
 void ConvertAndSendGif(
 		not_null<Window::SessionController*> controller,
 		not_null< ::History*> history,
 		const QString &source,
 		FullReplyTo replyTo,
-		bool still = false) {
+		bool still = false,
+		bool grey = false) {
 	const auto output = QStandardPaths::writableLocation(
 		QStandardPaths::TempLocation)
 		+ u"/mokagram_gif_"_q
@@ -485,7 +613,12 @@ void ConvertAndSendGif(
 		u"-c:v"_q, u"libx264"_q,
 		u"-pix_fmt"_q, u"yuv420p"_q,
 		u"-crf"_q, u"26"_q,
-		u"-vf"_q, u"scale='min(720,iw)':-2"_q,
+		u"-vf"_q, grey
+			// Тёмный контрастный грейскейл: глубокие тени, яркие блики, зерно.
+			? (u"scale='min(720,iw)':-2,format=gray,curves=all='0/0 0.2/0.04 "
+				"0.5/0.34 0.72/0.8 0.88/0.98 1/1',vignette=PI/3.5,"
+				"noise=alls=6:allf=t,format=yuv420p"_q)
+			: u"scale='min(720,iw)':-2"_q,
 		u"-movflags"_q, u"+faststart"_q,
 		output,
 	};
@@ -498,10 +631,12 @@ void WaitForVideoAndConvert(
 		not_null<DocumentData*> document,
 		FullMsgId itemId,
 		FullReplyTo replyTo,
-		int left) {
+		int left,
+		bool grey = false,
+		bool still = false) {
 	const auto path = document->filepath(true);
 	if (!path.isEmpty()) {
-		ConvertAndSendGif(controller, history, path, replyTo);
+		ConvertAndSendGif(controller, history, path, replyTo, still, grey);
 		return;
 	}
 	if (left <= 0) {
@@ -526,7 +661,9 @@ void WaitForVideoAndConvert(
 			document,
 			itemId,
 			replyTo,
-			left - 1);
+			left - 1,
+			grey,
+			still);
 	});
 }
 
@@ -561,7 +698,8 @@ bool Handle(
 		|| (command == u"calc"_q)
 		|| (command == u"tag"_q)
 		|| (command == u"note"_q)
-		|| (command == u"snip"_q);
+		|| (command == u"snip"_q)
+		|| (command == u"kq"_q);
 	if (!freeText && !arg.isEmpty() && !all && !number.hasMatch()) {
 		// Обычная фраза, которая случайно начинается с команды.
 		return false;
@@ -665,7 +803,41 @@ bool Handle(
 		}
 		return true;
 	}
-	if (command == u"gif"_q) {
+	if (command == u"kq"_q) {
+		if (!QuoteDataAvailable()) {
+			toast(U(Mokagram::Lang::Tr("Нет данных для .kq")));
+			return true;
+		}
+		auto file = QString();
+		auto line = QString();
+		auto seconds = 0.;
+		if (!PickQuoteLine(file, line, seconds, arg)) {
+			toast(arg.isEmpty()
+				? U(Mokagram::Lang::Tr("Нет данных для .kq"))
+				: U(Mokagram::Lang::Tr("Нет такой реплики")));
+			return true;
+		}
+		auto voice = QFile(QuoteDir() + u"/voice/"_q + file);
+		if (!voice.open(QIODevice::ReadOnly)) {
+			toast(U(Mokagram::Lang::Tr("Нет файла голоса")));
+			return true;
+		}
+		const auto bytes = voice.readAll();
+		const auto duration = crl::time(seconds * 1000);
+		auto action = Api::SendAction(history, Api::SendOptions());
+		action.replyTo = replyTo;
+		action.clearDraft = false;
+		history->session().api().sendVoiceMessage(
+			bytes,
+			audioCountWaveform(Core::FileLocation(), bytes),
+			duration,
+			false,
+			action,
+			TextWithTags{ line });
+		return true;
+	}
+	if (command == u"gif"_q || command == u"gr"_q) {
+		const auto grey = (command == u"gr"_q);
 		const auto media = replied ? replied->media() : nullptr;
 		const auto document = media ? media->document() : nullptr;
 		const auto photo = media ? media->photo() : nullptr;
@@ -673,10 +845,13 @@ bool Handle(
 			toast(U(Mokagram::Lang::Tr("Делаю гиф…")));
 			const auto itemId = replied->fullId();
 			const auto view = photo->createMediaView();
-			photo->load(itemId);
+			view->wanted(Data::PhotoSize::Large, itemId);
 			const auto attempt = std::make_shared<Fn<void(int)>>();
 			*attempt = [=](int left) {
-				const auto image = view->image(Data::PhotoSize::Large);
+				auto image = view->image(Data::PhotoSize::Large);
+				if (!image && left <= 2) {
+					image = view->image(Data::PhotoSize::Thumbnail);
+				}
 				if (image && !image->isNull()) {
 					const auto path = QStandardPaths::writableLocation(
 						QStandardPaths::TempLocation)
@@ -684,7 +859,7 @@ bool Handle(
 						+ QString::number(photo->id)
 						+ u".png"_q;
 					if (image->original().save(path, "PNG")) {
-						ConvertAndSendGif(controller, history, path, replyTo, true);
+						ConvertAndSendGif(controller, history, path, replyTo, true, grey);
 					} else {
 						toast(U(Mokagram::Lang::Tr("Не получилось сохранить")));
 					}
@@ -697,8 +872,19 @@ bool Handle(
 			(*attempt)(8);
 			return true;
 		}
-		if (!document
-			|| !(document->isVideoFile() || document->isAnimation())) {
+		// Видео и картинки, присланные как файл (в т.ч. .webm), тоже годятся.
+		const auto still = document
+			&& !document->isVideoFile()
+			&& !document->isAnimation()
+			&& document->mimeString().startsWith(u"image/"_q);
+		const auto video = document
+			&& (document->isVideoFile()
+				|| document->isAnimation()
+				|| document->mimeString().startsWith(u"video/"_q)
+				|| document->filename().endsWith(
+					u".webm"_q,
+					Qt::CaseInsensitive));
+		if (!still && !video) {
 			toast(U(Mokagram::Lang::Tr("Ответь командой на видео или фото")));
 			return true;
 		}
@@ -710,7 +896,7 @@ bool Handle(
 					QStandardPaths::TempLocation)
 				+ u"/mokagram_gif_src_"_q
 				+ QString::number(document->id)
-				+ u".mp4"_q);
+				+ (still ? u".img"_q : u".mp4"_q));
 		}
 		WaitForVideoAndConvert(
 			controller,
@@ -718,7 +904,9 @@ bool Handle(
 			document,
 			replied->fullId(),
 			replyTo,
-			170);
+			170,
+			grey,
+			still);
 		return true;
 	}
 	if (command == u"dl"_q) {
@@ -1036,6 +1224,114 @@ void SetAliases(const std::vector<std::pair<QString, QString>> &list) {
 
 QStringList CommandNames() {
 	return KnownCommands();
+}
+
+namespace {
+
+struct QuoteStage {
+	bool fresh = true;
+	QPixmap frame;
+	QString file;
+	QString text;
+	QRect hit;
+	QPointer<QProcess> player;
+};
+
+[[nodiscard]] QuoteStage &Stage() {
+	static auto result = QuoteStage();
+	return result;
+}
+
+} // namespace
+
+void QuoteStageReset() {
+	Stage().fresh = true;
+}
+
+bool PaintQuoteStage(QPainter &p, QRect area, QColor textColor) {
+	if (!QuoteDataAvailable()) {
+		return false;
+	}
+	auto &st = Stage();
+	if (st.fresh) {
+		st.fresh = false;
+		st.frame = QPixmap();
+		const auto frames = QDir(QuoteDir() + u"/frames"_q).entryList(
+			QStringList{ u"*.png"_q },
+			QDir::Files);
+		if (!frames.isEmpty()) {
+			st.frame = QPixmap(QuoteDir() + u"/frames/"_q
+				+ frames[QRandomGenerator::global()->bounded(
+					int(frames.size()))]);
+		}
+		if (!PickQuoteLine(st.file, st.text)) {
+			st.file.clear();
+			st.text.clear();
+		}
+	}
+	if (st.frame.isNull()) {
+		st.hit = QRect();
+		return false;
+	}
+	auto font = p.font();
+	font.setPixelSize(16);
+	p.setFont(font);
+	const auto textWidth = std::min(380, area.width() - 40);
+	const auto textRect = QRect(0, 0, textWidth, 1000);
+	const auto textBox = p.fontMetrics().boundingRect(
+		textRect,
+		Qt::AlignHCenter | Qt::TextWordWrap,
+		st.text);
+	const auto gap = 18;
+	const auto size = std::max(120, std::min({
+		300,
+		area.width() - 40,
+		area.height() - textBox.height() - gap - 80 }));
+	const auto total = size + gap + textBox.height();
+	const auto top = area.top() + (area.height() - total) / 2;
+	const auto frame = QRect(
+		area.left() + (area.width() - size) / 2,
+		top,
+		size,
+		size);
+	p.setRenderHint(QPainter::SmoothPixmapTransform);
+	p.setRenderHint(QPainter::Antialiasing);
+	auto clip = QPainterPath();
+	clip.addRoundedRect(frame, 26, 26);
+	p.save();
+	p.setClipPath(clip);
+	p.drawPixmap(frame, st.frame);
+	p.restore();
+	const auto text = QRect(
+		area.left() + (area.width() - textWidth) / 2,
+		frame.bottom() + gap,
+		textWidth,
+		textBox.height());
+	p.setPen(textColor);
+	p.drawText(text, Qt::AlignHCenter | Qt::TextWordWrap, st.text);
+	st.hit = text.adjusted(-8, -6, 8, 6);
+	return true;
+}
+
+bool QuoteStageClick(QPoint point) {
+	auto &st = Stage();
+	if (st.file.isEmpty() || !st.hit.contains(point)) {
+		return false;
+	}
+	if (st.player) {
+		st.player->kill();
+		st.player->deleteLater();
+	}
+	st.player = new QProcess(qApp);
+	QObject::connect(
+		st.player,
+		&QProcess::finished,
+		st.player,
+		&QObject::deleteLater);
+	st.player->start(u"ffplay"_q, QStringList{
+		u"-nodisp"_q, u"-autoexit"_q, u"-loglevel"_q, u"quiet"_q,
+		QuoteDir() + u"/voice/"_q + st.file });
+	return true;
 }
 
 } // namespace Mokagram::Commands

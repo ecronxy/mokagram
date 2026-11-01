@@ -9,8 +9,11 @@
 #include "data/data_msg_id.h"
 
 #include <QtCore/QStringList>
+#include <QtCore/QRect>
+#include <QtGui/QColor>
 #include <vector>
 
+class QPainter;
 struct TextWithTags;
 class History;
 
@@ -35,5 +38,11 @@ void RegisterSettings();
 [[nodiscard]] std::vector<std::pair<QString, QString>> Aliases();
 void SetAliases(const std::vector<std::pair<QString, QString>> &list);
 [[nodiscard]] QStringList CommandNames();
+
+// Экран «выберите чат» с кадром и репликой из локального набора данных.
+// Рисует только если набор есть, иначе возвращает false.
+void QuoteStageReset();
+[[nodiscard]] bool PaintQuoteStage(QPainter &p, QRect area, QColor textColor);
+[[nodiscard]] bool QuoteStageClick(QPoint point);
 
 } // namespace Mokagram::Commands
