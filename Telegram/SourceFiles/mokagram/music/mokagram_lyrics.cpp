@@ -212,6 +212,7 @@ void GetJson(
 void RequestNetease(
 		const QString &query,
 		const QString &trackName,
+		const QString &artistName,
 		qint64 durationMs,
 		Fn<void(Lyrics)> done,
 		bool strict = false) {
@@ -232,9 +233,24 @@ void RequestNetease(
 				&& !wanted.contains(name)) {
 				continue;
 			}
+			// Тот же исполнитель или точное название и почти та же длительность:
+			// «название содержит слово» без этого даёт чужие песни.
+			auto artistOk = false;
+			const auto wantedArtist = artistName.toLower();
+			for (const auto &performer : song.value("artists").toArray()) {
+				const auto who = performer.toObject().value("name").toString().toLower();
+				if (!wantedArtist.isEmpty()
+					&& (who.contains(wantedArtist) || wantedArtist.contains(who))) {
+					artistOk = true;
+				}
+			}
+			const auto exact = (WithoutBrackets(name) == WithoutBrackets(wanted));
 			const auto diff = durationMs > 0
 				? std::abs(song.value("duration").toDouble() - durationMs)
 				: 0.;
+			if (!artistOk && (!exact || durationMs <= 0 || diff > 2500.)) {
+				continue;
+			}
 			if (diff < bestDiff) {
 				bestDiff = diff;
 				bestSource = song.value("duration").toDouble();
@@ -285,6 +301,7 @@ void RequestFallback(
 		RequestNetease(
 			artistName + u" "_q + trackName,
 			trackName,
+			artistName,
 			durationMs,
 			done);
 	};
@@ -383,7 +400,7 @@ void RequestLastResort(
 		return;
 	}
 	const auto netease = [=] {
-		RequestNetease(name, name, durationMs, done, true);
+		RequestNetease(name, name, split.artistName, durationMs, done, true);
 	};
 	auto byName = QUrlQuery();
 	byName.addQueryItem(u"q"_q, name);
