@@ -2670,7 +2670,7 @@ private:
 	}
 	[[nodiscard]] QFont lineFont() const {
 		auto font = st::semiboldFont->f;
-		font.setPixelSize(_big ? style::ConvertScale(34) : 19);
+		font.setPixelSize(_big ? style::ConvertScale(28) : 19);
 		if (_big) {
 			font.setWeight(QFont::ExtraBold);
 		}
@@ -2687,7 +2687,7 @@ private:
 			layout = std::make_unique<QTextLayout>(
 				text.isEmpty() ? u" "_q : text,
 				lineFont());
-			auto option = QTextOption(_big ? Qt::AlignLeft : Qt::AlignHCenter);
+			auto option = QTextOption(Qt::AlignHCenter);
 			option.setWrapMode(QTextOption::WordWrap);
 			layout->setTextOption(option);
 			layout->beginLayout();
@@ -3454,6 +3454,7 @@ public:
 
 		setGeometry(parent->rect());
 		refresh();
+		rebuildTab();
 		show();
 		raise();
 		setFocus();
