@@ -128,7 +128,7 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 			if (title.compare(matchingTitle, Qt::CaseInsensitive) != 0
 				|| durationMs <= 0
 				|| source <= 0.
-				|| diff > 3000.) {
+				|| diff > 1000.) {
 				continue;
 			}
 		}
@@ -152,6 +152,10 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 	if (bestScore < -1e8) {
 		return {};
 	}
+	LOG(("[lyrics] lrclib picked: %1 - %2 (%3 s)")
+		.arg(best.value("artistName").toString())
+		.arg(best.value("trackName").toString())
+		.arg(best.value("duration").toDouble()));
 	if (bestSynced) {
 		auto result = ParseLrc(best.value("syncedLyrics").toString());
 		if (result.found) {
@@ -248,7 +252,7 @@ void RequestNetease(
 			const auto diff = durationMs > 0
 				? std::abs(song.value("duration").toDouble() - durationMs)
 				: 0.;
-			if (!artistOk && (!exact || durationMs <= 0 || diff > 2500.)) {
+			if (!artistOk && (!exact || durationMs <= 0 || diff > 1000.)) {
 				continue;
 			}
 			if (diff < bestDiff) {
@@ -261,6 +265,7 @@ void RequestNetease(
 			done({});
 			return;
 		}
+		LOG(("[lyrics] netease picked id %1 (diff %2 ms)").arg(best).arg(bestDiff));
 		const auto ratio = (durationMs > 0 && bestSource > 0.)
 			? durationMs / bestSource
 			: 1.;
