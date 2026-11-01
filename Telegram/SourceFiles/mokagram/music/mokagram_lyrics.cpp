@@ -442,8 +442,35 @@ void RequestLastResort(
 			}
 		}
 		auto part = html.mid(open + 1, end - open - 1);
-		part.replace(QRegularExpression(uR"(<br\s*/?>)"_q), u"\n"_q);
-		result += QTextDocumentFragment::fromHtml(part).toPlainText() + u"\n"_q;
+		// Шапка (авторы, заголовок, «Read More») лежит внутри контейнера отдельными блоками.
+		static const auto excluded = QString::fromLatin1("data-exclude-from-selection=\"true\"");
+		while (true) {
+			const auto skip = part.indexOf(excluded);
+			if (skip < 0) {
+				break;
+			}
+			const auto start = part.lastIndexOf(u"<div"_q, skip);
+			if (start < 0) {
+				break;
+			}
+			auto level = 0;
+			auto stop = part.size();
+			auto blocks = tag.globalMatch(part, start);
+			while (blocks.hasNext()) {
+				const auto m = blocks.next();
+				level += m.captured(1).isEmpty() ? 1 : -1;
+				if (level == 0) {
+					stop = m.capturedEnd();
+					break;
+				}
+			}
+			part.remove(start, stop - start);
+		}
+		// Перенос строки в HTML считается пробелом, поэтому ставим метку и заменяем после разбора.
+		part.replace(QRegularExpression(uR"(<br\s*/?>)"_q), u"@@NL@@"_q);
+		auto plain = QTextDocumentFragment::fromHtml(part).toPlainText();
+		plain.replace(u"@@NL@@"_q, u"\n"_q);
+		result += plain + u"\n"_q;
 		from = end;
 	}
 	return result;
