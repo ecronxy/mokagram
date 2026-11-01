@@ -3253,6 +3253,12 @@ public:
 			update();
 		}
 	}
+	void setPlain(bool plain) {
+		if (_plain != plain) {
+			_plain = plain;
+			update();
+		}
+	}
 	void setCentered(bool centered) {
 		if (_centered != centered) {
 			_centered = centered;
@@ -3272,12 +3278,16 @@ private:
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(255, 255, 255, _active ? 38 : isOver() ? 18 : 0));
+		p.setBrush(_plain
+			? (_active ? QColor(0x0a, 0x84, 0xff) : isOver() ? QColor(0x32, 0x32, 0x32) : QColor(0, 0, 0, 0))
+			: QColor(255, 255, 255, _active ? 38 : isOver() ? 18 : 0));
 		p.drawRoundedRect(rect(), height() / 2., height() / 2.);
 		auto font = st::semiboldFont->f;
 		font.setPixelSize(s(15));
 		p.setFont(font);
-		p.setPen(QColor(255, 255, 255, _active ? 255 : 190));
+		p.setPen(_plain
+			? (_active ? QColor(Qt::white) : QColor(0x8e, 0x8e, 0x93))
+			: QColor(255, 255, 255, _active ? 255 : 190));
 		const auto inner = rect().adjusted(s(16), 0, -s(16), 0);
 		p.drawText(
 			inner,
@@ -3288,6 +3298,7 @@ private:
 	QString _text;
 	bool _centered = false;
 	bool _active = false;
+	bool _plain = false;
 
 };
 
@@ -3922,13 +3933,12 @@ protected:
 			}
 			QueueState().results = _albumTracks;
 			for (auto i = 0; i != int(_albumTracks.size()); ++i) {
-				const auto row = _tabList->add(object_ptr<Row>(
+				_tabList->add(object_ptr<Row>(
 					_tabList,
 					_controller,
 					_albumTracks[i],
 					i,
 					RowMode::Results));
-				row->setOnGlass(true);
 			}
 			return;
 		}
@@ -4030,6 +4040,7 @@ protected:
 		_tab = tab;
 		for (auto i = 0; i != 6; ++i) {
 			_nav[i]->setActive(i == int(tab));
+			_nav[i]->setPlain(tab != Tab::Now);
 		}
 		rebuildTab();
 		auto event = QResizeEvent(size(), size());
@@ -4074,7 +4085,6 @@ protected:
 					tracks[i],
 					i,
 					RowMode::Results));
-				row->setOnGlass(true);
 			}
 		};
 		switch (_tab) {
@@ -4170,7 +4180,6 @@ protected:
 				tracks[i],
 				i,
 				inQueue ? RowMode::Queue : RowMode::Context));
-			row->setOnGlass(true);
 		}
 		if (tracks.empty()) {
 			_tabNote = QString::fromUtf8(Mokagram::Lang::Tr("Очередь пуста."));
@@ -4196,7 +4205,7 @@ protected:
 		// Вне «Сейчас играет» экран в цветах клиента, как остальные окна.
 		if (const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.); plain > 0.) {
 			p.setOpacity(plain);
-			p.fillRect(e->rect(), st::windowBg);
+			p.fillRect(e->rect(), QColor(0x1c, 0x1c, 0x1c));
 			p.setOpacity(1.);
 		}
 		const auto layout = computeLayout();
@@ -4216,7 +4225,7 @@ protected:
 				tabTitle());
 			if (!_tabNote.isEmpty()) {
 				p.setFont(labelFont(15, false));
-				p.setPen(QColor(255, 255, 255, 170));
+				p.setPen(QColor(0x8e, 0x8e, 0x93));
 				const auto noteWidth = std::max(layout.center.width() - s(48), 0);
 				p.drawText(
 					QRect(layout.center.x() + s(24), layout.scrollTop, noteWidth, s(80)),
@@ -4285,7 +4294,10 @@ protected:
 
 		// Полоса управления внизу.
 		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(255, 255, 255, 16));
+		p.setBrush(anim::color(
+			QColor(255, 255, 255, 16),
+			QColor(0x28, 0x28, 0x28),
+			_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
 		p.drawRoundedRect(layout.bar, layout.bar.height() / 2., layout.bar.height() / 2.);
 		if (!layout.ultra) {
 			p.save();
