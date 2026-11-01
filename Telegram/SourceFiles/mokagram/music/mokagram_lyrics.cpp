@@ -19,6 +19,7 @@
 
 #include <crl/crl.h>
 #include <QtGui/QImage>
+#include <QtGui/QTextDocumentFragment>
 
 #include <map>
 
@@ -413,6 +414,114 @@ void RequestLastResort(
 	}, name);
 }
 
+// Последний источник: Genius. Тайминга нет, только простой текст. Ключ не нужен,
+// но сайт режет браузерный User-Agent, поэтому представляемся клиентом.
+[[nodiscard]] QString GeniusText(const QString &html) {
+	static const auto marker = QString::fromLatin1("data-lyrics-container=\"true\"");
+	static const auto tag = QRegularExpression(uR"(<(/?)div\b[^>]*>)"_q);
+	auto result = QString();
+	auto from = 0;
+	while (true) {
+		const auto at = html.indexOf(marker, from);
+		if (at < 0) {
+			break;
+		}
+		const auto open = html.indexOf('>', at);
+		if (open < 0) {
+			break;
+		}
+		auto depth = 1;
+		auto end = html.size();
+		auto it = tag.globalMatch(html, open + 1);
+		while (it.hasNext()) {
+			const auto m = it.next();
+			depth += m.captured(1).isEmpty() ? 1 : -1;
+			if (depth == 0) {
+				end = m.capturedStart();
+				break;
+			}
+		}
+		auto part = html.mid(open + 1, end - open - 1);
+		part.replace(QRegularExpression(uR"(<br\s*/?>)"_q), u"\n"_q);
+		result += QTextDocumentFragment::fromHtml(part).toPlainText() + u"\n"_q;
+		from = end;
+	}
+	return result;
+}
+
+void RequestGenius(
+		const SplitResult &split,
+		const QString &artist,
+		Fn<void(Lyrics)> done) {
+	const auto name = split.trackName;
+	if (name.size() < 2 || (split.artistName.isEmpty() && artist.isEmpty())) {
+		done({});
+		return;
+	}
+	const auto search = u"https://genius.com/api/search/multi?q="_q
+		+ QString::fromLatin1(QUrl::toPercentEncoding(split.artistName + u" "_q + name));
+	auto request = QNetworkRequest(QUrl(search));
+	request.setRawHeader("User-Agent", "mokaGram");
+	const auto reply = Net().get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		auto page = QString();
+		if (reply->error() == QNetworkReply::NoError) {
+			const auto sections = QJsonDocument::fromJson(reply->readAll())
+				.object().value("response").toObject().value("sections").toArray();
+			const auto matches = [&](const QString &text, const QString &wanted) {
+				const auto a = text.toLower();
+				const auto b = wanted.toLower();
+				return !b.isEmpty() && (a.contains(b) || b.contains(a));
+			};
+			for (const auto &section : sections) {
+				if (section.toObject().value("type").toString() != u"song"_q) {
+					continue;
+				}
+				for (const auto &hit : section.toObject().value("hits").toArray()) {
+					const auto result = hit.toObject().value("result").toObject();
+					const auto title = WithoutBrackets(
+						result.value("title").toString());
+					const auto performer = result.value("primary_artist").toObject()
+						.value("name").toString();
+					if (title.compare(name, Qt::CaseInsensitive) == 0
+						&& (matches(performer, split.artistName)
+							|| matches(performer, artist))) {
+						page = result.value("url").toString();
+						break;
+					}
+				}
+				break;
+			}
+		}
+		if (page.isEmpty()) {
+			done({});
+			return;
+		}
+		auto pageRequest = QNetworkRequest(QUrl(page));
+		pageRequest.setRawHeader("User-Agent", "mokaGram");
+		const auto pageReply = Net().get(pageRequest);
+		QObject::connect(pageReply, &QNetworkReply::finished, [=] {
+			pageReply->deleteLater();
+			if (pageReply->error() != QNetworkReply::NoError) {
+				done({});
+				return;
+			}
+			auto text = GeniusText(QString::fromUtf8(pageReply->readAll()));
+			static const auto section = QRegularExpression(uR"(^\s*\[[^\]]*\]\s*$)"_q);
+			auto lines = QStringList();
+			for (const auto &line : text.split('\n')) {
+				if (!section.match(line).hasMatch()) {
+					lines.push_back(line.trimmed());
+				}
+			}
+			text = lines.join('\n').trimmed();
+			text.replace(QRegularExpression(uR"(\n{3,})"_q), u"\n\n"_q);
+			done(text.isEmpty() ? Lyrics() : ParsePlain(text));
+		});
+	});
+}
+
 std::map<QString, QString> &ArtworkUrls() {
 	static auto result = std::map<QString, QString>();
 	return result;
@@ -548,7 +657,13 @@ void FetchLyrics(
 					if (result.found) {
 						finish(std::move(result));
 					} else {
-						RequestLastResort(split, durationMs, finish);
+						RequestLastResort(split, durationMs, [=](Lyrics result) {
+							if (result.found) {
+								finish(std::move(result));
+							} else {
+								RequestGenius(split, artist, finish);
+							}
+						});
 					}
 				});
 				return;
@@ -564,7 +679,13 @@ void FetchLyrics(
 					if (result.found) {
 						finish(std::move(result));
 					} else {
-						RequestLastResort(split, durationMs, finish);
+						RequestLastResort(split, durationMs, [=](Lyrics result) {
+							if (result.found) {
+								finish(std::move(result));
+							} else {
+								RequestGenius(split, artist, finish);
+							}
+						});
 					}
 				});
 			});
