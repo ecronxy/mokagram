@@ -7,6 +7,11 @@
 #include <Python.h>
 #include "mokagram/lang/mokagram_lang.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <cwchar>
+#endif
+
 #include "mokagram/plugins/mokagram_plugins.h"
 
 #include <array>
@@ -76,6 +81,18 @@ size_t _dropped = 0;
 std::mutex _auditMutex;
 
 bool EnsurePython(const LogFn &log) {
+#ifdef _WIN32
+	// pythonNNN.dll подключена отложенно: без неё клиент запускается, просто без плагинов.
+	static const bool present = [] {
+		wchar_t name[32];
+		swprintf(name, 32, L"python%d%d.dll", PY_MAJOR_VERSION, PY_MINOR_VERSION);
+		return LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32) != nullptr;
+	}();
+	if (!present) {
+		if (log) log(Mokagram::Lang::Tr("python: нет библиотеки Python рядом с клиентом, плагины отключены"));
+		return false;
+	}
+#endif
 	if (!Py_IsInitialized()) {
 		Py_InitializeEx(0);
 		if (!Py_IsInitialized()) {
