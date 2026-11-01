@@ -16,7 +16,7 @@ def _native(op, args):
         return {'ok': False, 'error': 'сбой вызова клиента: %s' % e}
 
 
-def _gate(op, perm, target=''):
+def _gate(op, perm, target='', rate=True):
     entry = _h['caller']()
     if entry is None:
         _h['say']('SDK-вызов %s не из плагина, отказ' % op)
@@ -25,7 +25,7 @@ def _gate(op, perm, target=''):
         _h['audit'](entry, op, target, 'denied')
         _h['say']('[%s] нет права %s для %s' % (entry['id'], perm, op))
         return None
-    if not _limit(entry, '__all', 300, 60):
+    if rate and not _limit(entry, '__all', 300, 60):
         _h['say']('[%s] больше 300 действий в минуту, %s отклонён' % (entry['id'], op))
         return None
     return entry
@@ -1087,28 +1087,64 @@ def _argb(color):
 
 class Overlay:
     """Прозрачный слой поверх окна. click_through=True: клики проходят сквозь слой;
-    False: слой ловит указатель в своём прямоугольнике (для питомца, которого можно потрогать)."""
+    False: слой ловит указатель в своём прямоугольнике (для питомца, которого можно потрогать).
+    Слой можно создавать в on_plugin_load: пока окно клиента не готово, вызовы копятся и
+    применяются сами, как только слой появится (ready=True)."""
 
-    def __init__(self, entry, oid, w, h):
+    def __init__(self, entry, oid, w, h, click_through):
         self._entry = entry
         self.id = oid
         self.size = (w, h)
+        self.ready = False
+        self._click_through = click_through
+        self._pending = {}
+        self._tries = 0
 
-    def _call(self, op, args):
-        entry = _gate('overlay.' + op, 'ui')
-        if entry is None or entry is not self._entry:
-            return None
-        args['pid'] = entry['id']
+    def _create(self):
+        if self.ready or self.id not in self._entry.get('overlays', {}):
+            return
+        e = self._entry
+        res = _native('overlay_create', {'pid': e['id'], 'id': self.id, 'w': self.size[0], 'h': self.size[1],
+                                         'click_through': self._click_through})
+        if res.get('ok'):
+            self.ready = True
+            _h['audit'](e, 'overlay.create', self.id, 'allowed')
+            for key in ('sprite', 'move', 'cb_tick', 'cb_pointer'):
+                a = self._pending.pop(key, None)
+                if a:
+                    self._send(a[0], a[1])
+            return
+        self._tries += 1
+        if self._tries > 60 or 'окн' not in str(res.get('error', '')):
+            _h['say']('[%s] оверлей не создан: %s' % (e['id'], res.get('error', '')))
+            e.get('overlays', {}).pop(self.id, None)
+            return
+        cb = _h['register_cb'](e, lambda p: self._create(), True)
+        _native('run_main', {'pid': e['id'], 'cb': cb, 'delay': 1000})
+
+    def _send(self, op, args):
+        args = dict(args)
+        args['pid'] = self._entry['id']
         args['id'] = self.id
         res = _native('overlay_' + op, args)
         return res if res.get('ok') else None
+
+    def _call(self, op, args, key=None):
+        entry = _gate('overlay.' + op, 'ui', rate=(op == 'say'))
+        if entry is None or entry is not self._entry:
+            return None
+        if not self.ready:
+            if key:
+                self._pending[key] = (op, args)
+            return True
+        return self._send(op, args)
 
     def set_sprite(self, grid, palette=None, scale=1):
         """grid: список строк ('..ab..') с palette {символ: цвет} либо список строк-списков цветов.
         Рисуется нижней кромкой слоя по центру, пиксели увеличиваются в scale раз без сглаживания."""
         if not _limit(self._entry, 'overlay_sprite', 120, 1):
             return None
-        rows = [list(r) if isinstance(r, str) else list(r) for r in grid][:256]
+        rows = [list(r) for r in grid][:256]
         w = max((len(r) for r in rows), default=0)
         if not rows or w == 0 or w > 256:
             return None
@@ -1118,12 +1154,12 @@ class Overlay:
             for i in range(w):
                 c = r[i] if i < len(r) else None
                 data.append(_argb(pal.get(c) if isinstance(pal, dict) and not isinstance(c, (int, tuple)) else c))
-        return self._call('sprite', {'sw': w, 'sh': len(rows), 'data': data, 'scale': int(scale)})
+        return self._call('sprite', {'sw': w, 'sh': len(rows), 'data': data, 'scale': int(scale)}, 'sprite')
 
     def move(self, x, y):
         if not _limit(self._entry, 'overlay_move', 120, 1):
             return None
-        return self._call('move', {'x': int(x), 'y': int(y)})
+        return self._call('move', {'x': int(x), 'y': int(y)}, 'move')
 
     def say(self, text, ms=3000):
         """Пузырь реплики над питомцем."""
@@ -1134,17 +1170,19 @@ class Overlay:
     def on_tick(self, fn, fps=30):
         """fn(dt_ms) каждый кадр (5..60 fps). fn=None выключает."""
         cb = _h['register_cb'](self._entry, lambda p: fn(int(p.get('dt', 0)))) if fn else ''
-        return self._call('cb', {'kind': 'tick', 'cb': cb, 'fps': int(fps)})
+        return self._call('cb', {'kind': 'tick', 'cb': cb, 'fps': int(fps)}, 'cb_tick')
 
     def on_pointer(self, fn):
         """fn(event): event = {kind: down|move|up|double, x, y (в окне), local_x, local_y,
         vx, vy (пикселей в секунду), button}. Работает при click_through=False."""
         cb = _h['register_cb'](self._entry, lambda p: fn(p)) if fn else ''
-        return self._call('cb', {'kind': 'pointer', 'cb': cb})
+        return self._call('cb', {'kind': 'pointer', 'cb': cb}, 'cb_pointer')
 
     def destroy(self):
-        self._call('destroy', {})
+        if self.ready:
+            self._call('destroy', {})
         self._entry.get('overlays', {}).pop(self.id, None)
+        self.ready = False
 
 
 class _OverlayApi:
@@ -1153,14 +1191,15 @@ class _OverlayApi:
         if entry is None:
             return None
         oid = str(oid)[:32]
-        res = _native('overlay_create', {'pid': entry['id'], 'id': oid, 'w': int(w), 'h': int(h),
-                                         'click_through': bool(click_through)})
-        _h['audit'](entry, 'overlay.create', oid, 'allowed' if res.get('ok') else 'failed')
-        if not res.get('ok'):
-            _h['say']('[%s] оверлей не создан: %s' % (entry['id'], res.get('error', '')))
+        old = entry.setdefault('overlays', {}).get(oid)
+        if old:
+            old.destroy()
+        if len(entry['overlays']) >= 4:
+            _h['say']('[%s] не больше 4 оверлеев' % entry['id'])
             return None
-        ov = Overlay(entry, oid, int(w), int(h))
-        entry.setdefault('overlays', {})[oid] = ov
+        ov = Overlay(entry, oid, max(8, min(int(w), 600)), max(8, min(int(h), 600)), bool(click_through))
+        entry['overlays'][oid] = ov
+        ov._create()
         return ov
 
 
