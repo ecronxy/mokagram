@@ -4021,6 +4021,12 @@ protected:
 		if (_tab == tab) {
 			return;
 		}
+		_plainAnim.start(
+			[=] { update(); },
+			_tab == Tab::Now ? 0. : 1.,
+			tab == Tab::Now ? 0. : 1.,
+			220,
+			anim::easeOutCubic);
 		_tab = tab;
 		for (auto i = 0; i != 6; ++i) {
 			_nav[i]->setActive(i == int(tab));
@@ -4187,6 +4193,12 @@ protected:
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		paintBackgroundPart(p, e->rect(), e->rect().topLeft());
+		// Вне «Сейчас играет» экран в цветах клиента, как остальные окна.
+		if (const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.); plain > 0.) {
+			p.setOpacity(plain);
+			p.fillRect(e->rect(), st::windowBg);
+			p.setOpacity(1.);
+		}
 		const auto layout = computeLayout();
 		const auto labelFont = [&](int size, bool bold) {
 			auto font = (bold ? st::semiboldFont : st::normalFont)->f;
@@ -4196,9 +4208,6 @@ protected:
 
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if (_tab != Tab::Now) {
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(255, 255, 255, 16));
-			p.drawRoundedRect(layout.center, s(22), s(22));
 			p.setFont(labelFont(19, true));
 			p.setPen(Qt::white);
 			p.drawText(
@@ -4550,6 +4559,7 @@ private:
 	const not_null<RoundGlyph*> _repeat;
 
 	Ui::Animations::Simple _fade;
+	Ui::Animations::Simple _plainAnim;
 	Ui::Animations::Simple _colorAnim;
 	Ui::Animations::Simple _infoFade;
 	Ui::Animations::Simple _playAnim;
