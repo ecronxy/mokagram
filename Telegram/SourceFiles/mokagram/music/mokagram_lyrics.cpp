@@ -212,7 +212,8 @@ void RequestNetease(
 		const QString &query,
 		const QString &trackName,
 		qint64 durationMs,
-		Fn<void(Lyrics)> done) {
+		Fn<void(Lyrics)> done,
+		bool strict = false) {
 	const auto search = u"https://music.163.com/api/search/get?type=1&limit=8&s="_q
 		+ QString::fromLatin1(QUrl::toPercentEncoding(query));
 	GetJson(search, [=](QJsonDocument doc) {
@@ -239,7 +240,7 @@ void RequestNetease(
 				best = qint64(song.value("id").toDouble());
 			}
 		}
-		if (!best) {
+		if (!best || (strict && durationMs > 0 && bestDiff > 4000.)) {
 			done({});
 			return;
 		}
@@ -367,6 +368,49 @@ struct SplitResult {
 	return durationMs <= 0
 		|| sourceMs <= 0
 		|| std::abs(sourceMs - durationMs) <= 4000;
+}
+
+// Последняя попытка, когда исполнитель в метаданных чужой (загрузчик, а не автор):
+// ищем по одному названию, но берём только точное название и близкую длительность.
+void RequestLastResort(
+		const SplitResult &split,
+		qint64 durationMs,
+		Fn<void(Lyrics)> done) {
+	const auto name = split.trackName;
+	if (name.size() < 4) {
+		done({});
+		return;
+	}
+	const auto netease = [=] {
+		RequestNetease(name, name, durationMs, done, true);
+	};
+	auto byName = QUrlQuery();
+	byName.addQueryItem(u"q"_q, name);
+	Request(byName, durationMs, [=](Lyrics result) {
+		if (result.found) {
+			done(std::move(result));
+			return;
+		}
+		// «Название - Исполнитель»: порядок мог быть обратным.
+		static const auto separator = QRegularExpression(uR"(\s+[-–—]\s+)"_q);
+		const auto dash = separator.match(split.clean);
+		if (!dash.hasMatch() || dash.capturedStart() <= 0) {
+			netease();
+			return;
+		}
+		auto swapped = QUrlQuery();
+		swapped.addQueryItem(
+			u"track_name"_q,
+			WithoutBrackets(CleanTitle(split.clean.left(dash.capturedStart()), QString())));
+		swapped.addQueryItem(u"artist_name"_q, split.clean.mid(dash.capturedEnd()).trimmed());
+		Request(swapped, durationMs, [=](Lyrics result) {
+			if (result.found) {
+				done(std::move(result));
+			} else {
+				netease();
+			}
+		});
+	}, name);
 }
 
 std::map<QString, QString> &ArtworkUrls() {
@@ -500,7 +544,13 @@ void FetchLyrics(
 				return;
 			}
 			if (artistName == artist) {
-				RequestFallback(trackName, artistName, durationMs, finish);
+				RequestFallback(trackName, artistName, durationMs, [=](Lyrics result) {
+					if (result.found) {
+						finish(std::move(result));
+					} else {
+						RequestLastResort(split, durationMs, finish);
+					}
+				});
 				return;
 			}
 			auto third = QUrlQuery();
@@ -510,7 +560,13 @@ void FetchLyrics(
 					finish(std::move(result));
 					return;
 				}
-				RequestFallback(trackName, artistName, durationMs, finish);
+				RequestFallback(trackName, artistName, durationMs, [=](Lyrics result) {
+					if (result.found) {
+						finish(std::move(result));
+					} else {
+						RequestLastResort(split, durationMs, finish);
+					}
+				});
 			});
 		});
 	});
