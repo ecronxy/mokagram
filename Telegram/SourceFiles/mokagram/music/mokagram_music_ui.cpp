@@ -3666,6 +3666,7 @@ protected:
 		bool showRight = false;
 		bool compact = false;
 		bool ultra = false;
+		bool barShown = true;
 		QRect nav;
 		QRect center;
 		QRect right;
@@ -3695,6 +3696,7 @@ protected:
 		const auto gap = s(12);
 		const auto pad = s(16);
 		const auto now = (_tab == Tab::Now);
+		result.barShown = now;
 		const auto barHeight = s(10) + _play->height() + _seek->height() + s(8);
 		result.bar = QRect(
 			margin,
@@ -3710,7 +3712,8 @@ protected:
 			width() - margin - _collapse->width(),
 			margin + (s(40) - _collapse->height()) / 2);
 		const auto top = margin + s(48) + gap;
-		const auto areaHeight = std::max(result.bar.y() - gap - top, 0);
+		const auto areaBottom = now ? result.bar.y() - gap : height() - margin;
+		const auto areaHeight = std::max(areaBottom - top, 0);
 
 		if (now) {
 			// Обложка слева, текст песни по центру остального экрана.
@@ -3735,8 +3738,7 @@ protected:
 				std::max(width() - margin - lyricsLeft, 0),
 				areaHeight);
 		} else {
-			const auto w = std::min(std::max(width() - 2 * margin, 0), s(960));
-			result.center = QRect((width() - w) / 2, top, w, areaHeight);
+			result.center = QRect(margin, top, std::max(width() - 2 * margin, 0), areaHeight);
 			result.scrollTop = result.center.y() + ((_tab == Tab::Search) ? (_searchChats ? s(168) : s(216)) : s(72));
 		}
 
@@ -3849,7 +3851,12 @@ protected:
 		_collapse->move(layout.collapse);
 		_queueToggle->move(layout.queue);
 		_heart->move(layout.heart);
-		_volume->setVisible(!layout.compact);
+		for (const auto button : { _shuffle.get(), _previous.get(), _play.get(), _next.get(), _repeat.get(), _queueToggle.get() }) {
+			button->setVisible(layout.barShown);
+		}
+		_seek->setVisible(layout.barShown);
+		_heart->setVisible(layout.barShown && _heartOwn);
+		_volume->setVisible(layout.barShown && !layout.compact);
 		if (!layout.compact) {
 			_volume->setGeometry(layout.volume);
 		}
@@ -3877,8 +3884,8 @@ protected:
 			}
 		}
 		{
-			const auto inner = std::max(layout.center.width() - s(48), 0);
-			const auto left = layout.center.x() + s(24);
+			const auto inner = std::max(layout.center.width() - s(20), 0);
+			const auto left = layout.center.x() + s(10);
 			const auto fieldHeight = s(44);
 			const auto fieldTop = layout.center.y() + s(64);
 			_searchField->setGeometry(left, fieldTop, inner, fieldHeight);
@@ -4220,15 +4227,15 @@ protected:
 			p.setFont(labelFont(19, true));
 			p.setPen(Qt::white);
 			p.drawText(
-				QRect(layout.center.x() + s(24), layout.center.y() + s(16), layout.center.width() - s(48), s(44)),
+				QRect(layout.center.x() + s(10), layout.center.y() + s(16), layout.center.width() - s(20), s(44)),
 				Qt::AlignLeft | Qt::AlignVCenter,
 				tabTitle());
 			if (!_tabNote.isEmpty()) {
 				p.setFont(labelFont(15, false));
 				p.setPen(QColor(0x8e, 0x8e, 0x93));
-				const auto noteWidth = std::max(layout.center.width() - s(48), 0);
+				const auto noteWidth = std::max(layout.center.width() - s(20), 0);
 				p.drawText(
-					QRect(layout.center.x() + s(24), layout.scrollTop, noteWidth, s(80)),
+					QRect(layout.center.x() + s(10), layout.scrollTop, noteWidth, s(80)),
 					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
 					_tabNote);
 			}
@@ -4291,6 +4298,9 @@ protected:
 		};
 		drawInfo(_wasTitle, _wasArtist, 1. - fade, false);
 		drawInfo(_title, _artist, fade, true);
+		if (!layout.barShown) {
+			return;
+		}
 
 		// Полоса управления внизу.
 		p.setPen(Qt::NoPen);
@@ -4493,7 +4503,8 @@ private:
 		}
 		_play->setPlaying(playing);
 		const auto own = OwnsTrack(current);
-		_heart->setVisible(own);
+		_heartOwn = own;
+		_heart->setVisible(own && _tab == Tab::Now);
 		_heart->setLiked(own && IsLiked(track.id));
 		_seek->setProgress(state.length > 0
 			? state.position / float64(state.length)
@@ -4559,6 +4570,7 @@ private:
 	Tab _tab = Tab::Now;
 	Tab _rebuiltTab = Tab::Queue;
 	QString _tabNote;
+	bool _heartOwn = false;
 	bool _homeLoading = false;
 	bool _homeLoaded = false;
 	std::unique_ptr<ChatMusicSearch> _context;
