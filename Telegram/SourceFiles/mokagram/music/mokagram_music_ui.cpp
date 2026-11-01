@@ -3291,6 +3291,75 @@ private:
 
 };
 
+// Переключатель из двух-трёх сегментов, как в окне музыки: пилюля с ползущим акцентом.
+class Segmented final : public Ui::AbstractButton {
+public:
+	Segmented(QWidget *parent, std::vector<QString> labels, Fn<void(int)> chosen)
+	: AbstractButton(parent)
+	, _labels(std::move(labels)) {
+		setPointerCursor(true);
+		setClickedCallback([=] {
+			const auto x = mapFromGlobal(QCursor::pos()).x();
+			const auto index = std::clamp(
+				x * int(_labels.size()) / std::max(width(), 1),
+				0,
+				int(_labels.size()) - 1);
+			if (index != _index) {
+				setIndex(index);
+				chosen(index);
+			}
+		});
+		paintRequest(
+		) | rpl::on_next([=](QRect) {
+			paint();
+		}, lifetime());
+	}
+
+	void setIndex(int index) {
+		if (_index != index) {
+			_slide.start([=] { update(); }, _index, index, 220, anim::easeOutCubic);
+			_index = index;
+		}
+	}
+
+private:
+	void paint() {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBgOver);
+		p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+		const auto count = int(_labels.size());
+		const auto inset = s(3);
+		const auto segment = (width() - 2 * inset) / double(count);
+		const auto at = _slide.value(_index);
+		p.setBrush(st::windowActiveTextFg);
+		const auto active = QRectF(
+			inset + segment * at,
+			inset,
+			segment,
+			height() - 2 * inset);
+		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
+		auto font = st::semiboldFont->f;
+		font.setPixelSize(s(15));
+		p.setFont(font);
+		for (auto i = 0; i != count; ++i) {
+			const auto mix = std::clamp(1. - std::abs(at - i), 0., 1.);
+			p.setPen(anim::color(st::windowSubTextFg, QColor(Qt::white), mix));
+			p.drawText(
+				QRectF(inset + segment * i, 0, segment, height()),
+				Qt::AlignCenter,
+				_labels[i]);
+		}
+	}
+
+	std::vector<QString> _labels;
+	int _index = 0;
+	Ui::Animations::Simple _slide;
+
+};
+
 class FullscreenPlayer final : public Ui::RpWidget {
 public:
 	FullscreenPlayer(
@@ -3348,7 +3417,7 @@ public:
 		_searchField = Ui::CreateChild<QLineEdit>(this);
 		_searchField->setFrame(false);
 		_searchField->setPlaceholderText(
-			QString::fromUtf8(Mokagram::Lang::Tr("Трек или исполнитель")));
+			QString::fromUtf8(Mokagram::Lang::Tr("Поиск на SoundCloud")));
 		_searchField->hide();
 		_searchTimer.setSingleShot(true);
 		_searchTimer.setInterval(kTypingDelay);
@@ -3356,21 +3425,35 @@ public:
 		connect(_searchField, &QLineEdit::textChanged, this, [=] {
 			_searchTimer.start();
 		});
-		_sources[0] = Ui::CreateChild<NavItem>(this, u"SoundCloud"_q, true);
-		_sources[1] = Ui::CreateChild<NavItem>(
+		_sourceSwitch = Ui::CreateChild<Segmented>(
 			this,
-			QString::fromUtf8(Mokagram::Lang::Tr("Мои чаты")),
-			true);
-		for (auto i = 0; i != 2; ++i) {
-			_sources[i]->hide();
-			_sources[i]->setActive(i == (_searchChats ? 1 : 0));
-			_sources[i]->setClickedCallback([=] {
-				_searchChats = (i == 1);
-				_sources[0]->setActive(!_searchChats);
-				_sources[1]->setActive(_searchChats);
+			std::vector<QString>{
+				u"SoundCloud"_q,
+				QString::fromUtf8(Mokagram::Lang::Tr("Из чатов")) },
+			[=](int index) {
+				_searchChats = (index == 1);
+				_openedAlbum = false;
+				_searchField->setPlaceholderText(QString::fromUtf8(Mokagram::Lang::Tr(
+					_searchChats ? "Поиск по чатам" : "Поиск на SoundCloud")));
+				if (_searchChats) {
+					_searchKind = 0;
+					_kindSwitch->setIndex(0);
+				}
+				relayout();
 				runSearch();
 			});
-		}
+		_kindSwitch = Ui::CreateChild<Segmented>(
+			this,
+			std::vector<QString>{
+				QString::fromUtf8(Mokagram::Lang::Tr("Треки")),
+				QString::fromUtf8(Mokagram::Lang::Tr("Альбомы")) },
+			[=](int index) {
+				_searchKind = index;
+				_openedAlbum = false;
+				runSearch();
+			});
+		_sourceSwitch->hide();
+		_kindSwitch->hide();
 		QueueState().changes.events(
 		) | rpl::on_next([=] {
 			if (_tab == Tab::Queue) {
@@ -3643,7 +3726,7 @@ protected:
 		} else {
 			const auto w = std::min(std::max(width() - 2 * margin, 0), s(960));
 			result.center = QRect((width() - w) / 2, top, w, areaHeight);
-			result.scrollTop = result.center.y() + ((_tab == Tab::Search) ? s(170) : s(72));
+			result.scrollTop = result.center.y() + ((_tab == Tab::Search) ? (_searchChats ? s(168) : s(216)) : s(72));
 		}
 
 		// Внизу: постоянная полоса управления.
@@ -3784,22 +3867,19 @@ protected:
 		}
 		{
 			const auto inner = std::max(layout.center.width() - s(48), 0);
+			const auto left = layout.center.x() + s(24);
 			const auto fieldHeight = s(44);
 			const auto fieldTop = layout.center.y() + s(64);
-			_searchField->setGeometry(layout.center.x() + s(24), fieldTop, inner, fieldHeight);
+			_searchField->setGeometry(left, fieldTop, inner, fieldHeight);
 			auto font = st::normalFont->f;
 			font.setPixelSize(s(15));
 			_searchField->setFont(font);
-			_searchField->setStyleSheet(u"QLineEdit { background: rgba(255,255,255,0.12); color: white; border: none; border-radius: %1px; padding: 0 %2px; selection-background-color: #0a84ff; }"_q
-				.arg(fieldHeight / 2).arg(s(18)));
-			const auto sourceWidth = std::min(s(140), std::max((inner - s(8)) / 2, 0));
-			for (auto i = 0; i != 2; ++i) {
-				_sources[i]->setGeometry(
-					layout.center.x() + s(24) + i * (sourceWidth + s(8)),
-					fieldTop + fieldHeight + s(10),
-					sourceWidth,
-					s(36));
-			}
+			_searchField->setStyleSheet(u"QLineEdit { background: %3; color: white; border: none; border-radius: %1px; padding: 0 %2px; selection-background-color: #0a84ff; }"_q
+				.arg(fieldHeight / 2)
+				.arg(s(18))
+				.arg(st::windowBgOver->c.name()));
+			_sourceSwitch->setGeometry(left, fieldTop + fieldHeight + s(10), inner, s(40));
+			_kindSwitch->setGeometry(left, fieldTop + fieldHeight + s(10) + s(48), inner, s(40));
 		}
 
 		const auto row = { _shuffle, _previous, _play, _next, _repeat };
@@ -3819,10 +3899,72 @@ protected:
 		RpWidget::resizeEvent(e);
 	}
 
+	void relayout() {
+		auto event = QResizeEvent(size(), size());
+		resizeEvent(&event);
+		update();
+	}
+	void fillAlbums() {
+		const auto tr = [](const char *text) {
+			return QString::fromUtf8(Mokagram::Lang::Tr(text));
+		};
+		if (_openedAlbum) {
+			_tabList->add(object_ptr<AlbumBar>(
+				_tabList,
+				_albumTitle,
+				crl::guard(this, [=] {
+					_openedAlbum = false;
+					rebuildTab();
+				}),
+				crl::guard(this, [=] { PlayAll(_albumTracks); })));
+			if (_albumTracks.empty()) {
+				_tabNote = _searchStatus;
+			}
+			QueueState().results = _albumTracks;
+			for (auto i = 0; i != int(_albumTracks.size()); ++i) {
+				const auto row = _tabList->add(object_ptr<Row>(
+					_tabList,
+					_controller,
+					_albumTracks[i],
+					i,
+					RowMode::Results));
+				row->setOnGlass(true);
+			}
+			return;
+		}
+		if (_albums.empty()) {
+			_tabNote = _searchStatus.isEmpty()
+				? tr("Введи название альбома или исполнителя.")
+				: _searchStatus;
+			return;
+		}
+		for (const auto &album : _albums) {
+			_tabList->add(object_ptr<AlbumRow>(_tabList, album, crl::guard(this, [=] {
+				_openedAlbum = true;
+				_albumTitle = album.title;
+				_albumTracks.clear();
+				_searchStatus = QString::fromUtf8(Mokagram::Lang::Tr("Загружаю…"));
+				const auto generation = ++_searchGen;
+				AlbumTracks(album.id, crl::guard(this, [=](std::vector<Track> tracks, QString error) {
+					if (generation != _searchGen) {
+						return;
+					}
+					_albumTracks = std::move(tracks);
+					_searchStatus = error;
+					if (_tab == Tab::Search) {
+						rebuildTab();
+					}
+				}));
+				rebuildTab();
+			})));
+		}
+	}
+
 	void runSearch() {
 		const auto query = _searchField->text().trimmed();
 		const auto generation = ++_searchGen;
 		_searchTracks.clear();
+		_albums.clear();
 		_chatSearch = nullptr;
 		_searchStatus = query.isEmpty()
 			? QString()
@@ -3849,6 +3991,21 @@ protected:
 						crl::guard(this, finish));
 					_chatSearch->search(query);
 				}
+			} else if (_searchKind == 1) {
+				SearchAlbums(query, 20, crl::guard(this, [=](std::vector<Album> albums, QString error) {
+					if (generation != _searchGen) {
+						return;
+					}
+					_albums = std::move(albums);
+					_searchStatus = !error.isEmpty()
+						? error
+						: _albums.empty()
+						? QString::fromUtf8(Mokagram::Lang::Tr("Ничего не найдено"))
+						: QString();
+					if (_tab == Tab::Search) {
+						rebuildTab();
+					}
+				}));
 			} else {
 				Search(query, 0, crl::guard(this, [=](SearchResult result) {
 					finish(std::move(result.tracks), result.error);
@@ -3894,8 +4051,8 @@ protected:
 		const auto searching = (_tab == Tab::Search);
 		const auto fresh = searching && !_searchField->isVisible();
 		_searchField->setVisible(searching);
-		_sources[0]->setVisible(searching);
-		_sources[1]->setVisible(searching);
+		_sourceSwitch->setVisible(searching);
+		_kindSwitch->setVisible(searching && !_searchChats);
 		if (fresh) {
 			_searchField->setFocus();
 		}
@@ -3943,7 +4100,9 @@ protected:
 			}
 		} break;
 		case Tab::Search:
-			if (_searchTracks.empty()) {
+			if (_searchKind == 1 && !_searchChats) {
+				fillAlbums();
+			} else if (_searchTracks.empty()) {
 				_tabNote = _searchStatus.isEmpty()
 					? tr("Введи название или исполнителя.")
 					: _searchStatus;
@@ -4363,7 +4522,13 @@ private:
 	Ui::VerticalLayout *_tabList = nullptr;
 	std::array<NavItem*, 6> _nav = {};
 	QLineEdit *_searchField = nullptr;
-	std::array<NavItem*, 2> _sources = {};
+	Segmented *_sourceSwitch = nullptr;
+	Segmented *_kindSwitch = nullptr;
+	std::vector<Album> _albums;
+	std::vector<Track> _albumTracks;
+	QString _albumTitle;
+	bool _openedAlbum = false;
+	int _searchKind = 0;
 	QTimer _searchTimer;
 	std::unique_ptr<ChatMusicSearch> _chatSearch;
 	std::vector<Track> _searchTracks;
