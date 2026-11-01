@@ -54,6 +54,7 @@
 #include "media/player/media_player_instance.h"
 #include "ui/effects/animations.h"
 #include <QtWidgets/QGraphicsEffect>
+#include <QtWidgets/QLineEdit>
 #include <array>
 #include "ui/image/image.h"
 #include "ui/image/image_prepare.h"
@@ -2097,9 +2098,7 @@ private:
 		const auto over = _hover.value(isOver() ? 1. : 0.);
 		const auto down = _press.value(isDown() ? 1. : 0.);
 		const auto play = (_glyph == Glyph::Play);
-		const auto dark = (_glyph == Glyph::Add
-			|| _glyph == Glyph::Queue
-			|| _glyph == Glyph::Collapse);
+		const auto dark = (_glyph == Glyph::Collapse);
 		p.setPen(Qt::NoPen);
 		// Play: тёмный полупрозрачный круг с белым значком, как кнопки в шапке.
 		p.setBrush(play
@@ -3346,16 +3345,32 @@ public:
 			_nav[i] = item;
 		}
 		_nav[0]->setActive(true);
-		_openSearch = Ui::CreateChild<NavItem>(
-			this,
-			QString::fromUtf8(Mokagram::Lang::Tr("Открыть поиск")),
-			true);
-		_openSearch->hide();
-		_openSearch->setClickedCallback([=] {
-			const auto controller = _controller;
-			close();
-			ShowMusicBox(controller);
+		_searchField = Ui::CreateChild<QLineEdit>(this);
+		_searchField->setFrame(false);
+		_searchField->setPlaceholderText(
+			QString::fromUtf8(Mokagram::Lang::Tr("Трек или исполнитель")));
+		_searchField->hide();
+		_searchTimer.setSingleShot(true);
+		_searchTimer.setInterval(kTypingDelay);
+		connect(&_searchTimer, &QTimer::timeout, this, [=] { runSearch(); });
+		connect(_searchField, &QLineEdit::textChanged, this, [=] {
+			_searchTimer.start();
 		});
+		_sources[0] = Ui::CreateChild<NavItem>(this, u"SoundCloud"_q, true);
+		_sources[1] = Ui::CreateChild<NavItem>(
+			this,
+			QString::fromUtf8(Mokagram::Lang::Tr("Мои чаты")),
+			true);
+		for (auto i = 0; i != 2; ++i) {
+			_sources[i]->hide();
+			_sources[i]->setActive(i == (_searchChats ? 1 : 0));
+			_sources[i]->setClickedCallback([=] {
+				_searchChats = (i == 1);
+				_sources[0]->setActive(!_searchChats);
+				_sources[1]->setActive(_searchChats);
+				runSearch();
+			});
+		}
 		QueueState().changes.events(
 		) | rpl::on_next([=] {
 			if (_tab == Tab::Queue) {
@@ -3628,7 +3643,7 @@ protected:
 		} else {
 			const auto w = std::min(std::max(width() - 2 * margin, 0), s(960));
 			result.center = QRect((width() - w) / 2, top, w, areaHeight);
-			result.scrollTop = result.center.y() + s(72);
+			result.scrollTop = result.center.y() + ((_tab == Tab::Search) ? s(170) : s(72));
 		}
 
 		// Внизу: постоянная полоса управления.
@@ -3767,11 +3782,25 @@ protected:
 				x += w + gap;
 			}
 		}
-		_openSearch->setGeometry(
-			layout.center.x() + s(24),
-			layout.scrollTop + s(88),
-			std::min(s(200), std::max(layout.center.width() - s(48), 0)),
-			s(44));
+		{
+			const auto inner = std::max(layout.center.width() - s(48), 0);
+			const auto fieldHeight = s(44);
+			const auto fieldTop = layout.center.y() + s(64);
+			_searchField->setGeometry(layout.center.x() + s(24), fieldTop, inner, fieldHeight);
+			auto font = st::normalFont->f;
+			font.setPixelSize(s(15));
+			_searchField->setFont(font);
+			_searchField->setStyleSheet(u"QLineEdit { background: rgba(255,255,255,0.12); color: white; border: none; border-radius: %1px; padding: 0 %2px; selection-background-color: #0a84ff; }"_q
+				.arg(fieldHeight / 2).arg(s(18)));
+			const auto sourceWidth = std::min(s(140), std::max((inner - s(8)) / 2, 0));
+			for (auto i = 0; i != 2; ++i) {
+				_sources[i]->setGeometry(
+					layout.center.x() + s(24) + i * (sourceWidth + s(8)),
+					fieldTop + fieldHeight + s(10),
+					sourceWidth,
+					s(36));
+			}
+		}
 
 		const auto row = { _shuffle, _previous, _play, _next, _repeat };
 		auto widths = 0;
@@ -3788,6 +3817,47 @@ protected:
 			button->raise();
 		}
 		RpWidget::resizeEvent(e);
+	}
+
+	void runSearch() {
+		const auto query = _searchField->text().trimmed();
+		const auto generation = ++_searchGen;
+		_searchTracks.clear();
+		_chatSearch = nullptr;
+		_searchStatus = query.isEmpty()
+			? QString()
+			: QString::fromUtf8(Mokagram::Lang::Tr("Ищу…"));
+		const auto finish = [=](std::vector<Track> tracks, QString error) {
+			if (generation != _searchGen) {
+				return;
+			}
+			_searchTracks = std::move(tracks);
+			_searchStatus = !error.isEmpty()
+				? error
+				: _searchTracks.empty()
+				? QString::fromUtf8(Mokagram::Lang::Tr("Ничего не найдено"))
+				: QString();
+			if (_tab == Tab::Search) {
+				rebuildTab();
+			}
+		};
+		if (!query.isEmpty()) {
+			if (_searchChats) {
+				if (const auto session = QueueState().session.get()) {
+					_chatSearch = std::make_unique<ChatMusicSearch>(
+						session,
+						crl::guard(this, finish));
+					_chatSearch->search(query);
+				}
+			} else {
+				Search(query, 0, crl::guard(this, [=](SearchResult result) {
+					finish(std::move(result.tracks), result.error);
+				}));
+			}
+		}
+		if (_tab == Tab::Search) {
+			rebuildTab();
+		}
 	}
 
 	void setTab(Tab tab) {
@@ -3821,7 +3891,14 @@ protected:
 		_rebuiltTab = _tab;
 		_tabList->clear();
 		_tabNote.clear();
-		_openSearch->setVisible(_tab == Tab::Search);
+		const auto searching = (_tab == Tab::Search);
+		const auto fresh = searching && !_searchField->isVisible();
+		_searchField->setVisible(searching);
+		_sources[0]->setVisible(searching);
+		_sources[1]->setVisible(searching);
+		if (fresh) {
+			_searchField->setFocus();
+		}
 		const auto tr = [](const char *text) {
 			return QString::fromUtf8(Mokagram::Lang::Tr(text));
 		};
@@ -3866,7 +3943,13 @@ protected:
 			}
 		} break;
 		case Tab::Search:
-			_tabNote = tr("Поиск по чатам и SoundCloud пока в окне поиска.");
+			if (_searchTracks.empty()) {
+				_tabNote = _searchStatus.isEmpty()
+					? tr("Введи название или исполнителя.")
+					: _searchStatus;
+			} else {
+				addRows(_searchTracks);
+			}
 			break;
 		case Tab::Library: {
 			const auto liked = LikedTracks();
@@ -3988,16 +4071,6 @@ protected:
 			p.translate(coverRect.center());
 			p.scale(scale, scale);
 			p.translate(-coverRect.center());
-			// Мягкая тень под обложкой: стопка полупрозрачных скруглений.
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(0, 0, 0, 12));
-			for (auto i = 1; i <= 8; ++i) {
-				const auto grow = s(3) * i;
-				p.drawRoundedRect(
-					coverRect.adjusted(-grow, -grow + s(14), grow, grow + s(14)),
-					s(20) + grow,
-					s(20) + grow);
-			}
 			auto path = QPainterPath();
 			path.addRoundedRect(coverRect, s(22), s(22));
 			p.setClipPath(path);
@@ -4045,7 +4118,7 @@ protected:
 		// Полоса управления внизу.
 		p.setPen(Qt::NoPen);
 		p.setBrush(QColor(255, 255, 255, 16));
-		p.drawRoundedRect(layout.bar, s(22), s(22));
+		p.drawRoundedRect(layout.bar, layout.bar.height() / 2., layout.bar.height() / 2.);
 		if (!layout.ultra) {
 			p.save();
 			auto path = QPainterPath();
@@ -4289,7 +4362,14 @@ private:
 	const not_null<Ui::ScrollArea*> _tabScroll;
 	Ui::VerticalLayout *_tabList = nullptr;
 	std::array<NavItem*, 6> _nav = {};
-	NavItem *_openSearch = nullptr;
+	QLineEdit *_searchField = nullptr;
+	std::array<NavItem*, 2> _sources = {};
+	QTimer _searchTimer;
+	std::unique_ptr<ChatMusicSearch> _chatSearch;
+	std::vector<Track> _searchTracks;
+	QString _searchStatus;
+	int _searchGen = 0;
+	bool _searchChats = false;
 	Tab _tab = Tab::Now;
 	Tab _rebuiltTab = Tab::Queue;
 	QString _tabNote;
