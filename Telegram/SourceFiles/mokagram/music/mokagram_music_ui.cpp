@@ -2670,7 +2670,7 @@ private:
 	}
 	[[nodiscard]] QFont lineFont() const {
 		auto font = st::semiboldFont->f;
-		font.setPixelSize(_big ? style::ConvertScale(28) : 19);
+		font.setPixelSize(_big ? style::ConvertScale(34) : 19);
 		if (_big) {
 			font.setWeight(QFont::ExtraBold);
 		}
@@ -3335,9 +3335,9 @@ public:
 		_queueToggle->setClickedCallback([=] { setTab(Tab::Queue); });
 		_play->resize(56, 56);
 		_tabList = _tabScroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_tabScroll));
-		const auto names = std::array<const char*, 5>{
-			"Главная", "Поиск", "Библиотека", "Плейлисты", "Очередь" };
-		for (auto i = 0; i != 5; ++i) {
+		const auto names = std::array<const char*, 6>{
+			"Сейчас играет", "Главная", "Поиск", "Библиотека", "Плейлисты", "Очередь" };
+		for (auto i = 0; i != 6; ++i) {
 			const auto item = Ui::CreateChild<NavItem>(
 				this,
 				QString::fromUtf8(Mokagram::Lang::Tr(names[i])),
@@ -3551,7 +3551,7 @@ protected:
 			update(computeLayout().info);
 		}
 	}
-	enum class Tab { Home, Search, Library, Playlists, Queue };
+	enum class Tab { Now, Home, Search, Library, Playlists, Queue };
 	struct Layout {
 		bool verticalNav = false;
 		bool showRight = false;
@@ -3585,60 +3585,50 @@ protected:
 		const auto margin = s(16);
 		const auto gap = s(12);
 		const auto pad = s(16);
-		result.verticalNav = width() >= s(1100);
-		result.showRight = width() >= s(640);
+		const auto now = (_tab == Tab::Now);
 		const auto barHeight = s(10) + _play->height() + _seek->height() + s(8);
 		result.bar = QRect(
 			margin,
 			height() - margin - barHeight,
 			std::max(width() - 2 * margin, 0),
 			barHeight);
-		const auto top = margin;
-		const auto areaHeight = std::max(result.bar.y() - gap - top, 0);
-		auto left = margin;
-		auto edge = width() - margin;
-		if (result.verticalNav) {
-			result.nav = QRect(left, top, s(190), areaHeight);
-			left = result.nav.x() + result.nav.width() + gap;
-		}
-		if (result.showRight) {
-			const auto w = std::clamp(int(width() * 0.3), s(300), s(420));
-			result.right = QRect(edge - w, top, w, areaHeight);
-			edge = result.right.x() - gap;
-		}
-		result.center = QRect(left, top, std::max(edge - left, 0), areaHeight);
-		result.scrollTop = result.center.y() + (result.verticalNav ? s(72) : s(64));
 
-		// Справа: «Сейчас играет».
-		const auto panelPad = s(20);
-		if (result.showRight) {
-			const auto available = std::max(result.right.width() - 2 * panelPad, 0);
-			const auto side = std::min(
-				available,
-				std::max(std::min(int(areaHeight * 0.32), s(240)), s(96)));
-			result.cover = QRect(
-				result.right.x() + (result.right.width() - side) / 2,
-				result.right.y() + s(64),
-				side,
-				side);
-			result.info = QRect(
-				result.cover.x(),
-				result.cover.y() + side + s(14),
-				side,
-				s(56));
-			const auto lyricsTop = result.info.y() + result.info.height() + s(8);
+		// Сверху ряд вкладок по центру экрана, справа кнопка «свернуть».
+		const auto reserve = margin + _collapse->width() + s(8);
+		const auto navWidth = std::clamp(width() - 2 * reserve, 0, s(900));
+		result.nav = QRect((width() - navWidth) / 2, margin, navWidth, s(40));
+		result.collapse = QPoint(
+			width() - margin - _collapse->width(),
+			margin + (s(40) - _collapse->height()) / 2);
+		const auto top = margin + s(48) + gap;
+		const auto areaHeight = std::max(result.bar.y() - gap - top, 0);
+
+		if (now) {
+			// Обложка слева, текст песни по центру остального экрана.
+			result.showRight = width() >= s(760);
+			auto lyricsLeft = margin;
+			if (result.showRight) {
+				const auto colWidth = std::clamp(int(width() * 0.3), s(300), s(460));
+				result.right = QRect(margin, top, colWidth, areaHeight);
+				const auto side = std::max(std::min({
+					colWidth - 2 * pad,
+					areaHeight - s(14) - s(56) - s(16),
+					s(420) }), s(96));
+				const auto group = side + s(14) + s(56);
+				const auto y = top + std::max((areaHeight - group) / 2, 0);
+				result.cover = QRect(margin + (colWidth - side) / 2, y, side, side);
+				result.info = QRect(result.cover.x(), y + side + s(14), side, s(56));
+				lyricsLeft = margin + colWidth + gap;
+			}
 			result.lyrics = QRect(
-				result.right.x() + s(8),
-				lyricsTop,
-				std::max(result.right.width() - s(16), 0),
-				std::max(result.right.y() + result.right.height() - s(12) - lyricsTop, 0));
-			result.collapse = QPoint(
-				result.right.x() + result.right.width() - s(16) - _collapse->width(),
-				result.right.y() + s(8));
+				lyricsLeft,
+				top,
+				std::max(width() - margin - lyricsLeft, 0),
+				areaHeight);
 		} else {
-			result.collapse = QPoint(
-				result.center.x() + result.center.width() - s(12) - _collapse->width(),
-				result.center.y() + s(8));
+			const auto w = std::min(std::max(width() - 2 * margin, 0), s(960));
+			result.center = QRect((width() - w) / 2, top, w, areaHeight);
+			result.scrollTop = result.center.y() + s(72);
 		}
 
 		// Внизу: постоянная полоса управления.
@@ -3727,7 +3717,7 @@ protected:
 			layout.info.y() + s(32),
 			textWidth(artistFont(), _artist),
 			s(22));
-		if (!layout.showRight) {
+		if (!layout.showRight || _tab != Tab::Now) {
 			return InfoHover::None;
 		}
 		return title.contains(point)
@@ -3755,8 +3745,9 @@ protected:
 			_volume->setGeometry(layout.volume);
 		}
 		_seek->setGeometry(layout.seek);
-		_view->setVisible(layout.showRight);
+		_view->setVisible(_tab == Tab::Now);
 		_view->setGeometry(layout.lyrics);
+		_tabScroll->setVisible(_tab != Tab::Now);
 		_tabScroll->setGeometry(
 			layout.center.x(),
 			layout.scrollTop,
@@ -3764,23 +3755,15 @@ protected:
 			std::max(layout.center.y() + layout.center.height() - layout.scrollTop - s(12), 0));
 		_tabList->resizeToWidth(_tabScroll->width());
 
-		// Навигация: столбец слева или ряд пилюль над списком.
-		if (layout.verticalNav) {
-			auto y = layout.nav.y() + s(8);
-			for (const auto item : _nav) {
-				item->setCentered(false);
-				item->setGeometry(layout.nav.x(), y, layout.nav.width(), s(44));
-				y += s(44) + s(4);
-			}
-		} else {
-			const auto reserved = layout.showRight ? 0 : _collapse->width() + s(8);
-			const auto total = std::max(layout.center.width() - 2 * s(12) - reserved, 0);
+		// Навигация: ряд пилюль сверху по центру.
+		{
 			const auto gap = s(6);
-			const auto w = std::max((total - 4 * gap) / 5, 0);
-			auto x = layout.center.x() + s(12);
+			const auto count = int(_nav.size());
+			const auto w = std::max((layout.nav.width() - (count - 1) * gap) / count, 0);
+			auto x = layout.nav.x();
 			for (const auto item : _nav) {
 				item->setCentered(true);
-				item->setGeometry(x, layout.center.y() + s(12), w, s(40));
+				item->setGeometry(x, layout.nav.y(), w, layout.nav.height());
 				x += w + gap;
 			}
 		}
@@ -3812,14 +3795,17 @@ protected:
 			return;
 		}
 		_tab = tab;
-		for (auto i = 0; i != 5; ++i) {
+		for (auto i = 0; i != 6; ++i) {
 			_nav[i]->setActive(i == int(tab));
 		}
 		rebuildTab();
+		auto event = QResizeEvent(size(), size());
+		resizeEvent(&event);
 	}
 	[[nodiscard]] QString tabTitle() const {
 		const auto text = [&]() -> const char* {
 			switch (_tab) {
+			case Tab::Now: return "Сейчас играет";
 			case Tab::Home: return "Для вас";
 			case Tab::Search: return "Поиск";
 			case Tab::Library: return "Любимые";
@@ -3852,6 +3838,8 @@ protected:
 			}
 		};
 		switch (_tab) {
+		case Tab::Now:
+			break;
 		case Tab::Home: {
 			const auto &queue = QueueState();
 			if (!queue.forYou.empty()) {
@@ -3964,34 +3952,26 @@ protected:
 			return font;
 		};
 
-		// Центр: карточка с открытой вкладкой. Обложка и текст справа лежат прямо на фоне.
-		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(255, 255, 255, 16));
-		p.drawRoundedRect(layout.center, s(22), s(22));
-		if (layout.verticalNav) {
+		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
+		if (_tab != Tab::Now) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(QColor(255, 255, 255, 16));
+			p.drawRoundedRect(layout.center, s(22), s(22));
 			p.setFont(labelFont(19, true));
 			p.setPen(Qt::white);
 			p.drawText(
 				QRect(layout.center.x() + s(24), layout.center.y() + s(16), layout.center.width() - s(48), s(44)),
 				Qt::AlignLeft | Qt::AlignVCenter,
 				tabTitle());
-		}
-		if (!_tabNote.isEmpty()) {
-			p.setFont(labelFont(15, false));
-			p.setPen(QColor(255, 255, 255, 170));
-			const auto noteWidth = std::max(layout.center.width() - s(48), 0);
-			p.drawText(
-				QRect(layout.center.x() + s(24), layout.scrollTop, noteWidth, s(80)),
-				Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-				_tabNote);
-		}
-		if (layout.showRight) {
-			p.setFont(labelFont(17, true));
-			p.setPen(QColor(255, 255, 255, 220));
-			p.drawText(
-				QRect(layout.right.x() + s(20), layout.right.y() + s(8), layout.right.width() - s(100), _collapse->height()),
-				Qt::AlignLeft | Qt::AlignVCenter,
-				QString::fromUtf8(Mokagram::Lang::Tr("Сейчас играет")));
+			if (!_tabNote.isEmpty()) {
+				p.setFont(labelFont(15, false));
+				p.setPen(QColor(255, 255, 255, 170));
+				const auto noteWidth = std::max(layout.center.width() - s(48), 0);
+				p.drawText(
+					QRect(layout.center.x() + s(24), layout.scrollTop, noteWidth, s(80)),
+					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+					_tabNote);
+			}
 		}
 
 		// Обложка: сжимается на паузе, при смене трека плавно перетекает в новую.
@@ -4000,7 +3980,7 @@ protected:
 		const auto fade = _infoFade.value(1.);
 		const auto coverRect = QRectF(layout.cover);
 		const auto drawCover = [&](const QPixmap &pixmap, double opacity) {
-			if (opacity <= 0. || !layout.showRight) {
+			if (opacity <= 0. || !layout.showRight || _tab != Tab::Now) {
 				return;
 			}
 			p.save();
@@ -4038,7 +4018,7 @@ protected:
 				const QString &artist,
 				double opacity,
 				bool current) {
-			if (opacity <= 0. || !layout.showRight) {
+			if (opacity <= 0. || !layout.showRight || _tab != Tab::Now) {
 				return;
 			}
 			auto font = titleFont();
@@ -4308,9 +4288,9 @@ private:
 	const not_null<SeekBar*> _volume;
 	const not_null<Ui::ScrollArea*> _tabScroll;
 	Ui::VerticalLayout *_tabList = nullptr;
-	std::array<NavItem*, 5> _nav = {};
+	std::array<NavItem*, 6> _nav = {};
 	NavItem *_openSearch = nullptr;
-	Tab _tab = Tab::Home;
+	Tab _tab = Tab::Now;
 	Tab _rebuiltTab = Tab::Queue;
 	QString _tabNote;
 	bool _homeLoading = false;
