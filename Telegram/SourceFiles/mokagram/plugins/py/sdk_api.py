@@ -1065,6 +1065,135 @@ class _Http:
 http = _Http()
 
 
+# ---- оверлеи: питомец и прочее поверх окна клиента ----
+
+def _argb(color):
+    """'#rrggbb' / '#aarrggbb' / (r, g, b[, a]) / int / None (прозрачный) -> 0xAARRGGBB."""
+    if color is None or color == '' or color == ' ':
+        return 0
+    if isinstance(color, int):
+        return color & 0xFFFFFFFF
+    if isinstance(color, (tuple, list)):
+        r, g, b = (int(c) & 255 for c in color[:3])
+        a = int(color[3]) & 255 if len(color) > 3 else 255
+        return (a << 24) | (r << 16) | (g << 8) | b
+    t = str(color).lstrip('#')
+    if len(t) == 6:
+        return 0xFF000000 | int(t, 16)
+    if len(t) == 8:
+        return int(t, 16)
+    return 0
+
+
+class Overlay:
+    """Прозрачный слой поверх окна. click_through=True: клики проходят сквозь слой;
+    False: слой ловит указатель в своём прямоугольнике (для питомца, которого можно потрогать)."""
+
+    def __init__(self, entry, oid, w, h):
+        self._entry = entry
+        self.id = oid
+        self.size = (w, h)
+
+    def _call(self, op, args):
+        entry = _gate('overlay.' + op, 'ui')
+        if entry is None or entry is not self._entry:
+            return None
+        args['pid'] = entry['id']
+        args['id'] = self.id
+        res = _native('overlay_' + op, args)
+        return res if res.get('ok') else None
+
+    def set_sprite(self, grid, palette=None, scale=1):
+        """grid: список строк ('..ab..') с palette {символ: цвет} либо список строк-списков цветов.
+        Рисуется нижней кромкой слоя по центру, пиксели увеличиваются в scale раз без сглаживания."""
+        if not _limit(self._entry, 'overlay_sprite', 120, 1):
+            return None
+        rows = [list(r) if isinstance(r, str) else list(r) for r in grid][:256]
+        w = max((len(r) for r in rows), default=0)
+        if not rows or w == 0 or w > 256:
+            return None
+        pal = palette or {}
+        data = []
+        for r in rows:
+            for i in range(w):
+                c = r[i] if i < len(r) else None
+                data.append(_argb(pal.get(c) if isinstance(pal, dict) and not isinstance(c, (int, tuple)) else c))
+        return self._call('sprite', {'sw': w, 'sh': len(rows), 'data': data, 'scale': int(scale)})
+
+    def move(self, x, y):
+        if not _limit(self._entry, 'overlay_move', 120, 1):
+            return None
+        return self._call('move', {'x': int(x), 'y': int(y)})
+
+    def say(self, text, ms=3000):
+        """Пузырь реплики над питомцем."""
+        if not _limit(self._entry, 'overlay_say', 20, 10):
+            return None
+        return self._call('say', {'text': str(text), 'ms': int(ms)})
+
+    def on_tick(self, fn, fps=30):
+        """fn(dt_ms) каждый кадр (5..60 fps). fn=None выключает."""
+        cb = _h['register_cb'](self._entry, lambda p: fn(int(p.get('dt', 0)))) if fn else ''
+        return self._call('cb', {'kind': 'tick', 'cb': cb, 'fps': int(fps)})
+
+    def on_pointer(self, fn):
+        """fn(event): event = {kind: down|move|up|double, x, y (в окне), local_x, local_y,
+        vx, vy (пикселей в секунду), button}. Работает при click_through=False."""
+        cb = _h['register_cb'](self._entry, lambda p: fn(p)) if fn else ''
+        return self._call('cb', {'kind': 'pointer', 'cb': cb})
+
+    def destroy(self):
+        self._call('destroy', {})
+        self._entry.get('overlays', {}).pop(self.id, None)
+
+
+class _OverlayApi:
+    def create(self, oid, w=64, h=64, click_through=True):
+        entry = _gate('overlay.create', 'ui')
+        if entry is None:
+            return None
+        oid = str(oid)[:32]
+        res = _native('overlay_create', {'pid': entry['id'], 'id': oid, 'w': int(w), 'h': int(h),
+                                         'click_through': bool(click_through)})
+        _h['audit'](entry, 'overlay.create', oid, 'allowed' if res.get('ok') else 'failed')
+        if not res.get('ok'):
+            _h['say']('[%s] оверлей не создан: %s' % (entry['id'], res.get('error', '')))
+            return None
+        ov = Overlay(entry, oid, int(w), int(h))
+        entry.setdefault('overlays', {})[oid] = ov
+        return ov
+
+
+overlay = _OverlayApi()
+
+
+class _Window:
+    def bounds(self):
+        """Размер области окна клиента {w, h} в пикселях (для границ ходьбы питомца)."""
+        entry = _gate('window.bounds', 'ui')
+        if entry is None:
+            return None
+        res = _native('window_bounds', {})
+        return {'w': res['w'], 'h': res['h']} if res.get('ok') else None
+
+
+window = _Window()
+
+
+class _Theme:
+    def get(self):
+        """{dark, window_bg, window_fg, window_sub_fg, accent} цветами '#aarrggbb'."""
+        entry = _gate('theme.get', 'ui')
+        if entry is None:
+            return None
+        res = _native('theme_get', {})
+        res.pop('ok', None)
+        return res or None
+
+
+theme = _Theme()
+
+
 # =====================================================================================
 # Обёртки над invoke_tl: короткие имена. Каждое действие под своим правом и в журнале.
 # chats.manage: join/leave/invite/kick/ban/restrict/edit_admin; chats.settings: mute/archive/folders/set_typing;
