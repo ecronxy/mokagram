@@ -6,6 +6,7 @@
 """
 import json, os, time, collections, threading
 
+_DEV = bool(os.environ.get('MOKAGRAM_PLUGIN_DEBUG'))   # режим разработчика: лимиты частоты выключены
 _h = {}   # функции хоста, кладёт host.py: caller, granted, audit, say, native, data_dir
 
 
@@ -32,6 +33,8 @@ def _gate(op, perm, target='', rate=True):
 
 
 def _limit(entry, name, count, window):
+    if _DEV:
+        return True
     # Скользящее окно: не больше count вызовов за window секунд.
     q = entry.setdefault('rate', {}).setdefault(name, collections.deque())
     now = time.monotonic()
@@ -1231,6 +1234,63 @@ class _Theme:
 
 
 theme = _Theme()
+
+
+class _Ui:
+    """Геометрия интерфейса клиента в координатах окна (те же, что у overlay.move и window.bounds)."""
+
+    def _rects(self, what, name):
+        entry = _gate('ui.' + name, 'ui')
+        if entry is None or not _limit(entry, 'ui_rects', 30, 1):
+            return None
+        res = _native('ui_rects', {'what': what})
+        return res if res.get('ok') else None
+
+    def message_rects(self):
+        """Видимые сообщения: [{id, peer, out, x, y, w, h}] (прямоугольник строки сообщения по ширине ленты)."""
+        res = self._rects('messages', 'message_rects')
+        return res.get('items', []) if res else []
+
+    def composer_rect(self):
+        """Поле ввода {x, y, w, h} или None, если чат не открыт."""
+        res = self._rects('composer', 'composer_rect')
+        return res.get('rect') if res and res.get('visible') else None
+
+    def header_rect(self):
+        """Шапка открытого чата {x, y, w, h} или None."""
+        res = self._rects('header', 'header_rect')
+        return res.get('rect') if res and res.get('visible') else None
+
+    def history_rect(self):
+        """Лента сообщений {x, y, w, h} или None."""
+        res = self._rects('history', 'history_rect')
+        return res.get('rect') if res and res.get('visible') else None
+
+    def elements(self):
+        """Видимые кнопки и иконки: [{id, kind, hidden, x, y, w, h}]. id действует до следующего вызова elements()."""
+        entry = _gate('ui.elements', 'ui')
+        if entry is None or not _limit(entry, 'ui_elements', 10, 1):
+            return []
+        res = _native('ui_elements', {})
+        return res.get('items', []) if res.get('ok') else []
+
+    def hide(self, element_id):
+        """Прячет кнопку (она остаётся на месте, но невидима и не нажимается). Вернуть: show()."""
+        entry = _gate('ui.hide', 'ui')
+        if entry is None:
+            return False
+        res = _native('ui_hide', {'element': int(element_id)})
+        _h['audit'](entry, 'ui.hide', str(element_id), 'allowed' if res.get('ok') else 'failed')
+        return bool(res.get('ok'))
+
+    def show(self, element_id):
+        entry = _gate('ui.show', 'ui')
+        if entry is None:
+            return False
+        return bool(_native('ui_show', {'element': int(element_id)}).get('ok'))
+
+
+ui = _Ui()
 
 
 # =====================================================================================

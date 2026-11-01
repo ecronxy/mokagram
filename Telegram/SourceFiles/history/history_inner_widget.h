@@ -112,6 +112,14 @@ class HistoryInner
 public:
 	using Element = HistoryView::Element;
 
+	// mokagram: видимые сообщения (id, прямоугольник в координатах виджета) для API плагинов.
+	struct MokaItemRect {
+		FullMsgId id;
+		QRect rect;
+		bool out = false;
+	};
+	[[nodiscard]] std::vector<MokaItemRect> mokagramVisibleItems() const;
+
 	HistoryInner(
 		not_null<HistoryWidget*> historyWidget,
 		not_null<Ui::ElasticScroll*> scroll,
