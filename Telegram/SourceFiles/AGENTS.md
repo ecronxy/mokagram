@@ -334,6 +334,10 @@ This atlas divides Telegram Desktop's sources into named areas, ordered from fou
 
 ## Features: media and calls
 
+### mokagram — custom client features
+- Paths: `SourceFiles/mokagram/`
+- Client-specific settings and localization, plugin hosting and catalog, music discovery, lyrics and motion artwork, inline calculations and conversions, saved history, privacy tools and visual customization. Keep pure parsing in feature modules and UI integration at the existing native feature entry points. Inline results belong in `mokagram/inline`, music metadata and motion protocols in `mokagram/music`, and plugin permissions and sources in `mokagram/plugins`. Common Telegram data and media handling stays in its native area.
+
 ### media/view — media viewer
 - Paths: `SourceFiles/media/view/`
 - The full-window viewer for photos, videos, documents and theme previews with its OpenGL, RHI, raster and Metal renderers, playback controls, album strip, sponsored messages, recognized-text selection and picture-in-picture. It hosts stories and live streams but must not own their logic.
@@ -344,7 +348,7 @@ This atlas divides Telegram Desktop's sources into named areas, ordered from fou
 
 ### mokagram/music — music library and player additions
 - Paths: `SourceFiles/mokagram/music/`
-- SoundCloud and Telegram music queues, library UI, full-screen playback, lyrics and automatic Canvas matching by artist and title. Canvas lookup and bounded in-memory caching live in `mokagram_music_canvas.*`; silent video decoding and looping remain in `media/streaming/`. Canvas fills a portrait player card with overlaid track details; missing or failed lookups preserve the cover, and the blurred background stays static.
+- SoundCloud and Telegram music queues, library UI, full-screen playback, lyrics and automatic Canvas matching by artist and title. Canvas lookup and bounded in-memory caching live in `mokagram_music_canvas.*`; silent video decoding and looping remain in `media/streaming/`. Canvas fills a portrait player card with overlaid track details; authenticated Spotify video, the public catalog and Apple motion artwork share that card, with a still cover on failure. The blurred backdrop blends on track changes and may add an animated colour glow. Motion request contexts cancel network work before job teardown.
 
 ### media/stories — stories viewer
 - Paths: `SourceFiles/media/stories/`
