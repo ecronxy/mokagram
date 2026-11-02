@@ -590,11 +590,11 @@ public:
 		const auto &font = st::normalFont;
 		auto x = 0;
 		for (const auto &name : _names) {
-			const auto w = font->width(name) + 28;
+			const auto w = ((font->width(name) + 32 + 3) / 4) * 4;
 			_rects.push_back(QRect(x, 0, w, 32));
 			x += w + 8;
 		}
-		resize(x, 32);
+		resize(std::max(x - 8, 0), 32);
 	}
 
 	void setCurrent(int current) {
@@ -610,9 +610,9 @@ protected:
 		for (auto i = 0; i != int(_rects.size()); ++i) {
 			const auto active = (i == _current);
 			p.setPen(Qt::NoPen);
-			p.setBrush(active ? st::windowBgActive : st::windowBgOver);
-			p.drawRoundedRect(_rects[i], 16, 16);
-			p.setPen(active ? st::windowFgActive : st::windowFg);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(_rects[i], 8, 8);
+			p.setPen(active ? st::windowActiveTextFg : st::windowSubTextFg);
 			p.drawText(_rects[i], Qt::AlignCenter, _names[i]);
 		}
 	}
@@ -641,7 +641,7 @@ public:
 	: RpWidget(parent)
 	, _current(current)
 	, _changed(std::move(changed)) {
-		resize(int(Gradients().size() + 1) * 38 + 2, 32);
+		resize(int(Gradients().size() + 1) * 40, 32);
 	}
 
 	void refreshCustom() {
@@ -654,7 +654,7 @@ protected:
 		auto hq = PainterHighQualityEnabler(p);
 		const auto count = int(Gradients().size());
 		for (auto i = 0; i != count + 1; ++i) {
-			const auto r = QRectF(i * 38 + 5, 5, 22, 22);
+			const auto r = QRectF(i * 40 + 4, 4, 24, 24);
 			const auto index = (i < count) ? i : kCustomBg;
 			auto a = QColor();
 			auto b = QColor();
@@ -680,7 +680,7 @@ protected:
 		}
 	}
 	void mousePressEvent(QMouseEvent *e) override {
-		const auto i = e->pos().x() / 38;
+		const auto i = e->pos().x() / 40;
 		const auto count = int(Gradients().size());
 		if (i >= 0 && i <= count) {
 			_current = (i < count) ? i : kCustomBg;
@@ -1073,8 +1073,14 @@ void ShowQuoteBoxNow(
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Скриншот сообщений"))));
-		box->setWidth(620);
+		box->setWidth(600);
 		const auto layout = box->verticalLayout();
+		const auto addTitle = [=](QString text) {
+			const auto title = layout->add(
+				object_ptr<Ui::FlatLabel>(layout, text, st::defaultSubsectionTitle),
+				QMargins(24, 16, 24, 8));
+			title->setTextColorOverride(st::windowSubTextFg->c);
+		};
 		const auto masks = std::make_shared<std::vector<MaskRect>>();
 		const auto maskKind = std::make_shared<int>(0);
 		const auto result = std::make_shared<Composed>();
@@ -1082,7 +1088,7 @@ void ShowQuoteBoxNow(
 		const auto shownFor = std::make_shared<QImage>();
 		const auto preview = layout->add(
 			object_ptr<PreviewWidget>(layout),
-			QMargins(24, 8, 24, 8));
+			QMargins(24, 8, 24, 16));
 		preview->setCursor(style::cur_cross);
 		const auto drag = std::make_shared<std::pair<bool, QPointF>>(false, QPointF());
 		const auto dragRect = std::make_shared<QRectF>();
@@ -1171,7 +1177,7 @@ void ShowQuoteBoxNow(
 			QMargins(24, 0, 24, 8));
 		Q_UNUSED(hint);
 
-		Ui::AddSubsectionTitle(layout, rpl::single(U(Mokagram::Lang::Tr("Фон"))));
+		addTitle(U(Mokagram::Lang::Tr("Фон")));
 		layout->add(
 			object_ptr<Swatches>(layout, S::Int(u"quote.bg"_q), [=](int i) {
 				S::SetInt(u"quote.bg"_q, i);
@@ -1180,30 +1186,30 @@ void ShowQuoteBoxNow(
 					ShowCustomBg(refresh);
 				}
 			}),
-			QMargins(24, 4, 24, 8));
-		Ui::AddSubsectionTitle(layout, rpl::single(U(Mokagram::Lang::Tr("Карточка"))));
+			QMargins(24, 0, 24, 8));
+		addTitle(U(Mokagram::Lang::Tr("Карточка")));
 		layout->add(
 			object_ptr<Pills>(layout, QStringList{ U(Mokagram::Lang::Tr("Тёмная")), U(Mokagram::Lang::Tr("Светлая")), U(Mokagram::Lang::Tr("Без карточки")) }, S::Int(u"quote.theme"_q), [=](int i) {
 				S::SetInt(u"quote.theme"_q, i);
 				refresh();
 			}),
-			QMargins(24, 4, 24, 8));
-		Ui::AddSubsectionTitle(layout, rpl::single(U(Mokagram::Lang::Tr("Чем скрывать"))));
+			QMargins(24, 0, 24, 8));
+		addTitle(U(Mokagram::Lang::Tr("Чем скрывать")));
 		layout->add(
 			object_ptr<Pills>(layout, QStringList{ U(Mokagram::Lang::Tr("Размытие")), U(Mokagram::Lang::Tr("Пиксели")), U(Mokagram::Lang::Tr("Заливка")) }, 0, [=](int i) {
 				*maskKind = i;
 			}),
-			QMargins(24, 4, 24, 8));
+			QMargins(24, 0, 24, 8));
 		const auto shadow = layout->add(
 			object_ptr<Ui::Checkbox>(layout, U(Mokagram::Lang::Tr("Тень под карточкой")), S::Bool(u"quote.shadow"_q), st::defaultCheckbox),
-			QMargins(24, 2, 24, 8));
+			QMargins(24, 8, 24, 8));
 		shadow->checkedChanges() | rpl::on_next([=](bool on) {
 			S::SetBool(u"quote.shadow"_q, on);
 			refresh();
 		}, shadow->lifetime());
 		const auto watermark = layout->add(
 			object_ptr<Ui::Checkbox>(layout, U(Mokagram::Lang::Tr("Подпись mokaGram")), S::Bool(u"quote.watermark"_q), st::defaultCheckbox),
-			QMargins(24, 2, 24, 8));
+			QMargins(24, 8, 24, 8));
 		watermark->checkedChanges() | rpl::on_next([=](bool on) {
 			S::SetBool(u"quote.watermark"_q, on);
 			refresh();
