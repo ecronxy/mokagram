@@ -437,6 +437,11 @@ std::string ParseMetadataJson(const std::string &source) {
 	return json;
 }
 
+std::string RequestInfoJson(const std::string &encoded) {
+	const auto gil = Gil();
+	return CallStr("_moka_request_info", { encoded });
+}
+
 std::string LoadFile(const std::string &fileName, LogFn log) {
 	if (!_started && Start(log) < 0) {
 		return {};

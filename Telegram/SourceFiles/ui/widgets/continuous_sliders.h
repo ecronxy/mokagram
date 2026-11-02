@@ -165,6 +165,7 @@ public:
 		update();
 	}
 	void disablePaint(bool disabled);
+	void setWavy(bool enabled, bool playing);
 
 	template <
 		typename Value,
@@ -269,6 +270,9 @@ private:
 	QRegion _dividerExclusion;
 	QSize _dividerExclusionSize;
 	ColorOverrides _overrides;
+	Animations::Basic _waveAnimation;
+	bool _wavy = false;
+	bool _wavePlaying = false;
 
 };
 

@@ -12,6 +12,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class History;
 
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace Dialogs {
 class MainList;
 class Key;
@@ -47,7 +51,7 @@ public:
 		NoMuted     = (1 << 5),
 		NoRead      = (1 << 6),
 		NoArchived  = (1 << 7),
-		RulesMask   = ((1 << 8) - 1),
+		RulesMask   = ((1 << 8) - 1) | (1 << 13),
 
 		Chatlist    = (1 << 8),
 		HasMyLinks  = (1 << 9),
@@ -55,6 +59,7 @@ public:
 
 		NewChats      = (1 << 11), // Telegram Business exceptions.
 		ExistingChats = (1 << 12),
+		OnlyManaged   = (1 << 13),
 	};
 	friend constexpr inline bool is_flag_type(Flag) { return true; };
 	using Flags = base::flags<Flag>;
@@ -124,6 +129,11 @@ inline bool operator==(const ChatFilter &a, const ChatFilter &b) {
 inline bool operator!=(const ChatFilter &a, const ChatFilter &b) {
 	return !(a == b);
 }
+
+void SaveChatFilterOnlyManaged(
+	not_null<Main::Session*> session,
+	FilterId id,
+	bool enabled);
 
 struct ChatFilterLink {
 	FilterId id = 0;
@@ -265,6 +275,7 @@ private:
 	base::flat_map<FilterId, MoreChatsData> _moreChatsData;
 	rpl::event_stream<FilterId> _moreChatsUpdated;
 	base::Timer _moreChatsTimer;
+	rpl::lifetime _managedFiltersLifetime;
 
 };
 

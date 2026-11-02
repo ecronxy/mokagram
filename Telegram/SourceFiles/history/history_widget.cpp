@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
+#include "mokagram/inline/mokagram_inline_ui.h"
 #include "mokagram/effects/mokagram_effects.h"
 #include <QtWidgets/QGraphicsEffect>
 
@@ -509,6 +510,7 @@ HistoryWidget::HistoryWidget(
 	setupGiftToChannelButton();
 	setupDirectMessageButton();
 	_reportMessages->addClickHandler([=] { reportSelectedMessages(); });
+	Mokagram::Inline::SetupInlineResults(_field.data());
 	_field->submits(
 	) | rpl::on_next([=](Qt::KeyboardModifiers modifiers) {
 		sendWithModifiers(modifiers);

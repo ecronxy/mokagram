@@ -663,6 +663,10 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 					updated = row.filter;
 				}
 			}
+			Data::SaveChatFilterOnlyManaged(
+				session,
+				newId,
+				!removed && !!(row.filter.flags() & Flag::OnlyManaged));
 			const auto tl = removed
 				? MTPDialogFilter()
 				: row.filter.tl(newId);

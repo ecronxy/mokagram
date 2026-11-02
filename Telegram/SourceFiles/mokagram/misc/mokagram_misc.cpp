@@ -5,6 +5,7 @@
 // Mokagram: мелочи (лимит аккаунтов, стикер из фото, владелец пака, название клиента).
 #include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "lang/translate_external_provider.h"
 #include "lang/lang_keys.h"
 #include "mokagram/misc/mokagram_datereg.h"
 #include "mokagram/misc/mokagram_ping.h"
@@ -202,6 +203,83 @@ void RegisterSettings() {
 		.action = [] { Stars::ShowSpendingStatsBox(); },
 	});
 	Guard::RegisterSettings();
+	Settings::Register({
+		.key = u"documents.pdf"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Документы")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Встроенный просмотрщик PDF")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = true,
+		.category = u"chats"_q,
+	});
+	Settings::Register({
+		.key = u"plugins.sources"_q,
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.hidden = true,
+	});
+	const auto inlineEntry = [](Settings::Entry entry) {
+		entry.section = QString::fromUtf8(Mokagram::Lang::Tr("Результаты в поле ввода"));
+		entry.category = u"chats"_q;
+		entry.sectionIcon = u"chats"_q;
+		Settings::Register(std::move(entry));
+	};
+	inlineEntry({ .key = u"inline.enabled"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Результаты в поле ввода")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Нажмите на подсказку или Tab, чтобы вставить результат.")),
+		.kind = Settings::Kind::Bool, .defaultValue = true });
+	inlineEntry({ .key = u"inline.math"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Математические выражения")),
+		.kind = Settings::Kind::Bool, .defaultValue = true,
+		.dependsOn = u"inline.enabled"_q });
+	inlineEntry({ .key = u"inline.degrees"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Углы в градусах")),
+		.kind = Settings::Kind::Bool, .defaultValue = false,
+		.dependsOn = u"inline.math"_q });
+	inlineEntry({ .key = u"inline.units"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Перевод единиц измерения")),
+		.description = u"10 km to mi · 32 F to C · 1024 KiB to MiB"_q,
+		.kind = Settings::Kind::Bool, .defaultValue = true,
+		.dependsOn = u"inline.enabled"_q });
+	inlineEntry({ .key = u"inline.timezones"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Часовые пояса")),
+		.description = u"14:30 Europe/London to Asia/Novosibirsk"_q,
+		.kind = Settings::Kind::Bool, .defaultValue = true,
+		.dependsOn = u"inline.enabled"_q });
+	inlineEntry({ .key = u"inline.currency"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Курсы валют")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Загружает таблицу курсов Coinbase. Текст сообщения не передаётся. Пример: 100 USD to RUB.")),
+		.kind = Settings::Kind::Bool, .defaultValue = false,
+		.dependsOn = u"inline.enabled"_q });
+	Settings::Register({
+		.key = u"translation.provider"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Перевод сообщений")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сервис перевода")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Google, Microsoft и Яндекс получают текст для перевода. Форматирование сохраняется.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = { u"Telegram"_q, u"Google"_q, u"Microsoft"_q, QString::fromUtf8(Mokagram::Lang::Tr("Яндекс")) },
+		.requiresRestart = true,
+		.category = u"chats"_q,
+	});
+	Settings::Register({
+		.key = u"translation.microsoftCredentials"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Перевод сообщений")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Ключ Microsoft Translator")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Для Microsoft нужен ключ Azure Translator. Ключ хранится только в памяти.")),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.category = u"chats"_q,
+		.action = Ui::ConfigureMicrosoftTranslation,
+	});
+	Settings::Register({
+		.key = u"translation.microsoftRegion"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Перевод сообщений")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Регион Microsoft Translator")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Регион ресурса Azure, если требуется.")),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.category = u"chats"_q,
+	});
 }
 
 void CopyWithAuthor(not_null<HistoryItem*> item) {
