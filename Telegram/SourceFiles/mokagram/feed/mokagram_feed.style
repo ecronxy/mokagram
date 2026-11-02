@@ -1,0 +1,98 @@
+using "ui/basic.style";
+using "ui/widgets/widgets.style";
+using "ui/layers/layers.style";
+using "boxes/boxes.style";
+
+feedHeaderHeight: 104px;
+feedTitleLeft: 56px;
+feedTitleRight: 56px;
+feedTitleTop: 12px;
+feedSummaryTop: 34px;
+feedControlInset: 8px;
+feedFilterTop: 56px;
+feedFilterHeight: 40px;
+feedCategoryMinWidth: 96px;
+feedPostPadding: 16px;
+feedPostGap: 12px;
+feedAvatarSize: 36px;
+feedMetaGap: 4px;
+feedFocusWidth: 2px;
+feedEmptyPadding: 32px;
+feedEmptyGap: 8px;
+feedEmptyActionGap: 20px;
+feedMetaFont: font(12px);
+feedEditorPadding: margins(24px, 12px, 24px, 8px);
+feedEditorHintPadding: margins(24px, 0px, 24px, 8px);
+feedMorePadding: margins(16px, 16px, 16px, 24px);
+
+feedPostText: TextStyle(defaultTextStyle) {
+    lineHeight: 22px;
+}
+feedScroll: ScrollArea(defaultScrollArea) {
+    bg: mainMenuBg;
+}
+feedCategoryButton: RoundButton(defaultLightButton) {
+    height: 36px;
+    radius: 8px;
+    textTop: 8px;
+    textFg: windowFg;
+    textFgOver: windowFg;
+    textBg: mainMenuBg;
+    textBgOver: windowBgOver;
+    icon: icon {{ "intro_country_dropdown", windowSubTextFg }};
+    iconPosition: point(-8px, 16px);
+    style: defaultTextStyle;
+}
+feedAction: RoundButton(defaultActiveButton) {
+    height: 36px;
+    radius: 8px;
+    textTop: 8px;
+}
+feedMoreButton: RoundButton(defaultLightButton) {
+    height: 36px;
+    radius: 8px;
+    textTop: 8px;
+    textBg: mainMenuBg;
+    textBgOver: windowBgOver;
+    textFg: windowActiveTextFg;
+    textFgOver: windowActiveTextFg;
+    style: defaultTextStyle;
+}
+feedEmptyTitle: FlatLabel(defaultFlatLabel) {
+    minWidth: 0px;
+    align: align(center);
+    textFg: windowFg;
+    style: semiboldTextStyle;
+}
+feedEmptyHint: FlatLabel(defaultFlatLabel) {
+    minWidth: 0px;
+    align: align(center);
+    textFg: windowSubTextFg;
+    style: defaultTextStyle;
+}
+feedHint: FlatLabel(defaultFlatLabel) {
+    minWidth: 0px;
+    textFg: windowSubTextFg;
+    style: defaultTextStyle;
+}
+feedNameField: InputField(defaultInputField) {
+    textBg: mainMenuBg;
+    textBgActive: mainMenuBg;
+}
+feedPeerList: PeerList(peerListBox) {
+    bg: mainMenuBg;
+}
+feedSearch: MultiSelect(defaultMultiSelect) {
+    bg: mainMenuBg;
+    scroll: ScrollArea(defaultSolidScroll) {
+        bg: mainMenuBg;
+    }
+    field: InputField(defaultMultiSelectSearchField) {
+        textBg: mainMenuBg;
+        textBgActive: mainMenuBg;
+    }
+}
+feedEditorBox: Box(defaultBox) {
+    bg: mainMenuBg;
+}
+feedReloadIcon: icon {{ "settings/reload", menuIconColor }};
