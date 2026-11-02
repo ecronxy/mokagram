@@ -6,6 +6,7 @@
 """
 import json, os, time, collections, threading
 
+_DEV = bool(os.environ.get('MOKAGRAM_PLUGIN_DEBUG'))   # режим разработчика: лимиты частоты выключены
 _h = {}   # функции хоста, кладёт host.py: caller, granted, audit, say, native, data_dir
 
 
@@ -16,7 +17,7 @@ def _native(op, args):
         return {'ok': False, 'error': 'сбой вызова клиента: %s' % e}
 
 
-def _gate(op, perm, target=''):
+def _gate(op, perm, target='', rate=True):
     entry = _h['caller']()
     if entry is None:
         _h['say']('SDK-вызов %s не из плагина, отказ' % op)
@@ -25,13 +26,15 @@ def _gate(op, perm, target=''):
         _h['audit'](entry, op, target, 'denied')
         _h['say']('[%s] нет права %s для %s' % (entry['id'], perm, op))
         return None
-    if not _limit(entry, '__all', 300, 60):
+    if rate and not _limit(entry, '__all', 300, 60):
         _h['say']('[%s] больше 300 действий в минуту, %s отклонён' % (entry['id'], op))
         return None
     return entry
 
 
 def _limit(entry, name, count, window):
+    if _DEV:
+        return True
     # Скользящее окно: не больше count вызовов за window секунд.
     q = entry.setdefault('rate', {}).setdefault(name, collections.deque())
     now = time.monotonic()
@@ -1063,6 +1066,231 @@ class _Http:
 
 
 http = _Http()
+
+
+# ---- оверлеи: питомец и прочее поверх окна клиента ----
+
+def _argb(color):
+    """'#rrggbb' / '#aarrggbb' / (r, g, b[, a]) / int / None (прозрачный) -> 0xAARRGGBB."""
+    if color is None or color == '' or color == ' ':
+        return 0
+    if isinstance(color, int):
+        return color & 0xFFFFFFFF
+    if isinstance(color, (tuple, list)):
+        r, g, b = (int(c) & 255 for c in color[:3])
+        a = int(color[3]) & 255 if len(color) > 3 else 255
+        return (a << 24) | (r << 16) | (g << 8) | b
+    t = str(color).lstrip('#')
+    if len(t) == 6:
+        return 0xFF000000 | int(t, 16)
+    if len(t) == 8:
+        return int(t, 16)
+    return 0
+
+
+class Overlay:
+    """Прозрачный слой поверх окна. click_through=True: клики проходят сквозь слой;
+    False: слой ловит указатель в своём прямоугольнике (для питомца, которого можно потрогать).
+    Слой можно создавать в on_plugin_load: пока окно клиента не готово, вызовы копятся и
+    применяются сами, как только слой появится (ready=True)."""
+
+    def __init__(self, entry, oid, w, h, click_through):
+        self._entry = entry
+        self.id = oid
+        self.size = (w, h)
+        self.ready = False
+        self._click_through = click_through
+        self._pending = {}
+        self._tries = 0
+
+    def _create(self):
+        if self.ready or self.id not in self._entry.get('overlays', {}):
+            return
+        e = self._entry
+        res = _native('overlay_create', {'pid': e['id'], 'id': self.id, 'w': self.size[0], 'h': self.size[1],
+                                         'click_through': self._click_through})
+        if res.get('ok'):
+            self.ready = True
+            _h['audit'](e, 'overlay.create', self.id, 'allowed')
+            for key in ('sprite', 'move', 'cb_tick', 'cb_pointer'):
+                a = self._pending.pop(key, None)
+                if a:
+                    self._send(a[0], a[1])
+            return
+        self._tries += 1
+        if self._tries > 60 or 'окн' not in str(res.get('error', '')):
+            _h['say']('[%s] оверлей не создан: %s' % (e['id'], res.get('error', '')))
+            e.get('overlays', {}).pop(self.id, None)
+            return
+        cb = _h['register_cb'](e, lambda p: self._create(), True)
+        _native('run_main', {'pid': e['id'], 'cb': cb, 'delay': 1000})
+
+    def _send(self, op, args):
+        args = dict(args)
+        args['pid'] = self._entry['id']
+        args['id'] = self.id
+        res = _native('overlay_' + op, args)
+        return res if res.get('ok') else None
+
+    def _call(self, op, args, key=None):
+        entry = _gate('overlay.' + op, 'ui', rate=(op == 'say'))
+        if entry is None or entry is not self._entry:
+            return None
+        if not self.ready:
+            if key:
+                self._pending[key] = (op, args)
+            return True
+        return self._send(op, args)
+
+    def set_sprite(self, grid, palette=None, scale=1):
+        """grid: список строк ('..ab..') с palette {символ: цвет} либо список строк-списков цветов.
+        Рисуется нижней кромкой слоя по центру, пиксели увеличиваются в scale раз без сглаживания."""
+        if not _limit(self._entry, 'overlay_sprite', 120, 1):
+            return None
+        rows = [list(r) for r in grid][:256]
+        w = max((len(r) for r in rows), default=0)
+        if not rows or w == 0 or w > 256:
+            return None
+        pal = palette or {}
+        data = []
+        for r in rows:
+            for i in range(w):
+                c = r[i] if i < len(r) else None
+                data.append(_argb(pal.get(c) if isinstance(pal, dict) and not isinstance(c, (int, tuple)) else c))
+        return self._call('sprite', {'sw': w, 'sh': len(rows), 'data': data, 'scale': int(scale)}, 'sprite')
+
+    def move(self, x, y):
+        if not _limit(self._entry, 'overlay_move', 120, 1):
+            return None
+        return self._call('move', {'x': int(x), 'y': int(y)}, 'move')
+
+    def say(self, text, ms=3000):
+        """Пузырь реплики над питомцем."""
+        if not _limit(self._entry, 'overlay_say', 20, 10):
+            return None
+        return self._call('say', {'text': str(text), 'ms': int(ms)})
+
+    def on_tick(self, fn, fps=30):
+        """fn(dt_ms) каждый кадр (5..60 fps). fn=None выключает."""
+        cb = _h['register_cb'](self._entry, lambda p: fn(int(p.get('dt', 0)))) if fn else ''
+        return self._call('cb', {'kind': 'tick', 'cb': cb, 'fps': int(fps)}, 'cb_tick')
+
+    def on_pointer(self, fn):
+        """fn(event): event = {kind: down|move|up|double, x, y (в окне), local_x, local_y,
+        vx, vy (пикселей в секунду), button}. Работает при click_through=False."""
+        cb = _h['register_cb'](self._entry, lambda p: fn(p)) if fn else ''
+        return self._call('cb', {'kind': 'pointer', 'cb': cb}, 'cb_pointer')
+
+    def destroy(self):
+        if self.ready:
+            self._call('destroy', {})
+        self._entry.get('overlays', {}).pop(self.id, None)
+        self.ready = False
+
+
+class _OverlayApi:
+    def create(self, oid, w=64, h=64, click_through=True):
+        entry = _gate('overlay.create', 'ui')
+        if entry is None:
+            return None
+        oid = str(oid)[:32]
+        old = entry.setdefault('overlays', {}).get(oid)
+        if old:
+            old.destroy()
+        if len(entry['overlays']) >= 4:
+            _h['say']('[%s] не больше 4 оверлеев' % entry['id'])
+            return None
+        ov = Overlay(entry, oid, max(8, min(int(w), 600)), max(8, min(int(h), 600)), bool(click_through))
+        entry['overlays'][oid] = ov
+        ov._create()
+        return ov
+
+
+overlay = _OverlayApi()
+
+
+class _Window:
+    def bounds(self):
+        """Размер области окна клиента {w, h} в пикселях (для границ ходьбы питомца)."""
+        entry = _gate('window.bounds', 'ui')
+        if entry is None:
+            return None
+        res = _native('window_bounds', {})
+        return {'w': res['w'], 'h': res['h']} if res.get('ok') else None
+
+
+window = _Window()
+
+
+class _Theme:
+    def get(self):
+        """{dark, window_bg, window_fg, window_sub_fg, accent} цветами '#aarrggbb'."""
+        entry = _gate('theme.get', 'ui')
+        if entry is None:
+            return None
+        res = _native('theme_get', {})
+        res.pop('ok', None)
+        return res or None
+
+
+theme = _Theme()
+
+
+class _Ui:
+    """Геометрия интерфейса клиента в координатах окна (те же, что у overlay.move и window.bounds)."""
+
+    def _rects(self, what, name):
+        entry = _gate('ui.' + name, 'ui')
+        if entry is None or not _limit(entry, 'ui_rects', 30, 1):
+            return None
+        res = _native('ui_rects', {'what': what})
+        return res if res.get('ok') else None
+
+    def message_rects(self):
+        """Видимые сообщения: [{id, peer, out, x, y, w, h}] (прямоугольник строки сообщения по ширине ленты)."""
+        res = self._rects('messages', 'message_rects')
+        return res.get('items', []) if res else []
+
+    def composer_rect(self):
+        """Поле ввода {x, y, w, h} или None, если чат не открыт."""
+        res = self._rects('composer', 'composer_rect')
+        return res.get('rect') if res and res.get('visible') else None
+
+    def header_rect(self):
+        """Шапка открытого чата {x, y, w, h} или None."""
+        res = self._rects('header', 'header_rect')
+        return res.get('rect') if res and res.get('visible') else None
+
+    def history_rect(self):
+        """Лента сообщений {x, y, w, h} или None."""
+        res = self._rects('history', 'history_rect')
+        return res.get('rect') if res and res.get('visible') else None
+
+    def elements(self):
+        """Видимые кнопки и иконки: [{id, kind, hidden, x, y, w, h}]. id действует до следующего вызова elements()."""
+        entry = _gate('ui.elements', 'ui')
+        if entry is None or not _limit(entry, 'ui_elements', 10, 1):
+            return []
+        res = _native('ui_elements', {})
+        return res.get('items', []) if res.get('ok') else []
+
+    def hide(self, element_id):
+        """Прячет кнопку (она остаётся на месте, но невидима и не нажимается). Вернуть: show()."""
+        entry = _gate('ui.hide', 'ui')
+        if entry is None:
+            return False
+        res = _native('ui_hide', {'element': int(element_id)})
+        _h['audit'](entry, 'ui.hide', str(element_id), 'allowed' if res.get('ok') else 'failed')
+        return bool(res.get('ok'))
+
+    def show(self, element_id):
+        entry = _gate('ui.show', 'ui')
+        if entry is None:
+            return False
+        return bool(_native('ui_show', {'element': int(element_id)}).get('ok'))
+
+
+ui = _Ui()
 
 
 # =====================================================================================

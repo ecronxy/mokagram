@@ -373,6 +373,13 @@ public:
 		crl::time duration,
 		bool video,
 		const SendAction &action);
+	void sendVoiceMessage(
+		QByteArray result,
+		VoiceWaveform waveform,
+		crl::time duration,
+		bool video,
+		const SendAction &action,
+		TextWithTags caption);
 	void sendFiles(
 		Ui::PreparedList &&list,
 		SendMediaType type,

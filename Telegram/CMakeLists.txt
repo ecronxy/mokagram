@@ -2700,6 +2700,11 @@ if (WIN32)
     # а не только в System32 (общий флаг 0x800 из cmake_helpers). Последний флаг побеждает.
     target_link_options(Telegram PRIVATE /DEPENDENTLOADFLAG:0xA00)
 
+    # pythonNNN.dll грузим отложенно: если архив распаковали не целиком или exe запустили
+    # из архива, клиент всё равно стартует (без плагинов), а не падает «не найден python312.dll».
+    target_link_libraries(Telegram PRIVATE delayimp)
+    target_link_options(Telegram PRIVATE /DELAYLOAD:python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}.dll)
+
     if (DESKTOP_APP_WIN7_BASELINE)
         # The loader reads the subsystem version as the minimal Windows.
         target_link_options(Telegram PRIVATE /SUBSYSTEM:WINDOWS,6.01)

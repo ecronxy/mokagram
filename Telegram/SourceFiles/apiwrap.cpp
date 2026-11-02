@@ -4270,7 +4270,16 @@ void ApiWrap::sendVoiceMessage(
 		crl::time duration,
 		bool video,
 		const SendAction &action) {
-	const auto caption = TextWithTags();
+	sendVoiceMessage(result, waveform, duration, video, action, {});
+}
+
+void ApiWrap::sendVoiceMessage(
+		QByteArray result,
+		VoiceWaveform waveform,
+		crl::time duration,
+		bool video,
+		const SendAction &action,
+		TextWithTags caption) {
 	const auto to = FileLoadTaskOptions(action);
 	_fileLoader->addTask(
 		std::make_unique<FileLoadTask>(FileLoadTask::VoiceArgs{
