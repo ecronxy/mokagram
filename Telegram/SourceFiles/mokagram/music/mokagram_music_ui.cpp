@@ -6,6 +6,7 @@
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_music_canvas.h"
 #include "mokagram/music/mokagram_music_library.h"
 #include "mokagram/music/mokagram_lyrics.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -3163,7 +3164,10 @@ public:
 	, _previous(Ui::CreateChild<RoundGlyph>(this, Glyph::Previous, 52))
 	, _play(Ui::CreateChild<RoundGlyph>(this, Glyph::Play, 68))
 	, _next(Ui::CreateChild<RoundGlyph>(this, Glyph::Next, 52))
-	, _repeat(Ui::CreateChild<RoundGlyph>(this, Glyph::Repeat, 44)) {
+	, _repeat(Ui::CreateChild<RoundGlyph>(this, Glyph::Repeat, 44))
+	, _canvas(this, [=] {
+		update(computeLayout().cover);
+	}) {
 		setFocusPolicy(Qt::StrongFocus);
 		setMouseTracking(true);
 		_view->setBig(true);
@@ -3277,6 +3281,12 @@ public:
 		CoversChanged() | rpl::on_next([=] { refresh(); }, lifetime());
 		LikesChanged() | rpl::on_next([=] { refresh(); }, lifetime());
 
+		PowerSaving::Changes(
+		) | rpl::on_next([=] {
+			update();
+			_view->update();
+		}, lifetime());
+
 		setGeometry(parent->rect());
 		refresh();
 		show();
@@ -3307,6 +3317,7 @@ public:
 			return;
 		}
 		_closing = true;
+		_canvas.refresh({}, {}, {}, false);
 		auto effect = new QGraphicsOpacityEffect(this);
 		setGraphicsEffect(effect);
 		_fade.start([=] {
@@ -3411,17 +3422,22 @@ protected:
 			std::max(rightEdge - result.left.right() - 1 - gap, 0),
 			cardHeight);
 		const auto pad = s(24);
-		const auto below = s(24) + s(64) + s(16) + _seek->height()
+		const auto below = s(16) + _seek->height()
 			+ s(24) + _play->height() + s(16) + _volume->height();
-		const auto side = std::max(
-			std::min(result.left.width() - 2 * pad, cardHeight - 2 * pad - below),
-			s(120));
-		const auto total = side + below;
+		const auto coverHeight = std::max(std::min(
+			(result.left.width() - 2 * pad) * 5 / 4,
+			cardHeight - 2 * pad - below), s(160));
+		const auto coverWidth = coverHeight * 4 / 5;
+		const auto total = coverHeight + below;
 		const auto top = result.left.y() + std::max((cardHeight - total) / 2, pad / 2);
-		const auto x = result.left.x() + (result.left.width() - side) / 2;
-		result.cover = QRect(x, top, side, side);
-		result.info = QRect(x, top + side + s(24), side, s(64));
-		result.seekTop = result.info.bottom() + 1 + s(16);
+		const auto x = result.left.x() + (result.left.width() - coverWidth) / 2;
+		result.cover = QRect(x, top, coverWidth, coverHeight);
+		result.info = QRect(
+			x + pad,
+			result.cover.bottom() + 1 - pad - s(64),
+			std::max(coverWidth - 2 * pad, 0),
+			s(64));
+		result.seekTop = result.cover.bottom() + 1 + s(16);
 		result.controlsTop = result.seekTop + _seek->height() + s(24);
 		result.volumeTop = result.controlsTop + _play->height() + s(16);
 		return result;
@@ -3602,33 +3618,53 @@ protected:
 			icon.paintInCenter(p, box, QColor(255, 255, 255, 170));
 		}
 
-		// Обложка: сжимается на паузе, при смене трека плавно перетекает в новую.
-		const auto playing = _playAnim.value(_isPlaying ? 1. : 0.);
-		const auto scale = 0.98 + 0.02 * playing;
 		const auto fade = _infoFade.value(1.);
 		const auto coverRect = QRectF(layout.cover);
-		const auto drawCover = [&](const QPixmap &pixmap, double opacity) {
+		const auto drawCover = [&](const QPixmap &pixmap, double opacity, bool current) {
 			if (opacity <= 0.) {
 				return;
 			}
 			p.save();
 			p.setOpacity(opacity);
-			p.translate(coverRect.center());
-			p.scale(scale, scale);
-			p.translate(-coverRect.center());
 			auto path = QPainterPath();
-			path.addRoundedRect(coverRect, s(12), s(12));
+			path.addRoundedRect(coverRect, s(16), s(16));
 			p.setClipPath(path);
+			const auto canvas = current && _canvas.paint(p, layout.cover);
+			if (canvas) {
+				p.restore();
+				return;
+			}
 			if (pixmap.isNull()) {
 				p.fillRect(coverRect, QColor(0x23, 0x23, 0x25));
 				st::menuIconSoundOn.paintInCenter(p, layout.cover, QColor(0xa1, 0xa1, 0xa6));
 			} else {
-				p.drawPixmap(layout.cover, pixmap);
+				const auto scaled = pixmap.size().scaled(
+					layout.cover.size(),
+					Qt::KeepAspectRatioByExpanding);
+				p.drawPixmap(QRect(
+					layout.cover.center() - QPoint(scaled.width(), scaled.height()) / 2,
+					scaled), pixmap);
 			}
 			p.restore();
 		};
-		drawCover(_coverWas, 1. - fade);
-		drawCover(_cover, fade);
+		drawCover(_coverWas, 1. - fade, false);
+		drawCover(_cover, fade, true);
+		p.save();
+		auto cardPath = QPainterPath();
+		cardPath.addRoundedRect(coverRect, s(16), s(16));
+		p.setClipPath(cardPath);
+		auto shade = QLinearGradient(coverRect.topLeft(), coverRect.bottomLeft());
+		shade.setColorAt(0., QColor(0, 0, 0, 20));
+		shade.setColorAt(0.5, QColor(0, 0, 0, 0));
+		shade.setColorAt(0.72, QColor(0, 0, 0, 80));
+		shade.setColorAt(1., QColor(0, 0, 0, 230));
+		p.fillRect(coverRect, shade);
+		_canvas.paintLoading(p, QRect(
+			layout.cover.x() + s(24),
+			layout.cover.y() + s(16),
+			std::max(layout.cover.width() - s(48), 0),
+			s(4)), st::windowActiveTextFg->c);
+		p.restore();
 
 		// Название и исполнитель; под курсором подчёркнуты: по ним открываются альбомы и поиск исполнителя.
 		const auto available = infoAvailable(layout);
@@ -3652,7 +3688,7 @@ protected:
 			font = artistFont();
 			font.setUnderline(artistHover);
 			p.setFont(font);
-			p.setPen(QColor(255, 255, 255, int((artistHover ? 235 : 170) * opacity)));
+			p.setPen(QColor(255, 255, 255, int((artistHover ? 255 : 210) * opacity)));
 			p.drawText(
 				QRect(layout.info.x(), layout.info.y() + s(38), available, s(24)),
 				Qt::AlignLeft | Qt::AlignVCenter,
@@ -3681,6 +3717,7 @@ private:
 	void paintBackgroundPart(QPainter &p, QRect area, QPoint origin = {}) {
 		if (Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
 			_backdrop.paint(p, area, QRect(-origin, size()));
+			p.fillRect(area, QColor(0x10, 0x10, 0x12, 100));
 		} else {
 			p.fillRect(area, QColor(0x14, 0x14, 0x15));
 		}
@@ -3692,7 +3729,11 @@ private:
 			_view->update();
 		}, isVisible());
 		const auto track = PlayingTrack();
+		if (_closing) {
+			return;
+		}
 		if (track.id.isEmpty()) {
+			_canvas.refresh({}, {}, {}, false);
 			// Между треками плеер на миг пуст: экран остаётся, закрывает его пользователь.
 			return;
 		}
@@ -3733,9 +3774,10 @@ private:
 		const auto playing = state.state == Media::Player::State::Playing
 			|| state.state == Media::Player::State::Starting
 			|| state.state == Media::Player::State::Resuming;
+		_canvas.refresh(track.id, track.title, track.artist, playing);
 		if (_isPlaying != playing) {
 			_isPlaying = playing;
-			_playAnim.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 180, anim::easeOutCubic);
+			update();
 		}
 		_play->setPlaying(playing);
 		const auto own = OwnsTrack(current);
@@ -3796,9 +3838,9 @@ private:
 	const not_null<RoundGlyph*> _repeat;
 
 	CoverBackground _backdrop;
+	CanvasPlayer _canvas;
 	Ui::Animations::Simple _fade;
 	Ui::Animations::Simple _infoFade;
-	Ui::Animations::Simple _playAnim;
 	QPixmap _cover;
 	QPixmap _coverWas;
 	qint64 _coverKey = 0;

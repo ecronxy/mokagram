@@ -342,6 +342,10 @@ This atlas divides Telegram Desktop's sources into named areas, ordered from fou
 - Paths: `SourceFiles/media/player/`, `SourceFiles/media/system_media_controls_*`
 - Music, voice and round-video playback: playlist and state, the top-bar widget, playlist panel, floating round player, speed, order and volume controls, listen tracking and OS media controls. It must not own decoding.
 
+### mokagram/music — music library and player additions
+- Paths: `SourceFiles/mokagram/music/`
+- SoundCloud and Telegram music queues, library UI, full-screen playback, lyrics and automatic Canvas matching by artist and title. Canvas lookup and bounded in-memory caching live in `mokagram_music_canvas.*`; silent video decoding and looping remain in `media/streaming/`. Canvas fills a portrait player card with overlaid track details; missing or failed lookups preserve the cover, and the blurred background stays static.
+
 ### media/stories — stories viewer
 - Paths: `SourceFiles/media/stories/`
 - Story playback and navigation inside the media viewer: header, caption, reply field, reactions and story areas, recent viewers, reposts, sharing and stealth mode. It must not own story data or story lists.
