@@ -241,7 +241,8 @@ void LoadCloudFile(
 		Fn<void(CloudFile&)> done,
 		Fn<void(bool)> fail,
 		Fn<void()> progress,
-		int downloadFrontPartSize = 0) {
+		int downloadFrontPartSize = 0,
+		bool decodeImage = false) {
 	const auto loadSize = downloadFrontPartSize
 		? std::min(downloadFrontPartSize, file.byteSize)
 		: file.byteSize;
@@ -303,6 +304,9 @@ void LoadCloudFile(
 		finish(file);
 	}, file.loader->lifetime());
 
+	if (decodeImage) {
+		file.loader->decodeImageInBackground();
+	}
 	file.loader->start();
 }
 
@@ -339,7 +343,8 @@ void LoadCloudFile(
 		callback,
 		std::move(fail),
 		std::move(progress),
-		downloadFrontPartSize);
+		downloadFrontPartSize,
+		true);
 }
 
 void LoadCloudFile(

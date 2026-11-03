@@ -108,6 +108,10 @@ public:
 	bool setFileName(const QString &filename); // set filename for loaders to cache
 	void permitLoadFromCloud();
 	void increaseLoadSize(int64 size, bool autoLoading);
+	// Mokagram: картинку декодировать в фоне до сигнала о готовности.
+	void decodeImageInBackground() {
+		_decodeImageInBackground = true;
+	}
 
 	void start();
 	void cancel();
@@ -156,6 +160,7 @@ protected:
 	void cancel(FailureReason failed);
 
 	void notifyAboutProgress();
+	void notifyFinished();
 
 	bool writeResultPart(int64 offset, bytes::const_span buffer);
 	bool finalizeResult();
@@ -186,6 +191,8 @@ protected:
 	base::binary_guard _localLoading;
 	mutable QByteArray _imageFormat;
 	mutable QImage _imageData;
+	bool _decodeImageInBackground = false;
+	base::binary_guard _imageDecoding;
 
 	rpl::lifetime _lifetime;
 	rpl::event_stream<rpl::empty_value, Error> _updates;
