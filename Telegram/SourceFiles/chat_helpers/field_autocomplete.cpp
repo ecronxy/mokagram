@@ -64,6 +64,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace ChatHelpers {
 namespace {
 
+// Mokagram: все списки автодополнения, кроме стикеров, рисуются скруглённой панелью.
+[[nodiscard]] bool RoundedMenu(FieldAutocomplete::Type type) {
+	return type != FieldAutocomplete::Type::Stickers;
+}
+
+// Цвет скруглённой панели: темнее фона автодополнения, чтобы не светиться над чатом.
+[[nodiscard]] QColor MenuSurface(const QColor &bg) {
+	return bg.darker(135);
+}
+
+
 constexpr auto kEphemeralHintHoverDelay = crl::time(500);
 
 [[nodiscard]] QString PrimaryUsername(not_null<UserData*> user) {
@@ -376,7 +387,7 @@ void FieldAutocomplete::paintEvent(QPaintEvent *e) {
 		return;
 	}
 
-	if (_type != Type::BotCommands) {
+	if (!RoundedMenu(_type)) {
 		p.fillRect(rect(), _st.bg);
 		return;
 	}
@@ -389,8 +400,9 @@ void FieldAutocomplete::paintEvent(QPaintEvent *e) {
 		-st::commandMenuMargin.bottom());
 	const auto radius = st::commandMenuRadius;
 	auto surface = QLinearGradient(panel.topLeft(), panel.bottomRight());
-	surface.setColorAt(0., _st.bg->c.lighter(108));
-	surface.setColorAt(1., _st.bg->c);
+	const auto base = MenuSurface(_st.bg->c);
+	surface.setColorAt(0., base.lighter(104));
+	surface.setColorAt(1., base);
 	p.setPen(Qt::NoPen);
 	p.setBrush(surface);
 	p.drawRoundedRect(panel, radius, radius);
@@ -929,7 +941,7 @@ void FieldAutocomplete::setBoundings(QRect boundings) {
 void FieldAutocomplete::recount(bool resetScroll) {
 	const auto oldScrollTop = _scroll->scrollTop();
 	const auto maxHeight = int(4.5 * st::mentionHeight);
-	const auto commands = (_type == Type::BotCommands);
+	const auto commands = RoundedMenu(_type);
 	const auto insetX = commands ? st::commandMenuPadding.left() : 0;
 	const auto insetY = commands ? st::commandMenuPadding.top() : 0;
 	const auto panelWidth = commands
@@ -973,6 +985,54 @@ void FieldAutocomplete::recount(bool resetScroll) {
 		insetY,
 		innerWidth,
 		std::max(height - 2 * insetY, 0));
+
+	// Mokagram: строки плавно растворяются у верхнего и нижнего края панели, а не обрезаются.
+	{
+		const auto ensureFade = [&](const char *name, bool top) {
+			auto edge = findChild<Ui::RpWidget*>(
+				QString::fromLatin1(name),
+				Qt::FindDirectChildrenOnly);
+			if (!edge) {
+				edge = Ui::CreateChild<Ui::RpWidget>(this);
+				edge->setObjectName(QString::fromLatin1(name));
+				edge->setAttribute(Qt::WA_TransparentForMouseEvents);
+				edge->paintRequest() | rpl::on_next([=] {
+					auto p = QPainter(edge);
+					auto from = MenuSurface(_st.bg->c);
+					auto to = from;
+					to.setAlpha(0);
+					auto gradient = QLinearGradient(0, 0, 0, edge->height());
+					gradient.setColorAt(0., top ? from : to);
+					gradient.setColorAt(1., top ? to : from);
+					p.fillRect(edge->rect(), gradient);
+				}, edge->lifetime());
+			}
+			return edge;
+		};
+		const auto topEdge = ensureFade("moka-ac-fade-top", true);
+		const auto bottomEdge = ensureFade("moka-ac-fade-bottom", false);
+		const auto fadeHeight = st::mentionHeight / 2;
+		const auto scrollHeight = std::max(height - 2 * insetY, 0);
+		topEdge->setGeometry(insetX, insetY, innerWidth, fadeHeight);
+		bottomEdge->setGeometry(
+			insetX,
+			insetY + scrollHeight - fadeHeight,
+			innerWidth,
+			fadeHeight);
+		const auto refreshFades = [=] {
+			const auto on = RoundedMenu(_type) && _srows.empty();
+			topEdge->setVisible(on && _scroll->scrollTop() > 0);
+			bottomEdge->setVisible(on
+				&& (_scroll->scrollTop() + _scroll->height() < _inner->height()));
+			topEdge->raise();
+			bottomEdge->raise();
+		};
+		if (!property("moka-fade-subscribed").toBool()) {
+			setProperty("moka-fade-subscribed", true);
+			_scroll->scrollTopChanges() | rpl::on_next(refreshFades, lifetime());
+		}
+		refreshFades();
+	}
 	setAttribute(
 		Qt::WA_OpaquePaintEvent,
 		!commands && !_opacityAnimation.animating());
@@ -1044,7 +1104,7 @@ void FieldAutocomplete::animationCallback() {
 	update();
 	if (!_opacityAnimation.animating()) {
 		_cache = QPixmap();
-		setAttribute(Qt::WA_OpaquePaintEvent, _type != Type::BotCommands);
+		setAttribute(Qt::WA_OpaquePaintEvent, !RoundedMenu(_type));
 		if (_hiding) {
 			hideFinish();
 		} else {
@@ -1170,11 +1230,11 @@ void FieldAutocomplete::Inner::paintEvent(QPaintEvent *e) {
 		paintStickers(p, clip);
 	} else {
 		paintRows(p, clip);
-		if (_parent->_type != Type::BotCommands) {
+		if (!RoundedMenu(_parent->_type)) {
 			paintShadow(p, _parent->innerBottom() - st::lineWidth);
 		}
 	}
-	if (_parent->_type != Type::BotCommands) {
+	if (!RoundedMenu(_parent->_type)) {
 		paintShadow(p, _parent->innerTop());
 	}
 }
@@ -1317,7 +1377,7 @@ void FieldAutocomplete::Inner::paintRows(Painter &p, QRect clip) {
 		const auto textTop = top + st::mentionTop;
 		const auto selected = (i == _sel);
 		if (selected) {
-			if (_parent->_type == Type::BotCommands) {
+			if (RoundedMenu(_parent->_type)) {
 				auto hq = PainterHighQualityEnabler(p);
 				auto highlight = st::windowActiveTextFg->c;
 				highlight.setAlphaF(0.14);

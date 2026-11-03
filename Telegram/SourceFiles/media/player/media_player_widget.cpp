@@ -62,6 +62,14 @@ namespace Media {
 namespace Player {
 namespace {
 
+// Высота полосы с волной и её половина (середина волны лежит на границе плашки и шапки).
+[[nodiscard]] int WaveHeight() {
+	return st::mediaPlayerPlayback.fullWidth + style::ConvertScale(2);
+}
+[[nodiscard]] int WaveHalfHeight() {
+	return WaveHeight() / 2;
+}
+
 // Mokagram: верхняя полоса плеера, волнистая как в полноэкранном плеере.
 class WavySlider final : public Ui::FilledSlider {
 public:
@@ -108,13 +116,18 @@ protected:
 		} else if (!animate) {
 			_waveAnimation.stop();
 		}
-		const auto stroke = double(std::min(st::motionWaveStroke, _st.lineWidth));
+		const auto stroke = style::ConvertScaleExact(2.);
+		// Мелкая волна: ниже и короче, чем в полноэкранном плеере.
+		const auto length = style::ConvertScaleExact(14.);
 		const auto amplitude = animate
-			? std::min(double(st::motionWaveAmplitude), (height() - stroke) / 2.)
+			? std::min(style::ConvertScaleExact(1.5), (height() - stroke) / 2.)
 			: 0.;
-		// Нижняя точка волны ложится на нижний край полосы плеера, как раньше прямая линия.
-		const auto y = height() - stroke / 2. - amplitude;
-		const auto active = (disabled ? _st.disabledFg : _st.activeFg)->c;
+		// Волна по середине своей полосы: середина лежит на границе плашки и шапки чата.
+		const auto y = height() / 2.;
+		auto active = QColor(Qt::white);
+		if (disabled) {
+			active.setAlphaF(0.4);
+		}
 		p.setOpacity(fadeOpacity());
 		p.setBrush(Qt::NoBrush);
 		if (end > mid && over > 0.) {
@@ -129,9 +142,9 @@ protected:
 		const auto phase = animate ? crl::now() / 500. : 0.;
 		auto path = QPainterPath();
 		for (auto x = from; x <= mid; x += std::max(st::motionWaveSample, 1)) {
-			const auto envelope = std::clamp((mid - x) / st::motionWaveLength, 0., 1.);
+			const auto envelope = std::clamp((mid - x) / length, 0., 1.);
 			const auto point = QPointF(x, y + amplitude * envelope
-				* std::sin(x * 2. * M_PI / st::motionWaveLength - phase));
+				* std::sin(x * 2. * M_PI / length - phase));
 			if (x == from) {
 				path.moveTo(point);
 			} else {
@@ -142,10 +155,10 @@ protected:
 		p.drawPath(path);
 		p.setPen(Qt::NoPen);
 		p.setBrush(active);
-		const auto handle = double(st::motionWaveHandle);
-		const auto handleHeight = std::min(double(st::motionWaveHandleHeight), double(height()));
+		const auto handle = style::ConvertScaleExact(3.);
+		const auto handleHeight = stroke * 2.;
 		p.drawRoundedRect(
-			QRectF(mid - handle / 2., height() - handleHeight, handle, handleHeight),
+			QRectF(mid - handle / 2., y - handleHeight / 2., handle, handleHeight),
 			handle / 2.,
 			handle / 2.);
 	}
@@ -645,8 +658,8 @@ void Widget::updateControlsGeometry() {
 
 	updatePlayPrevNextPositions();
 
-	// Волнистой линии нужна высота под амплитуду.
-	const auto sliderHeight = st::mediaPlayerPlayback.fullWidth * 2;
+	// Волнистой линии нужна высота под амплитуду, но не настолько, чтобы заходить на обложку.
+	const auto sliderHeight = WaveHeight();
 	_playbackSlider->setGeometry(
 		0,
 		height() - sliderHeight,
@@ -677,6 +690,13 @@ void Widget::paintEvent(QPaintEvent *e) {
 		QRect(0, 0, width(), st::mediaPlayerHeight + st::lineWidth));
 	if (!fill.isEmpty()) {
 		p.fillRect(fill, st::mediaPlayerBg);
+	}
+	if (_type == AudioMsgId::Type::Song) {
+		// Нижняя половина полосы волны закрашена цветом шапки под плашкой:
+		// граница цветов проходит ровно по середине волны.
+		p.fillRect(
+			QRect(0, height() - WaveHalfHeight(), width(), WaveHalfHeight()),
+			st::topBarBg);
 	}
 	if (_type == AudioMsgId::Type::Song) {
 		auto tint = Mokagram::Music::CurrentCoverAccent();

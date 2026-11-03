@@ -1231,9 +1231,20 @@ void Filler::addTranslate() {
 void Filler::addReport() {
 	const auto chat = _peer->asChat();
 	const auto channel = _peer->asChannel();
-	if (_topic
-		|| ((!chat || chat->amCreator())
-			&& (!channel || channel->amCreator()))) {
+	const auto user = _peer->asUser();
+	if (_topic) {
+		return;
+	}
+	if (user) {
+		// Mokagram: жалоба на человека или бота (раньше у пользователей пункта не было).
+		if (user->isSelf()
+			|| user->isSupport()
+			|| user->isVerifyCodes()
+			|| user->isRepliesChat()) {
+			return;
+		}
+	} else if ((!chat || chat->amCreator())
+		&& (!channel || channel->amCreator())) {
 		return;
 	}
 	const auto peer = _peer;
