@@ -9,6 +9,10 @@
 #include "mokagram/music/mokagram_music_canvas.h"
 #include "mokagram/music/mokagram_music_library.h"
 #include "mokagram/music/mokagram_lyrics.h"
+#include "mokagram/music/mokagram_motion.h"
+#include "mokagram/perf/mokagram_perf.h"
+#include "media/clip/media_clip_reader.h"
+#include "styles/style_mokagram_motion.h"
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "base/timer.h"
@@ -1343,7 +1347,7 @@ private:
 			p.setBrush(_glass
 				? QColor(255, 255, 255, playing ? 34 : 20)
 				: st::windowBgOver->c);
-			p.drawRoundedRect(rect().marginsRemoved({ 10, 3, 10, 3 }), 18, 18);
+			p.drawRoundedRect(rect().marginsRemoved({ 8, 4, 8, 4 }), 12, 12);
 		}
 		const auto art = QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize);
 		if (_media) {
@@ -1920,6 +1924,10 @@ public:
 			auto p = QPainter(this);
 			auto hq = PainterHighQualityEnabler(p);
 			if (_thin) {
+				if (_expressive && Mokagram::Settings::Bool(u"player.expressive_seek"_q)) {
+					paintWave(p);
+					return;
+				}
 				// Тонкая полоса: толще на наведении и при перетаскивании.
 				const auto grow = _grow.value((_over || _dragging) ? 1. : 0.);
 				const auto h = 4. + 4. * grow;
@@ -1951,6 +1959,11 @@ public:
 
 	void setFillColor(QColor color) {
 		_fill = color;
+		update();
+	}
+	void setExpressive(bool expressive, bool playing) {
+		_expressive = expressive;
+		_wavePlaying = playing;
 		update();
 	}
 	void setThin(bool thin) {
@@ -2004,6 +2017,36 @@ protected:
 	}
 
 private:
+	void paintWave(QPainter &p) {
+		const auto progress = _dragging ? _drag : _progress;
+		const auto y = height() / 2.;
+		const auto end = width() * progress;
+		const auto phase = _wavePlaying && !_dragging
+			&& Mokagram::Perf::UserIsLooking()
+			&& !PowerSaving::On(PowerSaving::kAnimations)
+			? crl::now() / 500. : 0.;
+		const auto amplitude = _wavePlaying && !_dragging ? st::motionWaveAmplitude : 0;
+		p.setPen(QPen(QColor(255, 255, 255, 65), st::motionWaveStroke,
+			Qt::SolidLine, Qt::RoundCap));
+		p.drawLine(QPointF(std::min(end + st::motionWaveGap, double(width())), y),
+			QPointF(width(), y));
+		auto path = QPainterPath();
+		for (auto x = 0.; x <= end; x += std::max(st::motionWaveSample, 1)) {
+			const auto envelope = std::clamp((end - x) / st::motionWaveLength, 0., 1.);
+			const auto point = QPointF(x, y + amplitude * envelope
+				* std::sin(x * 2. * M_PI / st::motionWaveLength - phase));
+			if (x == 0.) path.moveTo(point); else path.lineTo(point);
+		}
+		p.setPen(QPen(_fill, st::motionWaveStroke, Qt::SolidLine, Qt::RoundCap));
+		p.drawPath(path);
+		p.setPen(Qt::NoPen);
+		p.setBrush(_fill);
+		const auto handle = st::motionWaveHandle;
+		p.drawRoundedRect(QRectF(end - handle / 2.,
+			y - st::motionWaveHandleHeight / 2., handle, st::motionWaveHandleHeight),
+			handle / 2., handle / 2.);
+	}
+
 	void setOver(bool over) {
 		if (_over != over) {
 			_over = over;
@@ -2022,6 +2065,8 @@ private:
 	}
 
 	Ui::Animations::Simple _grow;
+	bool _expressive = false;
+	bool _wavePlaying = false;
 	bool _thin = false;
 	bool _over = false;
 	QColor _fill = Qt::white;
@@ -2919,8 +2964,6 @@ public:
 	, _controller(controller)
 	, _anchor(anchor)
 	, _view(Ui::CreateChild<LyricsView>(this)) {
-		// Фон сплошной: анимация текста не перерисовывает третью колонку под панелью.
-		setAttribute(Qt::WA_OpaquePaintEvent);
 		_view->setCoverTint(Mokagram::Settings::Bool(u"lyrics.plasma"_q));
 		_close = Mokagram::Plugins::MakeHeaderButton(this, true, [] {
 			Mokagram::Settings::SetBool(u"lyrics.enabled"_q, false);
@@ -3177,6 +3220,7 @@ public:
 			paintBackgroundPart(p, area, _view->pos());
 		});
 		_seek->setThin(true);
+		_seek->setExpressive(true, false);
 		_volume->setThin(true);
 		_volume->setProgress(Core::App().settings().songVolume());
 		_volume->moved(
@@ -3282,6 +3326,28 @@ public:
 		) | rpl::on_next([=] { refresh(); }, lifetime());
 		CoversChanged() | rpl::on_next([=] { refresh(); }, lifetime());
 		LikesChanged() | rpl::on_next([=] { refresh(); }, lifetime());
+		Mokagram::Settings::Changed() | rpl::on_next([=](const QString &key) {
+			if (key.startsWith(u"player."_q)) {
+				if (key == u"player.motion_covers"_q || key == u"player.spotify_canvas"_q) {
+					_motionFor.clear();
+					_motionCover = nullptr;
+					_spotifyCanvas = nullptr;
+				}
+				refresh();
+				update();
+			}
+		}, lifetime());
+		_ambientTimer.setInterval(33);
+		connect(&_ambientTimer, &QTimer::timeout, this, [=] {
+			if (!isVisible() || !_isPlaying || !Mokagram::Perf::UserIsLooking()
+				|| PowerSaving::On(PowerSaving::kAnimations)) return;
+			if (Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
+				_view->update();
+				update();
+			}
+			_seek->update();
+		});
+		_ambientTimer.start();
 
 		PowerSaving::Changes(
 		) | rpl::on_next([=] {
@@ -3319,6 +3385,9 @@ public:
 			return;
 		}
 		_closing = true;
+		if (_cancelMotion) _cancelMotion();
+		_motionCover = nullptr;
+		_spotifyCanvas = nullptr;
 		_canvas.refresh({}, {}, {}, false);
 		auto effect = new QGraphicsOpacityEffect(this);
 		setGraphicsEffect(effect);
@@ -3328,6 +3397,9 @@ public:
 				deleteLater();
 			}
 		}, 1., 0., 180, anim::easeOutCubic);
+	}
+	~FullscreenPlayer() override {
+		if (_cancelMotion) _cancelMotion();
 	}
 
 protected:
@@ -3631,12 +3703,21 @@ protected:
 			auto path = QPainterPath();
 			path.addRoundedRect(coverRect, s(16), s(16));
 			p.setClipPath(path);
+			auto frame = current ? motionFrame(_spotifyCanvas, layout.cover.size()) : QImage();
+			if (!frame.isNull()) {
+				p.drawImage(layout.cover, frame);
+				p.restore();
+				return;
+			}
 			const auto canvas = current && _canvas.paint(p, layout.cover);
 			if (canvas) {
 				p.restore();
 				return;
 			}
-			if (pixmap.isNull()) {
+			if (current) frame = motionFrame(_motionCover, layout.cover.size());
+			if (!frame.isNull()) {
+				p.drawImage(layout.cover, frame);
+			} else if (pixmap.isNull()) {
 				p.fillRect(coverRect, QColor(0x23, 0x23, 0x25));
 				st::menuIconSoundOn.paintInCenter(p, layout.cover, QColor(0xa1, 0xa1, 0xa6));
 			} else {
@@ -3665,7 +3746,7 @@ protected:
 			layout.cover.x() + s(24),
 			layout.cover.y() + s(16),
 			std::max(layout.cover.width() - s(48), 0),
-			s(4)), st::windowActiveTextFg->c);
+			s(4)), _accent);
 		p.restore();
 
 		// Название и исполнитель; под курсором подчёркнуты: по ним открываются альбомы и поиск исполнителя.
@@ -3716,10 +3797,50 @@ protected:
 	}
 
 private:
+	QImage motionFrame(Media::Clip::ReaderPointer &reader, QSize size) {
+		if (!reader || !reader->ready() || size.isEmpty()) return {};
+		const auto request = Media::Clip::FrameRequest{
+			.frame = QSize(reader->width(), reader->height()).scaled(
+				size, Qt::KeepAspectRatioByExpanding),
+			.outer = size,
+			.factor = style::DevicePixelRatio(),
+		};
+		if (!reader->started()) reader->start(request);
+		const auto animate = _isPlaying && isVisible() && Mokagram::Perf::UserIsLooking()
+			&& !PowerSaving::On(PowerSaving::kAnimations);
+		return reader->current(request, animate ? crl::now() : 0);
+	}
+
+	void setMotion(Media::Clip::ReaderPointer &reader, const QString &path) {
+		reader = nullptr;
+		if (path.isEmpty()) return;
+		const auto target = &reader;
+		reader = Media::Clip::MakeReader(path, [=](Media::Clip::Notification) {
+			if (*target && (*target)->state() == Media::Clip::State::Error) {
+				QFile::remove(path);
+				target->setBad();
+			}
+			_view->update();
+			update();
+		});
+	}
+
 	void paintBackgroundPart(QPainter &p, QRect area, QPoint origin = {}) {
 		if (Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
 			_backdrop.paint(p, area, QRect(-origin, size()));
 			p.fillRect(area, QColor(0x10, 0x10, 0x12, 100));
+			if (Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
+				const auto phase = crl::now() / 14000.;
+				const auto center = QPointF(width() * (0.5 + 0.25 * std::sin(phase)),
+					height() * (0.5 + 0.25 * std::cos(phase * 0.7))) - origin;
+				auto glow = QRadialGradient(center, std::max(width(), height()) * 0.7);
+				auto color = _accent;
+				color.setAlpha(60);
+				glow.setColorAt(0., color);
+				color.setAlpha(0);
+				glow.setColorAt(1., color);
+				p.fillRect(area, glow);
+			}
 		} else {
 			p.fillRect(area, QColor(0x14, 0x14, 0x15));
 		}
@@ -3735,6 +3856,11 @@ private:
 			return;
 		}
 		if (track.id.isEmpty()) {
+			if (_cancelMotion) _cancelMotion();
+			_cancelMotion = nullptr;
+			_motionFor.clear();
+			_motionCover = nullptr;
+			_spotifyCanvas = nullptr;
 			_canvas.refresh({}, {}, {}, false);
 			// Между треками плеер на миг пуст: экран остаётся, закрывает его пользователь.
 			return;
@@ -3769,19 +3895,43 @@ private:
 					size,
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
-			_seek->setFillColor(st::windowActiveTextFg->c);
+			_accent = CurrentCoverAccent();
+			_seek->setFillColor(_accent);
 			_view->update();
 			update();
 		}
 		const auto playing = state.state == Media::Player::State::Playing
 			|| state.state == Media::Player::State::Starting
 			|| state.state == Media::Player::State::Resuming;
-		_canvas.refresh(track.id, track.title, track.artist, playing);
+		_canvas.refresh(
+			Mokagram::Settings::Bool(u"player.public_canvas"_q) && !_spotifyCanvas
+				? track.id : QString(),
+			track.title, track.artist, playing);
 		if (_isPlaying != playing) {
 			_isPlaying = playing;
 			update();
 		}
 		_play->setPlaying(playing);
+		_seek->setExpressive(true, playing);
+		if (_motionFor != track.id) {
+			if (_cancelMotion) _cancelMotion();
+			_motionFor = track.id;
+			_motionCover = nullptr;
+			_spotifyCanvas = nullptr;
+			const auto id = track.id;
+			_cancelMotion = FetchMotion(id, track.title, track.artist, track.durationMs,
+				crl::guard(this, [=](MotionFiles files) {
+					if (_motionFor != id) return;
+					if (Mokagram::Settings::Bool(u"player.motion_covers"_q)) {
+						setMotion(_motionCover, files.artwork);
+					}
+					if (Mokagram::Settings::Bool(u"player.spotify_canvas"_q)) {
+						setMotion(_spotifyCanvas, files.canvas);
+						if (_spotifyCanvas) _canvas.refresh({}, {}, {}, false);
+					}
+					update();
+				}));
+		}
 		const auto own = OwnsTrack(current);
 		_heart->setVisible(own);
 		_heart->setLiked(own && IsLiked(track.id));
@@ -3841,6 +3991,12 @@ private:
 
 	CoverBackground _backdrop;
 	CanvasPlayer _canvas;
+	QTimer _ambientTimer;
+	Media::Clip::ReaderPointer _motionCover;
+	Media::Clip::ReaderPointer _spotifyCanvas;
+	QString _motionFor;
+	Fn<void()> _cancelMotion;
+	QColor _accent;
 	Ui::Animations::Simple _fade;
 	Ui::Animations::Simple _infoFade;
 	QPixmap _cover;

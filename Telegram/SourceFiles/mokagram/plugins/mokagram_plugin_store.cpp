@@ -4,6 +4,7 @@
 // mokagram-id: fec14fab
 // Mokagram: магазин плагинов (подписанный каталог в репозитории mokagram-plugins).
 #include "mokagram/plugins/mokagram_plugin_store.h"
+#include "mokagram/plugins/mokagram_plugin_sources.h"
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/plugins/mokagram_plugin_install.h"
@@ -25,6 +26,8 @@
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "window/window_controller.h"
 #include "core/application.h"
+#include "core/click_handler_types.h"
+#include "ui/widgets/fields/input_field.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
 #include "styles/style_widgets.h"
@@ -39,6 +42,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QUrl>
+#include <QtCore/QSet>
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
@@ -160,6 +164,258 @@ struct Entry {
 	return QString();
 }
 
+[[nodiscard]] QNetworkReply *GetSource(const QUrl &url, qint64 limit) {
+	auto request = QNetworkRequest(url);
+	request.setAttribute(
+		QNetworkRequest::RedirectPolicyAttribute,
+		QNetworkRequest::NoLessSafeRedirectPolicy);
+	request.setTransferTimeout(kTimeout);
+	request.setRawHeader("User-Agent", "mokaGram-plugin-sources");
+	const auto reply = Manager()->get(request);
+	QObject::connect(reply, &QNetworkReply::downloadProgress, reply, [=](qint64 received, qint64) {
+		if (received > limit) {
+			reply->abort();
+		}
+	});
+	QObject::connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
+	return reply;
+}
+
+void InstallSource(
+		Window::SessionController *controller,
+		const QUrl &url,
+		Fn<void()> changed,
+		const QByteArray &expectedHash = {},
+		qint64 expectedSize = 0) {
+	const auto weak = base::make_weak(controller);
+	const auto reply = GetSource(url, kMaxPluginBytes);
+	QObject::connect(reply, &QNetworkReply::finished, reply, [=] {
+		const auto strong = weak.get();
+		if (!strong) {
+			return;
+		}
+		const auto bytes = reply->readAll();
+		if (reply->error() != QNetworkReply::NoError
+			|| !Sources::VerifyDownload(bytes, expectedHash, expectedSize, kMaxPluginBytes)) {
+			strong->showToast(U(Mokagram::Lang::Tr("Не удалось загрузить плагин из источника")));
+			return;
+		}
+		InstallFromBytes(strong, bytes, changed);
+	});
+}
+
+void RepositoryBox(
+		not_null<Ui::GenericBox*> box,
+		Window::SessionController *controller,
+		const QString &repository,
+		const QString &branch,
+		Fn<void()> changed) {
+	box->setTitle(rpl::single(repository));
+	const auto content = box->verticalLayout();
+	const auto status = content->add(object_ptr<Ui::FlatLabel>(
+		content,
+		U(Mokagram::Lang::Tr("Загружаю каталог...")),
+		st::boxLabel), st::boxPadding);
+	box->addButton(rpl::single(U(Mokagram::Lang::Tr("Закрыть"))), [=] { box->closeBox(); });
+	const auto weak = base::make_weak(controller);
+	const auto treeUrl = QUrl(u"https://api.github.com/repos/"_q + repository
+		+ u"/git/trees/"_q + QString::fromLatin1(QUrl::toPercentEncoding(branch))
+		+ u"?recursive=1"_q);
+	const auto reply = GetSource(treeUrl, kMaxIndexBytes);
+	QObject::connect(reply, &QNetworkReply::finished, box.get(), [=] {
+		const auto root = QJsonDocument::fromJson(reply->readAll()).object();
+		if (reply->error() != QNetworkReply::NoError || !root.contains("tree")) {
+			status->setText(U(Mokagram::Lang::Tr("Не получилось загрузить каталог. Проверьте подключение.")));
+			return;
+		}
+		auto files = QStringList();
+		for (const auto &value : root.value("tree").toArray()) {
+			const auto item = value.toObject();
+			const auto path = item.value("path").toString();
+			if (item.value("type").toString() == u"blob"_q
+				&& path.endsWith(u".plugin"_q, Qt::CaseInsensitive)
+				&& !path.split('/').contains(u".."_q)) {
+				files.push_back(path);
+			}
+		}
+		files.sort(Qt::CaseInsensitive);
+		status->setText(files.isEmpty()
+			? U(Mokagram::Lang::Tr("В каталоге пока нет плагинов."))
+			: U(Mokagram::Lang::Tr("Внешний источник. Код и доступ будут показаны перед установкой.")));
+		for (const auto &path : files.mid(0, 200)) {
+			const auto link = content->add(object_ptr<Ui::LinkButton>(content, path), st::boxPadding);
+			link->setClickedCallback([=] {
+				if (const auto strong = weak.get()) {
+					const auto encoded = QString::fromLatin1(QUrl::toPercentEncoding(path, "/"));
+					InstallSource(strong, QUrl(u"https://raw.githubusercontent.com/"_q
+						+ repository + '/' + branch + '/' + encoded), changed);
+				}
+			});
+		}
+		if (root.value("truncated").toBool() || files.size() > 200) {
+			content->add(object_ptr<Ui::FlatLabel>(content,
+				U(Mokagram::Lang::Tr("Показана только часть каталога.")), st::boxDividerLabel), st::boxPadding);
+		}
+	});
+}
+
+void IndexBox(
+		not_null<Ui::GenericBox*> box,
+		Window::SessionController *controller,
+		const QUrl &indexUrl,
+		const QString &repository,
+		const QString &branch,
+		Fn<void()> changed) {
+	box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Каталог плагинов"))));
+	const auto content = box->verticalLayout();
+	const auto status = content->add(object_ptr<Ui::FlatLabel>(content,
+		U(Mokagram::Lang::Tr("Загружаю каталог...")), st::boxLabel), st::boxPadding);
+	box->addButton(rpl::single(U(Mokagram::Lang::Tr("Закрыть"))), [=] { box->closeBox(); });
+	const auto weak = base::make_weak(controller);
+	const auto reply = GetSource(indexUrl, kMaxIndexBytes);
+	QObject::connect(reply, &QNetworkReply::finished, box.get(), [=] {
+		const auto root = QJsonDocument::fromJson(reply->readAll()).object();
+		if (reply->error() != QNetworkReply::NoError && !repository.isEmpty()) {
+			if (const auto strong = weak.get()) {
+				box->closeBox();
+				strong->show(Box(RepositoryBox, strong, repository, branch, changed));
+			}
+			return;
+		}
+		if (reply->error() != QNetworkReply::NoError
+			|| root.value("schema").toInt() != 1
+			|| root.value("name").toString().isEmpty()
+			|| !root.value("plugins").isArray()) {
+			status->setText(U(Mokagram::Lang::Tr("Не удалось прочитать каталог плагинов")));
+			return;
+		}
+		box->setTitle(rpl::single(root.value("name").toString().left(200)));
+		status->setText(U(Mokagram::Lang::Tr("Внешний источник. Код и доступ будут показаны перед установкой.")));
+		auto seen = QSet<QString>();
+		for (const auto &value : root.value("plugins").toArray()) {
+			const auto item = value.toObject();
+			const auto parsed = Sources::ParseEntry(item, indexUrl, kMaxPluginBytes);
+			if (!parsed || seen.contains(parsed->id)) {
+				continue;
+			}
+			const auto &entry = *parsed;
+			const auto &id = entry.id;
+			const auto &name = entry.name;
+			const auto &version = entry.version;
+			const auto file = entry.url;
+			const auto hash = entry.sha256;
+			const auto size = entry.size;
+			seen.insert(id);
+			const auto link = content->add(object_ptr<Ui::LinkButton>(content,
+				name.left(200) + u" · "_q + version.left(40)), st::boxPadding);
+			link->setClickedCallback([=] {
+				if (const auto strong = weak.get()) {
+					InstallSource(strong, file, changed, hash, size);
+				}
+			});
+			if (seen.size() >= 200) {
+				content->add(object_ptr<Ui::FlatLabel>(content,
+					U(Mokagram::Lang::Tr("Показана только часть каталога.")), st::boxDividerLabel), st::boxPadding);
+				break;
+			}
+		}
+		if (seen.isEmpty()) {
+			status->setText(U(Mokagram::Lang::Tr("В каталоге пока нет плагинов.")));
+		}
+	});
+}
+
+[[nodiscard]] bool OpenSource(
+		Window::SessionController *controller,
+		const QString &source,
+		Fn<void()> changed) {
+	auto url = QUrl(source.trimmed());
+	if (!Sources::IsSecure(url)) {
+		return false;
+	}
+	if (url.host().compare(u"t.me"_q, Qt::CaseInsensitive) == 0) {
+		UrlClickHandler::Open(url.toString());
+		return true;
+	}
+	if (url.host().compare(u"github.com"_q, Qt::CaseInsensitive) == 0) {
+		const auto parts = url.path().split('/', Qt::SkipEmptyParts);
+		if (parts.size() >= 2) {
+			auto name = parts[1];
+			if (name.endsWith(u".git"_q)) {
+				name.chop(4);
+			}
+			static const auto component = QRegularExpression(u"^[A-Za-z0-9_.-]+$"_q);
+			if (!component.match(parts[0]).hasMatch() || !component.match(name).hasMatch()) {
+				return false;
+			}
+			const auto repository = parts[0] + '/' + name;
+			if (parts.size() >= 5 && parts[2] == u"blob"_q
+				&& (parts.back().endsWith(u".plugin"_q, Qt::CaseInsensitive)
+					|| parts.back() == u"extera-plugins.json"_q)) {
+				url = QUrl(u"https://raw.githubusercontent.com/"_q + repository
+					+ '/' + parts.mid(3).join('/'));
+			} else if (parts.size() == 2 || (parts.size() >= 4 && parts[2] == u"tree"_q)) {
+				const auto branch = parts.size() >= 4 ? parts[3] : u"HEAD"_q;
+				const auto directory = parts.size() > 4 ? parts.mid(4).join('/') + '/' : QString();
+				const auto index = QUrl(u"https://raw.githubusercontent.com/"_q
+					+ repository + '/' + branch + '/' + directory + u"extera-plugins.json"_q);
+				controller->show(Box(IndexBox, controller, index, repository, branch, changed));
+				return true;
+			} else {
+				return false;
+			}
+		}
+	}
+	if (url.path().endsWith(u"/extera-plugins.json"_q)) {
+		controller->show(Box(IndexBox, controller, url, QString(), QString(), changed));
+		return true;
+	}
+	if (!url.path().endsWith(u".plugin"_q, Qt::CaseInsensitive)) {
+		return false;
+	}
+	InstallSource(controller, url, changed);
+	return true;
+}
+
+void SourcesBox(
+		not_null<Ui::GenericBox*> box,
+		Window::SessionController *controller,
+		Fn<void()> changed) {
+	box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Источники плагинов"))));
+	const auto content = box->verticalLayout();
+	content->add(object_ptr<Ui::FlatLabel>(content,
+		U(Mokagram::Lang::Tr("Добавьте GitHub-репозиторий, ссылку на .plugin или Telegram-канал. В канале нажмите на файл плагина для установки.")),
+		st::boxLabel), st::boxPadding);
+	const auto field = content->add(object_ptr<Ui::InputField>(
+		content, st::defaultInputField, Ui::InputField::Mode::SingleLine,
+		rpl::single(u"https://github.com/owner/repository"_q)), st::boxPadding);
+	field->setInputMethodHints(Qt::ImhUrlCharactersOnly | Qt::ImhNoAutoUppercase | Qt::ImhNoPredictiveText);
+	const auto weak = base::make_weak(controller);
+	const auto open = [=](const QString &source) {
+		const auto strong = weak.get();
+		if (!strong || !OpenSource(strong, source, changed)) {
+			field->showError();
+			return;
+		}
+		auto sources = Settings::String(u"plugins.sources"_q).split('\n', Qt::SkipEmptyParts);
+		sources.removeAll(source);
+		sources.prepend(source);
+		Settings::SetString(u"plugins.sources"_q, sources.mid(0, 20).join('\n'));
+	};
+	for (const auto &source : Settings::String(u"plugins.sources"_q).split('\n', Qt::SkipEmptyParts).mid(0, 20)) {
+		const auto link = content->add(object_ptr<Ui::LinkButton>(content, source), st::boxPadding);
+		link->setClickedCallback([=] { open(source); });
+	}
+	box->addButton(rpl::single(U(Mokagram::Lang::Tr("Открыть"))), [=] { open(field->getLastText().trimmed()); });
+	box->addButton(rpl::single(U(Mokagram::Lang::Tr("Очистить источники"))), [=] {
+		Settings::SetString(u"plugins.sources"_q, QString());
+		box->closeBox();
+	});
+	box->addButton(rpl::single(U(Mokagram::Lang::Tr("Закрыть"))), [=] { box->closeBox(); });
+	box->setFocusCallback([=] { field->setFocus(); });
+}
+
+
 } // namespace
 
 void StoreBox(
@@ -188,6 +444,14 @@ void StoreBox(
 		title->moveToLeft((width - title->width()) / 2, 6);
 	}, header->lifetime());
 	Ui::AddSkip(content, 8);
+	const auto sources = content->add(object_ptr<Ui::LinkButton>(
+		content,
+		U(Mokagram::Lang::Tr("Источники плагинов"))), st::boxPadding);
+	sources->setClickedCallback([=] {
+		if (const auto strong = weak.get()) {
+			strong->show(Box(SourcesBox, strong, changed));
+		}
+	});
 
 	const auto status = content->add(
 		object_ptr<Ui::FlatLabel>(

@@ -72,7 +72,11 @@ CanvasPlayer::CanvasPlayer(QObject *parent, Fn<void()> repaint)
 	});
 }
 
-CanvasPlayer::~CanvasPlayer() = default;
+CanvasPlayer::~CanvasPlayer() {
+	_requests.reset();
+	_playbackLifetime.destroy();
+	_player.reset();
+}
 
 void CanvasPlayer::refresh(
 		QString id,
@@ -115,6 +119,7 @@ void CanvasPlayer::get(
 		int limit,
 		Fn<void(QByteArray)> done) {
 	auto request = QNetworkRequest(url);
+	request.setRawHeader("User-Agent", "mokaGram/1.1 (Desktop music player)");
 	request.setTransferTimeout(10000);
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,

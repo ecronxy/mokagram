@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/cross_fade_label.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/continuous_sliders.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "ui/effects/fade_animation.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/menu/menu_item_base.h"
@@ -248,6 +249,10 @@ void PlaybackControls::updatePlaybackSpeed(float64 speed) {
 }
 
 void PlaybackControls::updatePlayback(const Player::TrackState &state) {
+	_playbackSlider->setWavy(
+		Mokagram::Settings::Bool(u"player.expressive_seek"_q),
+		state.state == Player::State::Playing || state.state == Player::State::Resuming
+			|| state.state == Player::State::Starting);
 	updatePlayPauseResumeState(state);
 	_playbackProgress->updateState(state, countDownloadedTillPercent(state));
 	updateTimeTexts(state);

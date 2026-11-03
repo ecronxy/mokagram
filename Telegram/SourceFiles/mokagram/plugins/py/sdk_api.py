@@ -548,7 +548,10 @@ def _invoke(entry, method, params, callback):
 
     def send():
         token = _h['register_cb'](entry, done, True)
-        return _native('invoke_raw', {'pid': entry['id'], 'token': token, 'hex': raw.hex()})
+        result = _native('invoke_raw', {'pid': entry['id'], 'token': token, 'hex': raw.hex()})
+        if not result.get('ok'):
+            entry.get('cbs', {}).pop(token, None)
+        return result
 
     def done(payload):
         result = error = None
@@ -1582,7 +1585,7 @@ def edit_admin(peer, user, rights, rank='', callback=None):
     for k in _ADMIN:
         if rights.get(k):
             ar[k] = True
-    return _invoke(entry, 'channels.editAdminRights', {'channel': ip, 'user_id': u, 'admin_rights': ar,
+    return _invoke(entry, 'channels.editAdmin', {'channel': ip, 'user_id': u, 'admin_rights': ar,
                                                         'rank': str(rank)[:16]}, callback)
 
 

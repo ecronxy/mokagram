@@ -21,6 +21,7 @@
 #include "ui/chat/attach/attach_prepare.h"
 #include "storage/localimageloader.h"
 #include "ui/layers/generic_box.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/toast/toast.h"
@@ -96,6 +97,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
+#include <QtCore/QtEndian>
 
 #include <algorithm>
 #include <map>
@@ -104,9 +106,12 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <utility>
 
 namespace Mokagram::Plugins {
 namespace {
+
+constexpr auto kSensitiveConfirmationTimeout = crl::time(60000);
 
 rpl::lifetime BridgeLifetime;
 
@@ -1599,24 +1604,119 @@ std::string TlInput(const QJsonObject &args) {
 
 // Отправляет готовое тело запроса. Ответ уходит плагину как событие __cb
 // (pid, token, payload) в его рабочем потоке. Ответы с обновлениями применяются в клиенте.
+[[nodiscard]] bool BlockedPluginRequest(const QByteArray &bytes) {
+	switch (qFromLittleEndian<quint32>(bytes.constData())) {
+	case mtpc_initConnection:
+	case mtpc_invokeAfterMsg:
+	case mtpc_invokeAfterMsgs:
+	case mtpc_invokeWithApnsSecret:
+	case mtpc_invokeWithBusinessConnection:
+	case mtpc_invokeWithGooglePlayIntegrity:
+	case mtpc_invokeWithLayer:
+	case mtpc_invokeWithMessagesRange:
+	case mtpc_invokeWithReCaptcha:
+	case mtpc_invokeWithTakeout:
+	case mtpc_invokeWithoutUpdates:
+		return true;
+	default:
+		return false;
+	}
+}
+
+[[nodiscard]] QString SensitivePluginMethod(const QByteArray &bytes) {
+	const auto flags = bytes.size() >= 8
+		? qFromLittleEndian<quint32>(bytes.constData() + 4)
+		: 0;
+	switch (qFromLittleEndian<quint32>(bytes.constData())) {
+	case mtpc_account_acceptAuthorization: return u"account.acceptAuthorization"_q;
+	case mtpc_account_changeAuthorizationSettings: return u"account.changeAuthorizationSettings"_q;
+	case mtpc_account_changePhone: return u"account.changePhone"_q;
+	case mtpc_account_deleteAccount: return u"account.deleteAccount"_q;
+	case mtpc_account_resetAuthorization: return u"account.resetAuthorization"_q;
+	case mtpc_account_resetPassword: return u"account.resetPassword"_q;
+	case mtpc_account_resetWebAuthorization: return u"account.resetWebAuthorization"_q;
+	case mtpc_account_resetWebAuthorizations: return u"account.resetWebAuthorizations"_q;
+	case mtpc_account_setAuthorizationTTL: return u"account.setAuthorizationTTL"_q;
+	case mtpc_account_setPrivacy: return u"account.setPrivacy"_q;
+	case mtpc_account_toggleUsername: return u"account.toggleUsername"_q;
+	case mtpc_account_updateConnectedBot: return u"account.updateConnectedBot"_q;
+	case mtpc_account_updatePasswordSettings: return u"account.updatePasswordSettings"_q;
+	case mtpc_account_updateUsername: return u"account.updateUsername"_q;
+	case mtpc_auth_acceptLoginToken: return u"auth.acceptLoginToken"_q;
+	case mtpc_auth_exportAuthorization: return u"auth.exportAuthorization"_q;
+	case mtpc_auth_resetAuthorizations: return u"auth.resetAuthorizations"_q;
+	case mtpc_channels_deleteChannel: return u"channels.deleteChannel"_q;
+	case mtpc_channels_editAdmin: return u"channels.editAdmin"_q;
+	case mtpc_channels_editBanned: return u"channels.editBanned"_q;
+	case mtpc_channels_toggleUsername: return u"channels.toggleUsername"_q;
+	case mtpc_channels_updatePaidMessagesPrice: return u"channels.updatePaidMessagesPrice"_q;
+	case mtpc_channels_updateUsername: return u"channels.updateUsername"_q;
+	case mtpc_messages_deleteChat: return u"messages.deleteChat"_q;
+	case mtpc_messages_deleteChatUser: return u"messages.deleteChatUser"_q;
+	case mtpc_messages_editChatAdmin: return u"messages.editChatAdmin"_q;
+	case mtpc_messages_editChatCreator: return u"messages.editChatCreator"_q;
+	case mtpc_messages_sendPaidReaction: return u"messages.sendPaidReaction"_q;
+	case mtpc_payments_changeStarsSubscription: return u"payments.changeStarsSubscription"_q;
+	case mtpc_payments_convertStarGift: return u"payments.convertStarGift"_q;
+	case mtpc_payments_craftStarGift: return u"payments.craftStarGift"_q;
+	case mtpc_payments_deleteStarGift: return u"payments.deleteStarGift"_q;
+	case mtpc_payments_fulfillStarsSubscription: return u"payments.fulfillStarsSubscription"_q;
+	case mtpc_payments_getStarGiftWithdrawalUrl: return u"payments.getStarGiftWithdrawalUrl"_q;
+	case mtpc_payments_getStarsRevenueWithdrawalUrl: return u"payments.getStarsRevenueWithdrawalUrl"_q;
+	case mtpc_payments_sendPaymentForm: return u"payments.sendPaymentForm"_q;
+	case mtpc_payments_sendStarGiftOffer: return u"payments.sendStarGiftOffer"_q;
+	case mtpc_payments_sendStarsForm: return u"payments.sendStarsForm"_q;
+	case mtpc_payments_transferStarGift: return u"payments.transferStarGift"_q;
+	case mtpc_payments_updateStarGiftPrice: return u"payments.updateStarGiftPrice"_q;
+	case mtpc_payments_upgradeStarGift: return u"payments.upgradeStarGift"_q;
+	case mtpc_payments_withdrawStarGift: return u"payments.withdrawStarGift"_q;
+	case mtpc_wallet_disableBackup: return u"wallet.disableBackup"_q;
+	case mtpc_wallet_enableBackup: return u"wallet.enableBackup"_q;
+	case mtpc_wallet_exportSecretPhrase: return u"wallet.exportSecretPhrase"_q;
+	case mtpc_wallet_replaceWallet: return u"wallet.replaceWallet"_q;
+	case mtpc_wallet_sendTransfer: return u"wallet.sendTransfer"_q;
+	case mtpc_wallet_tonConnectSubmitConnectResult: return u"wallet.tonConnectSubmitConnectResult"_q;
+	case mtpc_wallet_tonConnectSubmitResponse: return u"wallet.tonConnectSubmitResponse"_q;
+	case mtpc_messages_sendMessage:
+		return (flags & 0x680000) ? u"messages.sendMessage"_q : QString();
+	case mtpc_messages_sendMedia:
+		return (flags & 0x680000) ? u"messages.sendMedia"_q : QString();
+	case mtpc_messages_sendMultiMedia:
+		return (flags & 0x280000) ? u"messages.sendMultiMedia"_q : QString();
+	case mtpc_messages_forwardMessages:
+		return (flags & 0xa80000) ? u"messages.forwardMessages"_q : QString();
+	case mtpc_messages_sendInlineBotResult:
+		return (flags & 0x200000) ? u"messages.sendInlineBotResult"_q : QString();
+	case mtpc_channels_searchPosts:
+		return (flags & 4) ? u"channels.searchPosts"_q : QString();
+	case mtpc_phone_sendGroupCallMessage:
+		return (flags & 1) ? u"phone.sendGroupCallMessage"_q : QString();
+	default:
+		return QString();
+	}
+}
+
+std::map<std::string, Fn<void()>> SensitivePending;
+
 std::string InvokeRaw(const QJsonObject &args) {
 	const auto pid = args.value("pid").toString().toStdString();
 	const auto token = args.value("token").toString().toStdString();
 	const auto bytes = QByteArray::fromHex(
 		args.value("hex").toString().toLatin1());
-	if (bytes.size() < 4 || (bytes.size() & 3) || bytes.size() > (1 << 20)) {
+	if (bytes.size() < 4 || (bytes.size() & 3) || bytes.size() > (1 << 20)
+		|| BlockedPluginRequest(bytes)) {
 		return Reply(false, U("плохой запрос"));
+	}
+	const auto report = QJsonDocument::fromJson(QByteArray::fromStdString(
+		RequestInfoJson(bytes.toHex().toStdString()))).object();
+	if (!report.value("ok").toBool()) {
+		return Reply(false, U("не удалось проверить запрос плагина"));
 	}
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		if (!session) {
 			return Reply(false, U("нет открытой сессии"));
 		}
-		const auto ints = uint32(bytes.size() / 4);
-		auto request = MTP::details::SerializedRequest::Prepare(ints);
-		const auto old = request->size();
-		request->resize(old + int(ints));
-		memcpy(request->data() + old, bytes.constData(), size_t(bytes.size()));
 
 		const auto weak = base::make_weak(session);
 		const auto deliver = [=](QJsonObject payload) {
@@ -1626,48 +1726,139 @@ std::string InvokeRaw(const QJsonObject &args) {
 			wrapper.insert("payload", payload);
 			QueueEvent("__cb", Json(wrapper));
 		};
-		const auto id = MTP::details::GetNextRequestId();
-		session->mtp().sendSerialized(id, std::move(request), MTP::ResponseHandler{
-			.done = [=](const MTP::Response &response) -> bool {
-				const auto &reply = response.reply;
-				if (!reply.isEmpty()) {
-					switch (mtpTypeId(reply.front())) {
-					case mtpc_updatesTooLong:
-					case mtpc_updateShortMessage:
-					case mtpc_updateShortChatMessage:
-					case mtpc_updateShort:
-					case mtpc_updatesCombined:
-					case mtpc_updates:
-					case mtpc_updateShortSentMessage: {
-						auto from = reply.constData();
-						const auto end = from + reply.size();
-						auto updates = MTPUpdates();
-						if (updates.read(from, end)) {
-							if (const auto strong = weak.get()) {
-								strong->api().applyUpdates(updates);
+		const auto send = [=] {
+			const auto strong = weak.get();
+			if (!strong || ActiveSession() != strong || Stopping()) {
+				deliver(QJsonObject{
+					{ "ok", false }, { "type", "SESSION_CLOSED" } });
+				return;
+			}
+			const auto ints = uint32(bytes.size() / 4);
+			auto request = MTP::details::SerializedRequest::Prepare(ints);
+			const auto old = request->size();
+			request->resize(old + int(ints));
+			memcpy(request->data() + old, bytes.constData(), size_t(bytes.size()));
+			const auto id = MTP::details::GetNextRequestId();
+			session->mtp().sendSerialized(id, std::move(request), MTP::ResponseHandler{
+				.done = [=](const MTP::Response &response) -> bool {
+					const auto &reply = response.reply;
+					if (!reply.isEmpty()) {
+						switch (mtpTypeId(reply.front())) {
+						case mtpc_updatesTooLong:
+						case mtpc_updateShortMessage:
+						case mtpc_updateShortChatMessage:
+						case mtpc_updateShort:
+						case mtpc_updatesCombined:
+						case mtpc_updates:
+						case mtpc_updateShortSentMessage: {
+							auto from = reply.constData();
+							const auto end = from + reply.size();
+							auto updates = MTPUpdates();
+							if (updates.read(from, end)) {
+								if (const auto strong = weak.get()) {
+									strong->api().applyUpdates(updates);
+								}
 							}
+						} break;
 						}
-					} break;
 					}
-				}
-				auto payload = QJsonObject();
-				payload.insert("ok", true);
-				payload.insert("hex", QString::fromStdString(HexOfPrimes(
-					reply.constData(),
-					size_t(reply.size()))));
-				deliver(payload);
-				return true;
-			},
-			.fail = [=](const MTP::Error &error, const MTP::Response &) -> bool {
-				auto payload = QJsonObject();
-				payload.insert("ok", false);
-				payload.insert("code", int(error.code()));
-				payload.insert("type", error.type());
-				payload.insert("description", error.description());
-				deliver(payload);
-				return true;
-			},
-		}, 0, 0, 0);
+					auto payload = QJsonObject();
+					payload.insert("ok", true);
+					payload.insert("hex", QString::fromStdString(HexOfPrimes(
+						reply.constData(),
+						size_t(reply.size()))));
+					deliver(payload);
+					return true;
+				},
+				.fail = [=](const MTP::Error &error, const MTP::Response &) -> bool {
+					auto payload = QJsonObject();
+					payload.insert("ok", false);
+					payload.insert("code", int(error.code()));
+					payload.insert("type", error.type());
+					payload.insert("description", error.description());
+					deliver(payload);
+					return true;
+				},
+			}, 0, 0, 0);
+		};
+		const auto protectedMethod = SensitivePluginMethod(bytes);
+		const auto monetary = protectedMethod.startsWith(u"payments."_q)
+			|| protectedMethod == u"wallet.sendTransfer"_q
+			|| protectedMethod == u"messages.sendPaidReaction"_q
+			|| protectedMethod == u"messages.sendMessage"_q
+			|| protectedMethod == u"messages.sendMedia"_q
+			|| protectedMethod == u"messages.sendMultiMedia"_q
+			|| protectedMethod == u"messages.forwardMessages"_q
+			|| protectedMethod == u"messages.sendInlineBotResult"_q
+			|| protectedMethod == u"channels.searchPosts"_q
+			|| protectedMethod == u"phone.sendGroupCallMessage"_q;
+		if (monetary && (report.value("amounts").toArray().isEmpty()
+			|| report.value("targets").toArray().isEmpty())) {
+			return Reply(false, U(Mokagram::Lang::Tr(
+				"Сумма или получатель не определены. Выполните это действие в интерфейсе клиента.")));
+		}
+		if (protectedMethod.isEmpty() && !report.value("sensitive").toBool()) {
+			send();
+			return Reply(true);
+		}
+		const auto window = Core::App().activeWindow();
+		const auto controller = window ? window->sessionController() : nullptr;
+		if (!controller || &controller->session() != session
+			|| SensitivePending.contains(pid)) {
+			return Reply(false, U("подтверждение запроса плагина недоступно"));
+		}
+		const auto answered = std::make_shared<bool>(false);
+		const auto resolve = [=](bool allowed) {
+			if (std::exchange(*answered, true)) {
+				return;
+			}
+			SensitivePending.erase(pid);
+			if (allowed && EngineEnabled()) {
+				send();
+			} else {
+				deliver(QJsonObject{
+					{ "ok", false }, { "type", "REQUEST_DECLINED" },
+					{ "description", "The sensitive plugin request was declined." } });
+			}
+		};
+		SensitivePending.emplace(pid, [=] { resolve(false); });
+		auto details = QStringList();
+		details.push_back(U(Mokagram::Lang::Tr("Плагин запрашивает важное действие")));
+		details.push_back(U(Mokagram::Lang::Tr("Плагин: ")) + QString::fromStdString(pid));
+		details.push_back(U(Mokagram::Lang::Tr("Аккаунт: ")) + session->user()->name());
+		details.push_back(U(Mokagram::Lang::Tr("Запрос: ")) + (protectedMethod.isEmpty() ? report.value("method").toString() : protectedMethod));
+		for (const auto &target : report.value("targets").toArray()) {
+			const auto raw = target.toString();
+			const auto kind = raw.section(':', 0, 0);
+			auto valid = false;
+			const auto id = raw.section(':', 1).trimmed().toULongLong(&valid);
+			const auto peerId = !valid || !id ? PeerId()
+				: kind == u"user_id"_q || kind == u"bot_id"_q ? peerFromUser(UserId(id))
+				: kind == u"chat_id"_q ? peerFromChat(ChatId(id))
+				: kind == u"channel_id"_q ? peerFromChannel(ChannelId(id)) : PeerId();
+			const auto peer = peerId ? session->data().peerLoaded(peerId) : nullptr;
+			details.push_back(U(Mokagram::Lang::Tr("Получатель / чат: "))
+				+ (peer ? peer->name() + u" ("_q + raw + ')' : raw));
+		}
+		for (const auto &amount : report.value("amounts").toArray()) {
+			details.push_back(U(Mokagram::Lang::Tr("Сумма: ")) + amount.toString());
+		}
+		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			box->lifetime().add([=] { resolve(false); });
+			Ui::ConfirmBox(box, {
+				.text = details.join(u"\n\n"_q),
+				.confirmed = [=](Fn<void()> close) { resolve(true); close(); },
+				.cancelled = [=](Fn<void()> close) { resolve(false); close(); },
+				.confirmText = U(Mokagram::Lang::Tr("Разрешить один раз")),
+			});
+			box->boxClosing() | rpl::on_next([=] {
+				resolve(false);
+			}, box->lifetime());
+			QTimer::singleShot(kSensitiveConfirmationTimeout, box.get(), [=] {
+				resolve(false);
+				box->closeBox();
+			});
+		}));
 		return Reply(true);
 	});
 }
@@ -2458,10 +2649,16 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 	} else if (op == "theme_get") {
 		return ThemeGet();
 	} else if (op == "plugin_unloaded") {
-		const auto overlays = OnMain([pid = args.value("pid").toString().toStdString()] {
+		const auto cleanup = OnMain([pid = args.value("pid").toString().toStdString()] {
+			const auto i = SensitivePending.find(pid);
+			if (i != SensitivePending.end()) {
+				const auto cancel = i->second;
+				cancel();
+			}
 			OverlaysDropPlugin(pid);
 			return std::string();
 		});
+		if (!cleanup.empty()) return cleanup;
 		EventsSubscribe(QJsonObject{
 			{ "pid", args.value("pid") },
 			{ "events", QJsonArray() } });
@@ -2476,8 +2673,7 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 			{ "pid", args.value("pid") },
 			{ "kind", "badge" },
 			{ "on", false } });
-		const auto result = PluginUnloaded(args);
-		return overlays.empty() ? result : overlays;
+		return PluginUnloaded(args);
 	} else if (op == "filter_subscribe") {
 		return FilterSubscribe(args);
 	} else if (op == "get_dialogs") {

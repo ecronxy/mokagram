@@ -13,7 +13,7 @@ _MOKA_CAPS = {
 
 
 def _moka_parse(source):
-    out = {'meta': {}, 'detected': [], 'error': None}
+    out = {'meta': {}, 'detected': [], 'evidence': [], 'error': None}
     try:
         tree = ast.parse(source)
     except SyntaxError as e:
@@ -30,6 +30,30 @@ def _moka_parse(source):
                 except Exception:
                     pass
     detected = set()
+    evidence = []
+    aliases = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                aliases[item.asname or item.name.split('.')[0]] = item.name
+        elif isinstance(node, ast.ImportFrom):
+            for item in node.names:
+                aliases[item.asname or item.name] = (node.module or '') + '.' + item.name
+
+    def record(capability, node, symbol):
+        detected.add(capability)
+        item = {'capability': capability, 'line': getattr(node, 'lineno', 0), 'symbol': symbol}
+        if item not in evidence and len(evidence) < 200:
+            evidence.append(item)
+
+    def qualified(node):
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            parent = qualified(node.value)
+            return parent + '.' + node.attr if parent else node.attr
+        return ''
+
     for node in ast.walk(tree):
         mods = []
         if isinstance(node, ast.Import):
@@ -39,46 +63,132 @@ def _moka_parse(source):
         for m in mods:
             for cap, names in _MOKA_CAPS.items():
                 if m in names:
-                    detected.add(cap)
+                    record(cap, node, m)
         if isinstance(node, ast.Call):
             f = node.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ''
+            resolved = qualified(f) or name
+            root = resolved.split('.')[0]
+            for cap, names in _MOKA_CAPS.items():
+                if root in names:
+                    record(cap, node, resolved)
+            if resolved in ('os.system', 'os.popen', 'exec', 'eval', '__import__', 'compile'):
+                record('native', node, resolved)
+            if resolved in ('open', 'io.open', 'os.open', 'os.remove', 'os.unlink', 'os.rename', 'os.listdir'):
+                record('files', node, resolved)
+            call_caps = {
+                'add_hook': 'hooks.observe', 'add_on_update_hook': 'hooks.observe',
+                'add_pre_request_hook': 'hooks.intercept', 'add_post_request_hook': 'hooks.observe',
+                'add_message_filter_hook': 'hooks.intercept', 'add_message_text_hook': 'hooks.intercept',
+                'add_send_message_hook': 'hooks.intercept', 'add_menu_item': 'ui',
+                'show_dialog': 'ui', 'show_toast': 'ui', 'overlay': 'ui',
+                'get_setting': 'settings', 'set_setting': 'settings',
+                'http_get': 'network', 'http_post': 'network',
+            }
+            if name in call_caps:
+                record(call_caps[name], node, name)
             if isinstance(f, ast.Name):
                 if f.id == 'open':
-                    detected.add('files')
+                    record('files', node, name)
                 if f.id in ('exec', 'eval', '__import__', 'compile'):
-                    detected.add('native')
+                    record('native', node, name)
             elif isinstance(f, ast.Attribute):
                 if f.attr in ('system', 'popen'):
-                    detected.add('native')
+                    record('native', node, name)
                 if f.attr in ('send_message', 'send_file'):
-                    detected.add('messages.send')
+                    record('messages.send', node, name)
                 if f.attr in ('get_message', 'chat_info', 'get_dialogs', 'get_history', 'current_chat', 'mark_read', 'get_user_info', 'get_me'):
-                    detected.add('messages.read')
+                    record('messages.read', node, name)
                 if f.attr in ('edit_message', 'pin_message'):
-                    detected.add('messages.edit')
+                    record('messages.edit', node, name)
                 if f.attr in ('join', 'leave', 'invite', 'ban', 'unban', 'kick', 'restrict', 'edit_admin'):
-                    detected.add('chats.manage')
+                    record('chats.manage', node, name)
                 if f.attr in ('mute', 'archive', 'get_folders', 'folder_add', 'set_typing'):
-                    detected.add('chats.settings')
+                    record('chats.settings', node, name)
                 if f.attr in ('set_profile', 'set_emoji_status'):
-                    detected.add('profile.write')
+                    record('profile.write', node, name)
                 if f.attr in ('get_privacy', 'set_privacy'):
-                    detected.add('privacy.write')
+                    record('privacy.write', node, name)
                 if f.attr in ('get_entity',):
-                    detected.add('tl.read')
+                    record('tl.read', node, name)
                 if f.attr in ('invoke_tl', 'press_button'):
-                    detected.add('tl.write')
+                    record('tl.write', node, name)
                 if f.attr in ('forward_messages', 'react', 'send_album', 'schedule_message', 'save_draft'):
-                    detected.add('messages.send')
+                    record('messages.send', node, name)
                 if f.attr in ('get_participants', 'search_messages', 'get_history_remote', 'input_peer', 'get_user', 'download_media'):
-                    detected.add('messages.read')
+                    record('messages.read', node, name)
                 if f.attr in ('delete_messages', 'delete_message'):
-                    detected.add('messages.delete')
+                    record('messages.delete', node, name)
                 if f.attr == 'clipboard_get':
-                    detected.add('clipboard')
+                    record('clipboard', node, name)
+    for cap in sorted(detected):
+        if not any(item['capability'] == cap for item in evidence):
+            evidence.append({'capability': cap, 'line': 0, 'symbol': ''})
     out['meta'] = meta
     out['detected'] = sorted(detected)
+    out['evidence'] = evidence
+    out['sha256'] = hashlib.sha256(source.encode('utf8')).hexdigest()
     return json.dumps(out, ensure_ascii=False)
+
+
+_MOKA_SENSITIVE = {
+    'payments.transferStarGift', 'payments.updateStarGiftPrice', 'payments.convertStarGift',
+    'payments.upgradeStarGift', 'payments.getStarGiftWithdrawalUrl', 'payments.withdrawStarGift',
+    'payments.deleteStarGift', 'payments.craftStarGift', 'payments.sendStarsForm',
+    'payments.sendPaymentForm', 'payments.fulfillStarsSubscription', 'payments.changeStarsSubscription',
+    'payments.getStarsRevenueWithdrawalUrl', 'payments.sendStarGiftOffer',
+    'auth.acceptLoginToken', 'auth.exportAuthorization', 'auth.resetAuthorizations',
+    'account.resetAuthorization', 'account.resetWebAuthorization', 'account.resetWebAuthorizations',
+    'account.deleteAccount', 'account.updatePasswordSettings', 'account.resetPassword',
+    'account.changePhone', 'account.updateConnectedBot', 'account.acceptAuthorization',
+    'account.updateUsername', 'account.toggleUsername', 'account.setAuthorizationTTL',
+    'account.changeAuthorizationSettings', 'account.setPrivacy',
+    'channels.editCreator', 'channels.editAdmin', 'channels.deleteChannel', 'channels.editBanned',
+    'channels.updateUsername', 'channels.toggleUsername', 'channels.updatePaidMessagesPrice',
+    'messages.editChatCreator', 'messages.editChatAdmin', 'messages.deleteChat',
+    'messages.deleteChatUser', 'messages.sendPaidReaction',
+    'wallet.sendTransfer', 'wallet.exportSecretPhrase', 'wallet.replaceWallet',
+    'wallet.enableBackup', 'wallet.disableBackup', 'wallet.tonConnectSubmitConnectResult',
+    'wallet.tonConnectSubmitResponse',
+}
+
+
+def _moka_request_info(encoded):
+    try:
+        raw = bytes.fromhex(encoded)
+        request = sys.modules['mokagram_sdk.tl'].decode_request(raw)
+        method = request['_']
+        amounts, targets = [], []
+
+        def walk(value, depth=0):
+            if depth > 8 or not isinstance(value, dict):
+                return
+            for key, item in value.items():
+                if key in ('user_id', 'chat_id', 'channel_id', 'bot_id') and isinstance(item, int):
+                    targets.append(key + ': ' + str(item))
+                elif key in ('allow_paid_stars', 'amount', 'stars', 'resell_amount', 'price', 'send_paid_messages_stars'):
+                    if isinstance(item, int):
+                        amounts.append(key + ': ' + str(item))
+                    elif isinstance(item, dict):
+                        walk(item, depth + 1)
+                elif key == 'count' and method == 'messages.sendPaidReaction':
+                    amounts.append('stars: ' + str(item))
+                elif isinstance(item, dict):
+                    walk(item, depth + 1)
+                elif isinstance(item, list):
+                    for part in item[:20]:
+                        walk(part, depth + 1)
+        walk(request)
+        sensitive = (method in _MOKA_SENSITIVE
+                     or bool(request.get('allow_paid_stars'))
+                     or bool(request.get('allow_paid_floodskip'))
+                     or bool(request.get('suggested_post')))
+        return json.dumps({'ok': True, 'method': method, 'sensitive': sensitive,
+                           'amounts': list(dict.fromkeys(amounts)),
+                           'targets': list(dict.fromkeys(targets)),
+                           'sha256': hashlib.sha256(raw).hexdigest()}, ensure_ascii=False)
+    except Exception:
+        return json.dumps({'ok': False})
 
 
 # ---- журнал: print и ошибки плагинов собираются здесь, C++ забирает через _moka_drain ----

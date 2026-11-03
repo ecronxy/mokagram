@@ -286,3 +286,11 @@ def decode_result(method, data):
     if result_type.startswith('Vector<'):
         return _r_value(r, result_type)
     return _r_object(r)
+
+
+def decode_request(data):
+    r = _R(bytes(data))
+    result = _r_object(r)
+    if not isinstance(result, dict) or not _schema()['c'][result['_']][3] or r.p != len(r.d):
+        raise ValueError('неверное тело запроса')
+    return result

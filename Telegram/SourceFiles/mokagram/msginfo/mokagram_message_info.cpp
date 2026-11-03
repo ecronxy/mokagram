@@ -5,6 +5,7 @@
 // Mokagram: окно «Информация о сообщении» (ID, даты, пересылка, вложение, кодировщик голосового).
 #include "mokagram/msginfo/mokagram_message_info.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/msginfo/mokagram_media_fingerprint.h"
 
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
@@ -32,6 +33,7 @@
 
 #include <QtCore/QDateTime>
 #include <QtCore/QFile>
+#include <QtCore/QBuffer>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 
@@ -39,6 +41,8 @@
 
 namespace Mokagram::MessageInfo {
 namespace {
+
+constexpr auto kFingerprintDownloadLimit = int64(32 * 1024 * 1024);
 
 [[nodiscard]] QString U(const char *text) {
 	return QString::fromUtf8(text);
@@ -147,26 +151,41 @@ struct Row {
 					'f',
 					1) + U(Mokagram::Lang::Tr(" с")));
 			}
-			if (document->isVoiceMessage()) {
+			if (document->isVoiceMessage() || document->isVideoMessage()) {
 				auto bytes = QByteArray();
 				const auto view = document->createMediaView();
 				if (view->loaded()) {
 					bytes = view->bytes();
-				} else {
-					// Голосовое ещё не скачано: качаем, окно откроется заново.
+				} else if (document->size <= kFingerprintDownloadLimit) {
+					// Небольшой файл догружаем для чтения метаданных.
 					document->save(item->fullId(), QString());
 				}
 				if (bytes.isEmpty()) {
 					const auto path = document->filepath(true);
 					auto file = QFile(path);
 					if (!path.isEmpty() && file.open(QIODevice::ReadOnly)) {
-						bytes = file.read(4096);
+						bytes = file.read(256 * 1024);
 					}
 				}
-				const auto hint = VoiceHint(bytes);
-				add(U(Mokagram::Lang::Tr("Голосовое (по заголовку файла)")), hint.isEmpty()
-					? U(Mokagram::Lang::Tr("Скачиваю голосовое, окно обновится само..."))
-					: hint);
+				auto platform = QString();
+				if (document->isVoiceMessage()) {
+					platform = VoicePlatform(bytes);
+					add(U(Mokagram::Lang::Tr("Голосовое (по заголовку файла)")), VoiceHint(bytes));
+				} else {
+					auto file = QFile(document->filepath(true));
+					if (file.open(QIODevice::ReadOnly)) platform = RoundVideoPlatform(file);
+					else if (view->loaded()) {
+						auto buffer = QBuffer(&bytes);
+						buffer.open(QIODevice::ReadOnly);
+						platform = RoundVideoPlatform(buffer);
+					}
+				}
+				add(U(Mokagram::Lang::Tr("Отправлено с… (предположение)")), platform.isEmpty()
+					? view->loaded() ? U(Mokagram::Lang::Tr("Не удалось определить"))
+					: document->size <= kFingerprintDownloadLimit
+					? U(Mokagram::Lang::Tr("Скачиваю файл, окно обновится само…"))
+					: U(Mokagram::Lang::Tr("Скачайте файл для определения"))
+					: platform);
 			}
 		} else if (const auto photo = media->photo()) {
 			add(U(Mokagram::Lang::Tr("Фото")), QString::number(photo->id));
@@ -184,12 +203,12 @@ void Show(
 		not_null<Window::SessionController*> controller,
 		not_null<HistoryItem*> item) {
 	const auto rows = Collect(item);
-	// Для нескачанного голосового ждём файл и показываем окно ещё раз.
-	static rpl::lifetime pending;
-	pending.destroy();
+	// Подписка живёт вместе с окном, закрытие отменяет обновление.
+	const auto pending = std::make_shared<rpl::lifetime>();
 	if (const auto media = item->media()) {
 		if (const auto document = media->document()) {
-			if (document->isVoiceMessage()) {
+			if ((document->isVoiceMessage() || document->isVideoMessage())
+				&& document->size <= kFingerprintDownloadLimit) {
 				const auto view = document->createMediaView();
 				if (!view->loaded()) {
 					const auto weak = base::make_weak(controller.get());
@@ -206,12 +225,13 @@ void Show(
 							strong->hideLayer();
 							Show(strong, again);
 						}
-					}, pending);
+					}, *pending);
 				}
 			}
 		}
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->lifetime().add([=] { pending->destroy(); });
 		Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();
 		const auto header = content->add(

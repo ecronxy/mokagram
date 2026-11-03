@@ -7,6 +7,7 @@
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/music/mokagram_motion.h"
 #include "ui/style/style_core.h"
 #include "ui/style/style_core_palette.h"
 #include "styles/palette.h"
@@ -230,6 +231,7 @@ void RegisterSettings() {
 		.defaultValue = true,
 		.dependsOn = u"lyrics.enabled"_q,
 	});
+	Music::RegisterMotionSettings();
 }
 
 void Start() {

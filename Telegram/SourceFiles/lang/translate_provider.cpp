@@ -7,6 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "lang/translate_provider.h"
 
+#include "lang/translate_external_provider.h"
+#include "mokagram/settings/mokagram_settings.h"
+
 #include "base/options.h"
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -37,6 +40,16 @@ std::unique_ptr<TranslateProvider> CreateTranslateProvider(
 	if (!urlTemplate.isEmpty()
 		&& urlTemplate.contains(u"%q"_q)) {
 		return CreateUrlTranslateProvider(urlTemplate);
+	}
+	switch (Mokagram::Settings::Int(u"translation.provider"_q)) {
+	case 1:
+		return CreateExternalTranslateProvider(ExternalTranslateService::Google);
+	case 2:
+		return CreateExternalTranslateProvider(ExternalTranslateService::Microsoft);
+	case 3:
+		return CreateExternalTranslateProvider(ExternalTranslateService::Yandex);
+	default:
+		break;
 	}
 	if (Core::App().settings().usePlatformTranslation()
 		&& Platform::IsTranslateProviderAvailable()) {

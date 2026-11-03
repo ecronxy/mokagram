@@ -1,0 +1,9 @@
+using "ui/basic.style";
+
+motionWaveLength: 24px;
+motionWaveAmplitude: 3px;
+motionWaveStroke: 3px;
+motionWaveSample: 2px;
+motionWaveGap: 6px;
+motionWaveHandle: 4px;
+motionWaveHandleHeight: 18px;

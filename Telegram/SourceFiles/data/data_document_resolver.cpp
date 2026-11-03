@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/iv_instance.h"
 #include "lang/lang_keys.h"
 #include "media/player/media_player_instance.h"
+#include "media/view/media_view_pdf.h"
 #include "platform/platform_file_utilities.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/chat/chat_theme.h"
@@ -304,7 +305,10 @@ void ResolveDocument(
 				}
 				context = QVariant::fromValue(clickHandlerContext);
 			}
-			if (!Core::App().iv().showMarkdown(path, context)) {
+			if (!::Media::View::OpenPdf(
+					path,
+					&document->owner().session())
+				&& !Core::App().iv().showMarkdown(path, context)) {
 				LaunchWithWarning(path, item);
 			}
 		} else if (document->status == FileReady

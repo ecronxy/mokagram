@@ -88,6 +88,8 @@ struct Info {
 	QString icon;
 	QStringList declared;
 	QStringList detected;
+	QJsonArray evidence;
+	QString sha256;
 	QString error;
 	bool permissionsDeclared = false;
 };
@@ -121,6 +123,8 @@ struct Info {
 	for (const auto &value : root.value("detected").toArray()) {
 		result.detected.push_back(value.toString());
 	}
+	result.evidence = root.value("evidence").toArray();
+	result.sha256 = root.value("sha256").toString();
 	return result;
 }
 
@@ -434,6 +438,43 @@ void FillInstallBox(
 			st::boxDividerLabel,
 			QMargins(24, 10, 24, 0));
 	}
+
+
+	auto analysis = QStringList();
+	analysis.push_back(U(Mokagram::Lang::Tr("Анализ кода перед установкой")));
+	if (info.permissionsDeclared) {
+		auto declared = QStringList();
+		for (const auto &permission : info.declared) {
+			declared.push_back(PermissionTitle(permission));
+		}
+		analysis.push_back(U(Mokagram::Lang::Tr("Запрошенный доступ: "))
+			+ (declared.isEmpty() ? U(Mokagram::Lang::Tr("не запрошен")) : declared.join(u", "_q)));
+	}
+	for (const auto &permission : info.detected) {
+		auto line = PermissionTitle(permission);
+		auto locations = QStringList();
+		for (const auto &value : info.evidence) {
+			const auto item = value.toObject();
+			if (item.value("capability").toString() == permission
+				&& item.value("line").toInt() > 0) {
+				locations.push_back(QString::number(item.value("line").toInt()));
+			}
+		}
+		locations.removeDuplicates();
+		if (!locations.isEmpty()) {
+			line += u" ("_q + U(Mokagram::Lang::Tr("строки: "))
+				+ locations.mid(0, 8).join(u", "_q) + u")"_q;
+		}
+		analysis.push_back(u"• "_q + line);
+	}
+	analysis.push_back(U(Mokagram::Lang::Tr("Статический анализ не запускает код и может не обнаружить скрытые действия. Это не гарантия безопасности.")));
+	if (!info.sha256.isEmpty()) {
+		analysis.push_back(u"SHA-256: "_q + info.sha256);
+	}
+	content->add(object_ptr<Ui::FlatLabel>(
+		content,
+		analysis.join(u"\n"_q),
+		st::boxLabel), st::boxPadding);
 
 	AddButtons(
 		content,

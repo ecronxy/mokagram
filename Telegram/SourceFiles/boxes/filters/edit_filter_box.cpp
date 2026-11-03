@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/filters/edit_filter_box.h"
 
+#include "mokagram/lang/mokagram_lang.h"
+
 #include "apiwrap.h"
 #include "base/event_filter.h"
 #include "boxes/filters/edit_filter_chats_list.h"
@@ -52,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "settings/settings_builder.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/wrap/slide_wrap.h"
 #include "window/window_controller.h"
@@ -776,6 +779,25 @@ void EditFilterBox(
 		kTypes,
 		&Data::ChatFilter::always);
 
+	const auto onlyManaged = includeCard->add(object_ptr<Ui::Checkbox>(
+		includeCard,
+		rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
+			"Только чаты, где я владелец или администратор"))),
+		!!(filter.flags() & Flag::OnlyManaged),
+		st::settingsCheckbox), st::settingsCheckboxPadding);
+	onlyManaged->checkedChanges() | rpl::on_next([=](bool checked) {
+		const auto rules = data->current();
+		auto flags = rules.flags() & ~Flag::OnlyManaged;
+		if (checked) {
+			flags |= Flag::OnlyManaged | Flag::Groups | Flag::Channels;
+		}
+		*data = Data::ChatFilter(
+			rules.id(), rules.title(), rules.iconEmoji(), rules.colorIndex(),
+			flags, rules.always(), rules.pinned(), rules.never());
+		include->updateData(flags & kTypes, rules.always());
+	}, onlyManaged->lifetime());
+	AddHint(content, rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
+		"Ограничение по правам действует только на этом устройстве."))));
 	AddHint(content, tr::lng_filters_include_about());
 
 	auto excludeWrap = content->add(
@@ -1166,6 +1188,8 @@ void EditExistingFilter(
 	const auto doneCallback = [=](const Data::ChatFilter &result) {
 		Expects(id == result.id());
 
+		Data::SaveChatFilterOnlyManaged(
+			session, id, !!(result.flags() & Flag::OnlyManaged));
 		const auto tl = result.tl();
 		session->data().chatsFilters().apply(MTP_updateDialogFilter(
 			MTP_flags(MTPDupdateDialogFilter::Flag::f_filter),
