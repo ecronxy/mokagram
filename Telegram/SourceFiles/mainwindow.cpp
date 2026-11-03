@@ -49,8 +49,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_setup_email.h"
 #include "window/window_media_preview.h"
 #include "styles/style_window.h"
+#include "styles/style_window_main_menu.h"
+#include "mokagram/settings/mokagram_settings.h"
 
 #include <QtGui/QWindow>
+
+namespace Ui {
+[[nodiscard]] bool MainMenuOnRight();
+} // namespace Ui
 
 namespace {
 
@@ -111,6 +117,12 @@ MainWindow::MainWindow(not_null<Window::Controller*> controller)
 void MainWindow::initHook() {
 	Platform::MainWindow::initHook();
 	QCoreApplication::instance()->installEventFilter(this);
+	Mokagram::Settings::Changed(
+	) | rpl::filter([](const QString &key) {
+		return key == u"look.menu_pinned"_q || key == u"look.menu_side"_q;
+	}) | rpl::on_next([=] {
+		updateControlsGeometry();
+	}, lifetime());
 }
 
 void MainWindow::applyInitialWorkMode() {
@@ -159,6 +171,9 @@ void MainWindow::finishFirstShow() {
 }
 
 void MainWindow::clearWidgetsHook() {
+	delete bodyWidget()->findChild<QWidget*>(
+		u"moka-pinned-menu"_q,
+		Qt::FindDirectChildrenOnly);
 	_mediaPreview.destroy();
 	_main.destroy();
 	_intro.destroy();
@@ -403,6 +418,12 @@ bool MainWindow::showSectionInExistingLayer(
 
 void MainWindow::showMainMenu() {
 	if (_passcodeLock || _setupEmailLock) return;
+
+	// Меню закреплено колонкой: оно уже на экране, второй раз не открываем.
+	if (Mokagram::Settings::Bool(u"look.menu_pinned"_q)) {
+		updateControlsGeometry();
+		return;
+	}
 
 	if (isHidden()) showFromTray();
 
@@ -757,7 +778,65 @@ void MainWindow::updateControlsGeometry() {
 	if (_passcodeLock) _passcodeLock->setGeometry(body);
 	if (_setupEmailLock) _setupEmailLock->setGeometry(body);
 	auto mainLeft = 0;
+	auto mainTop = 0;
 	auto mainWidth = body.width();
+	auto mainHeight = body.height();
+	// Mokagram: меню закреплено у края окна: колонкой слева или справа,
+	// горизонтальной панелью сверху или снизу, как панель задач.
+	{
+		constexpr auto kPinnedName = "moka-pinned-menu";
+		constexpr auto kBarName = "moka-pinned-bar";
+		auto menu = static_cast<Window::MainMenu*>(bodyWidget()->findChild<QWidget*>(
+			QString::fromLatin1(kPinnedName),
+			Qt::FindDirectChildrenOnly));
+		auto bar = _main
+			? _main->findChild<QWidget*>(
+				QString::fromLatin1(kBarName),
+				Qt::FindDirectChildrenOnly)
+			: nullptr;
+		const auto side = Mokagram::Settings::Int(u"look.menu_side"_q);
+		const auto horizontal = (side >= 2);
+		const auto wants = Mokagram::Settings::Bool(u"look.menu_pinned"_q)
+			&& _main
+			&& !_main->isHidden()
+			&& sessionController()
+			&& !_passcodeLock
+			&& !_setupEmailLock;
+		if (!wants) {
+			// Панель сама уезжает с анимацией, когда закрепление выключено.
+			delete menu;
+		} else {
+			if (!menu) {
+				menu = Ui::CreateChild<Window::MainMenu>(
+					bodyWidget(),
+					sessionController());
+				menu->setObjectName(QString::fromLatin1(kPinnedName));
+				menu->setProperty("moka-pinned", true);
+				menu->showFinished();
+			}
+			menu->setVisible(!horizontal);
+			if (horizontal) {
+				if (!bar) {
+					bar = menu->createDockBar(_main.data(), side);
+					bar->setObjectName(QString::fromLatin1(kBarName));
+				}
+			} else {
+				const auto skip = st::mainMenuWidth;
+				const auto right = Ui::MainMenuOnRight();
+				menu->setGeometry(
+					right ? (body.x() + body.width() - skip) : body.x(),
+					body.y(),
+					skip,
+					body.height());
+				if (right) {
+					mainWidth -= skip;
+				} else {
+					mainLeft += skip;
+					mainWidth -= skip;
+				}
+			}
+		}
+	}
 	if (const auto session = sessionController()) {
 		if (const auto skip = session->filtersWidth()) {
 			mainLeft += skip;
@@ -767,9 +846,9 @@ void MainWindow::updateControlsGeometry() {
 	if (_main) {
 		_main->setGeometry({
 			body.x() + mainLeft,
-			body.y(),
+			body.y() + mainTop,
 			mainWidth,
-			body.height() });
+			mainHeight });
 	}
 	if (_intro) _intro->setGeometry(body);
 	if (_layer) _layer->setGeometry(body);

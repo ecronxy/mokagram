@@ -46,11 +46,39 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "styles/style_widgets.h"
 #include "styles/style_window.h"
+#include "styles/style_window_main_menu.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "styles/style_menu_icons.h"
 
 #include <QtGui/QtEvents>
 
+namespace Ui {
+[[nodiscard]] bool MainMenuOnRight();
+} // namespace Ui
+
 namespace Window {
+namespace {
+
+// Закреплённое меню занимает край окна, колонка папок встаёт рядом с ним:
+// после колонки слева или между горизонтальными панелями сверху и снизу.
+struct PinnedInset {
+	int left = 0;
+	int top = 0;
+	int bottom = 0;
+};
+
+[[nodiscard]] PinnedInset PinnedMenuInset() {
+	if (!Mokagram::Settings::Bool(u"look.menu_pinned"_q)) {
+		return {};
+	}
+	switch (Mokagram::Settings::Int(u"look.menu_side"_q)) {
+	case 0: return { .left = st::mainMenuWidth };
+	}
+	return {};
+}
+
+} // namespace
+
 namespace {
 
 // The folder tabs container, exposed as a list to screen readers.
@@ -140,17 +168,25 @@ void FiltersMenu::setup() {
 		p.drawRect(clip);
 	}, _outer.lifetime());
 
-	_parent->heightValue(
-	) | rpl::on_next([=](int height) {
+	const auto place = [=] {
 		const auto width = st::windowFiltersWidth;
-		_outer.setGeometry({ 0, 0, width, height });
+		const auto inset = PinnedMenuInset();
+		const auto height = _parent->height() - inset.top - inset.bottom;
+		_outer.setGeometry({ inset.left, inset.top, width, height });
 		_menu.resizeToWidth(width);
 		_menu.move(0, 0);
 		_scroll.setGeometry(
 			{ 0, _menu.height(), width, height - _menu.height() });
 		_container->resizeToWidth(width);
 		_container->move(0, 0);
-	}, _outer.lifetime());
+	};
+	_parent->heightValue(
+	) | rpl::on_next(place, _outer.lifetime());
+
+	Mokagram::Settings::Changed(
+	) | rpl::filter([](const QString &key) {
+		return key == u"look.menu_pinned"_q || key == u"look.menu_side"_q;
+	}) | rpl::on_next(place, _outer.lifetime());
 
 	auto premium = Data::AmPremiumValue(&_session->session());
 

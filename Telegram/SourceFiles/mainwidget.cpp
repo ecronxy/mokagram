@@ -105,6 +105,56 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
+// Mokagram: горизонтальная панель меню (сверху или снизу области чата).
+// Её занимаемая высота анимируется свойством "moka-progress".
+struct DockBars {
+	int top = 0;
+	int bottom = 0;
+	std::vector<QWidget*> bars;
+};
+
+[[nodiscard]] int DockBarFullHeight() {
+	return style::ConvertScale(56);
+}
+
+[[nodiscard]] DockBars CollectDockBars(QWidget *main) {
+	auto result = DockBars();
+	for (const auto child : main->children()) {
+		const auto widget = qobject_cast<QWidget*>(child);
+		if (!widget || !widget->property("moka-progress").isValid()) {
+			continue;
+		}
+		const auto occupied = int(base::SafeRound(
+			widget->property("moka-progress").toDouble()
+			* DockBarFullHeight()));
+		(widget->property("moka-side").toInt() == 3
+			? result.bottom
+			: result.top) += occupied;
+		result.bars.push_back(widget);
+	}
+	return result;
+}
+
+// Ставит панели над областью чата: левый край и ширина области заданы снаружи.
+void PlaceDockBars(
+		const DockBars &dock,
+		int left,
+		int width,
+		int mainHeight) {
+	const auto full = DockBarFullHeight();
+	for (const auto bar : dock.bars) {
+		const auto occupied = int(base::SafeRound(
+			bar->property("moka-progress").toDouble() * full));
+		const auto bottom = (bar->property("moka-side").toInt() == 3);
+		bar->setGeometry(
+			left,
+			bottom ? (mainHeight - occupied) : (occupied - full),
+			width,
+			full);
+		bar->raise();
+	}
+}
+
 void ClearBotStartToken(PeerData *peer) {
 	if (peer && peer->isUser() && peer->asUser()->isBot()) {
 		peer->asUser()->botInfo->startToken = QString();
@@ -2544,7 +2594,10 @@ void MainWidget::paintEvent(QPaintEvent *e) {
 }
 
 int MainWidget::getMainSectionTop() const {
-	return _callTopBarHeight + _exportTopBarHeight + _playerHeight;
+	return _callTopBarHeight
+		+ _exportTopBarHeight
+		+ _playerHeight
+		+ CollectDockBars(const_cast<MainWidget*>(this)).top;
 }
 
 int MainWidget::getThirdSectionTop() const {
@@ -2706,29 +2759,34 @@ void MainWidget::updateControlsGeometry() {
 		_thirdShadow.destroy();
 	}
 	const auto mainSectionTop = getMainSectionTop();
+	const auto dock = CollectDockBars(this);
+	const auto dockBottom = dock.bottom;
 	auto dialogsWidth = _dialogs
 		? int(base::SafeRound(_a_dialogsWidth.value(_dialogsWidth)))
 		: isOneColumn()
 		? width()
 		: 0;
 	if (isOneColumn()) {
+		PlaceDockBars(dock, 0, dialogsWidth, height());
 		if (_callTopBar) {
 			_callTopBar->resizeToWidth(dialogsWidth);
-			_callTopBar->moveToLeft(0, 0);
+			_callTopBar->moveToLeft(0, dock.top);
 		}
 		if (_exportTopBar) {
 			_exportTopBar->resizeToWidth(dialogsWidth);
-			_exportTopBar->moveToLeft(0, _callTopBarHeight);
+			_exportTopBar->moveToLeft(0, dock.top + _callTopBarHeight);
 		}
 		if (_player) {
 			_player->resizeToWidth(dialogsWidth);
-			_player->moveToLeft(0, _callTopBarHeight + _exportTopBarHeight);
+			_player->moveToLeft(
+				0,
+				dock.top + _callTopBarHeight + _exportTopBarHeight);
 		}
 		const auto mainSectionGeometry = QRect(
 			0,
 			mainSectionTop,
 			dialogsWidth,
-			height() - mainSectionTop);
+			height() - mainSectionTop - dockBottom);
 		if (_dialogs) {
 			_dialogs->setGeometryWithTopMoved(
 				mainSectionGeometry,
@@ -2773,25 +2831,28 @@ void MainWidget::updateControlsGeometry() {
 		const auto mainSectionWidth = width()
 			- dialogsWidth
 			- thirdSectionWidth;
+		PlaceDockBars(dock, dialogsWidth, mainSectionWidth, height());
 		if (_callTopBar) {
 			_callTopBar->resizeToWidth(mainSectionWidth);
-			_callTopBar->moveToLeft(dialogsWidth, 0);
+			_callTopBar->moveToLeft(dialogsWidth, dock.top);
 		}
 		if (_exportTopBar) {
 			_exportTopBar->resizeToWidth(mainSectionWidth);
-			_exportTopBar->moveToLeft(dialogsWidth, _callTopBarHeight);
+			_exportTopBar->moveToLeft(
+				dialogsWidth,
+				dock.top + _callTopBarHeight);
 		}
 		if (_player) {
 			_player->resizeToWidth(mainSectionWidth);
 			_player->moveToLeft(
 				dialogsWidth,
-				_callTopBarHeight + _exportTopBarHeight);
+				dock.top + _callTopBarHeight + _exportTopBarHeight);
 		}
 		_history->setGeometryWithTopMoved(QRect(
 			dialogsWidth,
 			mainSectionTop,
 			mainSectionWidth,
-			height() - mainSectionTop
+			height() - mainSectionTop - dockBottom
 		), _contentScrollAddToY);
 		if (_hider) {
 			_hider->setGeometryToLeft(
@@ -2806,7 +2867,7 @@ void MainWidget::updateControlsGeometry() {
 			_history->x(),
 			mainSectionTop,
 			_history->width(),
-			height() - mainSectionTop);
+			height() - mainSectionTop - dockBottom);
 		_mainSection->setGeometryWithTopMoved(
 			mainSectionGeometry,
 			_contentScrollAddToY);

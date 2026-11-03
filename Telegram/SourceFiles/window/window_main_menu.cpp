@@ -7,6 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/settings/mokagram_settings.h"
+#include "ui/abstract_button.h"
+#include "ui/effects/animations.h"
+#include "styles/style_info.h"
+#include "styles/style_dialogs.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_music_ui.h"
@@ -93,8 +98,363 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
 
+namespace Ui {
+[[nodiscard]] bool MainMenuOnRight();
+} // namespace Ui
+
+namespace Main {
+class Session;
+} // namespace Main
+
+namespace Mokagram::Misc {
+[[nodiscard]] bool PrivacyLocked(not_null<Main::Session*> session);
+[[nodiscard]] rpl::producer<bool> PrivacyLockedValue(not_null<Main::Session*> session);
+void SetPrivacyLocked(not_null<Main::Session*> session, bool locked);
+void ShowPrivacyLockBox();
+} // namespace Mokagram::Misc
+
 namespace Window {
 namespace {
+
+// Mokagram: кнопка закрепления меню у края окна (значок боковой панели).
+// side: 0 слева, 1 справа, 2 сверху, 3 снизу.
+class DockButton final : public Ui::AbstractButton {
+public:
+	DockButton(QWidget *parent, int side, int size = 36)
+	: AbstractButton(parent)
+	, _side(side) {
+		setPointerCursor(true);
+		resize(style::ConvertScale(size), style::ConvertScale(size));
+		Mokagram::Settings::Changed() | rpl::on_next([=](const QString &key) {
+			if (key == u"look.menu_pinned"_q || key == u"look.menu_side"_q) {
+				update();
+			}
+		}, lifetime());
+		setClickedCallback([=] {
+			namespace S = Mokagram::Settings;
+			if (active()) {
+				S::SetBool(u"look.menu_pinned"_q, false);
+			} else {
+				S::SetInt(u"look.menu_side"_q, _side);
+				S::SetBool(u"look.menu_pinned"_q, true);
+			}
+		});
+	}
+
+private:
+	[[nodiscard]] bool active() const {
+		namespace S = Mokagram::Settings;
+		return S::Bool(u"look.menu_pinned"_q)
+			&& (S::Int(u"look.menu_side"_q) == _side);
+	}
+	void onStateChanged(State was, StateChangeSource source) override {
+		const auto now = isOver();
+		if (now != bool(was & StateFlag::Over)) {
+			_hover.start(
+				[=] { update(); },
+				now ? 0. : 1.,
+				now ? 1. : 0.,
+				140,
+				anim::easeOutCubic);
+		}
+	}
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto over = _hover.value(isOver() ? 1. : 0.);
+		const auto on = active();
+		if (over > 0. || on) {
+			auto bg = st::windowActiveTextFg->c;
+			bg.setAlphaF(on ? 0.18 : 0.10 * over);
+			p.setPen(Qt::NoPen);
+			p.setBrush(bg);
+			p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+		}
+		const auto color = on
+			? st::windowActiveTextFg->c
+			: anim::color(st::menuIconFg->c, st::menuIconFgOver->c, over);
+		const auto &icon = st::topBarInfo.icon;
+		const auto x = (width() - icon.width()) / 2;
+		const auto y = (height() - icon.height()) / 2;
+		// Та же иконка боковой панели, повёрнутая к нужному краю.
+		p.translate(width() / 2., height() / 2.);
+		switch (_side) {
+		case 0: p.scale(-1., 1.); break;
+		case 2: p.rotate(-90.); break;
+		case 3: p.rotate(90.); break;
+		default: break;
+		}
+		p.translate(-width() / 2., -height() / 2.);
+		icon.paint(p, QPoint(x, y), width(), color);
+	}
+
+	const int _side = 0;
+	Ui::Animations::Simple _hover;
+
+};
+
+// Кнопка-значок одного пункта меню в горизонтальной панели.
+class BarButton final : public Ui::AbstractButton {
+public:
+	BarButton(
+		QWidget *parent,
+		const style::icon *icon,
+		const QString &tip,
+		Fn<bool()> toggled)
+	: AbstractButton(parent)
+	, _icon(icon)
+	, _toggled(std::move(toggled)) {
+		setPointerCursor(true);
+		setAcceptBoth();
+		setToolTip(tip);
+		resize(style::ConvertScale(44), style::ConvertScale(44));
+	}
+	void refresh() {
+		update();
+	}
+	// Появление: 0 прозрачна и мала, 1 на месте.
+	void setReveal(double value) {
+		if (_reveal != value) {
+			_reveal = value;
+			update();
+		}
+	}
+
+private:
+	void onStateChanged(State was, StateChangeSource source) override {
+		const auto now = isOver();
+		if (now != bool(was & StateFlag::Over)) {
+			_hover.start(
+				[=] { update(); },
+				now ? 0. : 1.,
+				now ? 1. : 0.,
+				140,
+				anim::easeOutCubic);
+		}
+		const auto down = isDown();
+		if (down != bool(was & StateFlag::Down)) {
+			_press.start(
+				[=] { update(); },
+				down ? 0. : 1.,
+				down ? 1. : 0.,
+				down ? 90 : 160,
+				anim::easeOutCubic);
+		}
+	}
+	void paintEvent(QPaintEvent *e) override {
+		if (_reveal <= 0.) {
+			return;
+		}
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto over = _hover.value(isOver() ? 1. : 0.);
+		const auto pressed = _press.value(isDown() ? 1. : 0.);
+		const auto on = _toggled && _toggled();
+		p.setOpacity(_reveal);
+		// Всплывает из меньшего размера, при нажатии слегка проседает.
+		const auto scale = (0.6 + 0.4 * _reveal) * (1. - 0.08 * pressed);
+		p.translate(width() / 2., height() / 2.);
+		p.scale(scale, scale);
+		p.translate(-width() / 2., -height() / 2.);
+		if (over > 0. || on) {
+			auto bg = on ? st::windowActiveTextFg->c : st::windowFg->c;
+			bg.setAlphaF(on ? 0.20 : 0.08 * over);
+			p.setPen(Qt::NoPen);
+			p.setBrush(bg);
+			p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+		}
+		if (!_icon) {
+			return;
+		}
+		const auto color = on
+			? st::windowActiveTextFg->c
+			: anim::color(st::menuIconFg->c, st::menuIconFgOver->c, over);
+		_icon->paint(
+			p,
+			QPoint((width() - _icon->width()) / 2, (height() - _icon->height()) / 2),
+			width(),
+			color);
+	}
+
+	const style::icon *_icon = nullptr;
+	Fn<bool()> _toggled;
+	double _reveal = 0.;
+	Ui::Animations::Simple _hover;
+	Ui::Animations::Simple _press;
+
+};
+
+// Горизонтальная панель меню у верхнего или нижнего края области чата.
+// Её высота в раскладке задаётся свойством "moka-progress" (0..1), оно анимируется.
+class DockBar final : public Ui::RpWidget {
+public:
+	DockBar(QWidget *parent, int side)
+	: RpWidget(parent)
+	, _side(side) {
+		setProperty("moka-progress", 0.);
+		setProperty("moka-side", side);
+		Mokagram::Settings::Changed(
+		) | rpl::filter([](const QString &key) {
+			return key == u"look.menu_pinned"_q || key == u"look.menu_side"_q;
+		}) | rpl::on_next([=] {
+			namespace S = Mokagram::Settings;
+			if (!(S::Bool(u"look.menu_pinned"_q)
+				&& S::Int(u"look.menu_side"_q) == _side)) {
+				close();
+			}
+		}, lifetime());
+		_collapse.setCallback([=] { setDocksOpen(false); });
+		_slide.start(
+			[=] { slideStep(); },
+			0.,
+			1.,
+			300,
+			anim::easeOutCubic);
+	}
+
+	void add(not_null<BarButton*> button) {
+		_buttons.push_back(QPointer<BarButton>(button.get()));
+	}
+	void setBurger(not_null<BarButton*> button) {
+		_burger = button.get();
+	}
+	void addDock(not_null<DockButton*> button) {
+		_docks.push_back(QPointer<DockButton>(button.get()));
+		button->hide();
+	}
+	void toggleDocks() {
+		setDocksOpen(!_docksOpen);
+	}
+
+private:
+	void setDocksOpen(bool open) {
+		if (_docksOpen == open) {
+			return;
+		}
+		_docksOpen = open;
+		for (const auto &dock : _docks) {
+			if (dock && open) {
+				dock->show();
+			}
+		}
+		_docksAnim.start(
+			[=] { docksStep(); },
+			open ? 0. : 1.,
+			open ? 1. : 0.,
+			220,
+			anim::easeOutCubic);
+		if (open) {
+			_collapse.callOnce(5000);
+		} else {
+			_collapse.cancel();
+		}
+	}
+	void docksStep() {
+		const auto value = _docksAnim.value(_docksOpen ? 1. : 0.);
+		if (!_docksOpen && !_docksAnim.animating()) {
+			for (const auto &dock : _docks) {
+				if (dock) {
+					dock->hide();
+				}
+			}
+		}
+		layoutChildren(value);
+		update();
+	}
+	// Закрепление выключено или панель переехала: съезжает и удаляется.
+	void close() {
+		if (_closing) {
+			return;
+		}
+		_closing = true;
+		setObjectName(u"moka-bar-closing"_q);
+		_slide.start(
+			[=] { slideStep(); },
+			_slide.value(1.),
+			0.,
+			220,
+			anim::easeOutCubic);
+	}
+	void slideStep() {
+		const auto value = _slide.value(_closing ? 0. : 1.);
+		setProperty("moka-progress", value);
+		const auto count = int(_buttons.size());
+		for (auto i = 0; i != count; ++i) {
+			if (const auto button = _buttons[i]) {
+				// Иконки всплывают по очереди слева направо.
+				const auto delay = (count > 1) ? (0.45 * i / (count - 1)) : 0.;
+				button->setReveal(std::clamp((value - delay) / 0.55, 0., 1.));
+			}
+		}
+		if (_burger) {
+			_burger->setReveal(value);
+		}
+		if (const auto parent = parentWidget()) {
+			auto event = QResizeEvent(parent->size(), parent->size());
+			QCoreApplication::sendEvent(parent, &event);
+		}
+		update();
+		if (_closing && !_slide.animating()) {
+			deleteLater();
+		}
+	}
+	void layoutChildren(double docksOpen) {
+		const auto skip = style::ConvertScale(4);
+		const auto margin = skip * 3;
+		// Пункты по центру панели, без оглядки на правый край.
+		auto itemsWidth = 0;
+		for (const auto &button : _buttons) {
+			itemsWidth += (button ? button->width() : 0) + skip;
+		}
+		itemsWidth -= skip;
+		auto burgerLeft = width() - margin;
+		if (_burger) {
+			burgerLeft -= _burger->width();
+			_burger->move(burgerLeft, (height() - _burger->height()) / 2);
+		}
+		auto x = (width() - itemsWidth) / 2;
+		x = std::min(x, burgerLeft - itemsWidth - skip);
+		x = std::max(x, skip);
+		for (const auto &button : _buttons) {
+			if (!button) {
+				continue;
+			}
+			button->move(x, (height() - button->height()) / 2);
+			x += button->width() + skip;
+		}
+		// Четыре кнопки закрепления выезжают влево из бургера.
+		auto offset = 0;
+		for (const auto &dock : _docks) {
+			if (!dock) {
+				continue;
+			}
+			offset += dock->width() + skip;
+			const auto target = burgerLeft - offset;
+			dock->move(
+				int(base::SafeRound(burgerLeft + (target - burgerLeft) * docksOpen)),
+				(height() - dock->height()) / 2);
+		}
+	}
+	void resizeEvent(QResizeEvent *e) override {
+		layoutChildren(_docksAnim.value(_docksOpen ? 1. : 0.));
+	}
+	void paintEvent(QPaintEvent *e) override {
+		// Прямая плашка без скруглений.
+		auto p = QPainter(this);
+		p.fillRect(e->rect(), st::mainMenuBg);
+	}
+
+	const int _side = 2;
+	bool _closing = false;
+	bool _docksOpen = false;
+	Ui::Animations::Simple _slide;
+	Ui::Animations::Simple _docksAnim;
+	base::Timer _collapse;
+	QPointer<BarButton> _burger;
+	std::vector<QPointer<BarButton>> _buttons;
+	std::vector<QPointer<DockButton>> _docks;
+
+};
 
 constexpr auto kPlayStatusLimit = 2;
 
@@ -694,6 +1054,62 @@ void MainMenu::parentResized() {
 	resize(st::mainMenuWidth, parentWidget()->height());
 }
 
+not_null<Ui::RpWidget*> MainMenu::createDockBar(QWidget *parent, int side) {
+	const auto bar = Ui::CreateChild<DockBar>(parent, side);
+	for (const auto &entry : _barEntries) {
+		if (!entry.button) {
+			continue;
+		}
+		const auto source = entry.button;
+		const auto toggle = entry.toggle;
+		const auto button = Ui::CreateChild<BarButton>(
+			bar,
+			entry.icon,
+			entry.text,
+			toggle
+				? Fn<bool()>([=] { return source && source->toggled(); })
+				: Fn<bool()>());
+		button->show();
+		const auto alt = entry.alt;
+		button->clicks(
+		) | rpl::on_next([=](Qt::MouseButton which) {
+			if (which == Qt::RightButton) {
+				if (alt) {
+					alt();
+				}
+			} else if (which == Qt::LeftButton && source) {
+				source->clicked(Qt::NoModifier, Qt::LeftButton);
+			}
+		}, button->lifetime());
+		if (toggle) {
+			source->toggledChanges(
+			) | rpl::on_next([=](bool) {
+				button->refresh();
+			}, button->lifetime());
+		}
+		bar->add(button);
+	}
+	const auto burger = Ui::CreateChild<BarButton>(
+		bar,
+		&st::dialogsMenuToggle.icon,
+		QString::fromUtf8(Mokagram::Lang::Tr("Куда закрепить панель")),
+		Fn<bool()>());
+	burger->show();
+	burger->clicks(
+	) | rpl::on_next([=](Qt::MouseButton which) {
+		if (which == Qt::LeftButton) {
+			bar->toggleDocks();
+		}
+	}, burger->lifetime());
+	bar->setBurger(burger);
+	for (const auto dockSide : { 0, 1, 2, 3 }) {
+		const auto dock = Ui::CreateChild<DockButton>(bar, dockSide, 32);
+		bar->addDock(dock);
+	}
+	bar->show();
+	return bar;
+}
+
 void MainMenu::showFinished() {
 	_showFinished = true;
 
@@ -727,6 +1143,11 @@ void MainMenu::setupMenu() {
 	const auto addAction = [&](
 			rpl::producer<QString> text,
 			IconDescriptor &&descriptor) {
+		auto entry = BarEntry();
+		entry.icon = descriptor.icon;
+		rpl::duplicate(text) | rpl::take(1) | rpl::on_next([&](QString value) {
+			entry.text = std::move(value);
+		}, lifetime());
 		const auto button = _menu->add(
 			CreateButtonWithIcon(
 				_menu,
@@ -735,6 +1156,8 @@ void MainMenu::setupMenu() {
 				std::move(descriptor)),
 			pillMargins);
 		Mokagram::Plugins::MakePill(button, menuBg);
+		entry.button = button;
+		_barEntries.push_back(std::move(entry));
 		return button;
 	};
 	if (!_controller->session().supportMode()) {
@@ -851,12 +1274,39 @@ void MainMenu::setupMenu() {
 		controller->showSettings();
 	});
 
+	{
+		// Mokagram: «Приватный режим» одним тумблером; правый клик выбирает, что скрывать.
+		const auto session = &_controller->session();
+		const auto lock = addAction(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Приватный режим"))),
+			{ &st::menuIconLock }
+		)->toggleOn(Mokagram::Misc::PrivacyLockedValue(session));
+		_barEntries.back().toggle = true;
+		_barEntries.back().alt = [] { Mokagram::Misc::ShowPrivacyLockBox(); };
+		lock->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr(
+			"Скрывает номер, время захода, приглашения и p2p-звонки. Правый клик: выбрать, что скрывать.")));
+		lock->toggledChanges(
+		) | rpl::filter([=](bool on) {
+			return on != Mokagram::Misc::PrivacyLocked(session);
+		}) | rpl::on_next([=](bool on) {
+			Mokagram::Misc::SetPrivacyLocked(session, on);
+		}, lock->lifetime());
+		lock->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::MouseButtonRelease
+				&& static_cast<QMouseEvent*>(e.get())->button() == Qt::RightButton;
+		}) | rpl::on_next([](not_null<QEvent*>) {
+			Mokagram::Misc::ShowPrivacyLockBox();
+		}, lock->lifetime());
+	}
+
 	_nightThemeToggle = addAction(
 		tr::lng_menu_night_mode(),
 		{ &st::menuIconNightMode }
 	)->toggleOn(_nightThemeSwitches.events_starting_with(
 		Window::Theme::IsNightMode()
 	));
+	_barEntries.back().toggle = true;
 	_nightThemeToggle->toggledChanges(
 	) | rpl::filter([=](bool night) {
 		return (night != Window::Theme::IsNightMode());
@@ -900,6 +1350,29 @@ void MainMenu::updateControlsGeometry() {
 	_userpicButton->moveToLeft(
 		(width() - 64) / 2,
 		st::mainMenuUserpicTop - 6);
+	for (const auto side : { 0, 1, 2, 3 }) {
+		const auto name = QString::fromLatin1("moka-dock-%1").arg(side);
+		auto button = static_cast<DockButton*>(findChild<QWidget*>(
+			name,
+			Qt::FindDirectChildrenOnly));
+		if (!button) {
+			button = Ui::CreateChild<DockButton>(this, side);
+			button->setObjectName(name);
+			button->show();
+		}
+		const auto margin = style::ConvertScale(10);
+		const auto step = button->width() + style::ConvertScale(4);
+		// Слева: «слева», «сверху»; справа: «снизу», «справа».
+		const auto x = (side == 0)
+			? margin
+			: (side == 2)
+			? margin + step
+			: (side == 3)
+			? width() - margin - button->width() - step
+			: width() - margin - button->width();
+		button->move(x, margin);
+		button->raise();
+	}
 	if (_resetScaleButton) {
 		_resetScaleButton->moveToRight(0, 0);
 	}
@@ -982,8 +1455,11 @@ void MainMenu::paintEvent(QPaintEvent *e) {
 	const auto clip = e->rect();
 	const auto cover = QRect(0, 0, width(), st::mainMenuCoverHeight);
 
-	// Mokagram: правые углы меню скруглены, как у профиля.
+	// Mokagram: углы меню у внутреннего края скруглены, как у профиля.
 	constexpr auto kRadius = 32;
+	const auto shape = Ui::MainMenuOnRight()
+		? QRectF(0, 0, width() + kRadius, height())
+		: QRectF(-kRadius, 0, width() + kRadius, height());
 	auto hq = PainterHighQualityEnabler(p);
 	p.setPen(Qt::NoPen);
 	{
@@ -991,19 +1467,15 @@ void MainMenu::paintEvent(QPaintEvent *e) {
 		auto corners = QPainterPath();
 		corners.addRect(QRectF(0, 0, width(), height()));
 		auto body = QPainterPath();
-		body.addRoundedRect(
-			QRectF(-kRadius, 0, width() + kRadius, height()),
-			kRadius,
-			kRadius);
+		body.addRoundedRect(shape, kRadius, kRadius);
 		corners = corners.subtracted(body);
-		p.setBrush(st::layerBg);
+		p.setBrush(property("moka-pinned").toBool()
+			? st::windowBg
+			: st::layerBg);
 		p.drawPath(corners);
 	}
 	p.setBrush(st::mainMenuBg);
-	p.drawRoundedRect(
-		QRectF(-kRadius, 0, width() + kRadius, height()),
-		kRadius,
-		kRadius);
+	p.drawRoundedRect(shape, kRadius, kRadius);
 	if (cover.intersects(clip)) {
 		drawName(p);
 	}

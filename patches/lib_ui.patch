@@ -72,18 +72,89 @@ index 7a9c2b7..3b17cec 100644
  	const auto paintTopRounded = !(_customCornersFilling & RectPart::FullTop)
  		&& clip.intersects(QRect(0, 0, width(), st::boxRadius));
 diff --git i/ui/layers/layer_widget.cpp w/ui/layers/layer_widget.cpp
-index ec3171e..ee18c18 100644
+index ec3171e..35f567e 100644
 --- i/ui/layers/layer_widget.cpp
 +++ w/ui/layers/layer_widget.cpp
-@@ -20,6 +20,7 @@
+@@ -20,8 +20,31 @@
  #include "styles/palette.h"
  
  #include <QtGui/QtEvents>
 +#include <QtGui/QPainterPath>
  
  namespace Ui {
++namespace {
++
++// Mokagram: шторка главного меню прижата к левому или правому краю окна.
++bool MainMenuRightFlag = false;
++
++void PlaceMainMenu(not_null<LayerWidget*> menu) {
++	if (MainMenuRightFlag) {
++		menu->moveToRight(0, 0);
++	} else {
++		menu->moveToLeft(0, 0);
++	}
++}
++
++} // namespace
++
++void SetMainMenuOnRight(bool right) {
++	MainMenuRightFlag = right;
++}
++
++bool MainMenuOnRight() {
++	return MainMenuRightFlag;
++}
  
-@@ -299,17 +300,50 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
+ class LayerStackWidget::BackgroundWidget : public RpWidget {
+ public:
+@@ -180,7 +203,9 @@ void LayerStackWidget::BackgroundWidget::setMainMenuShown(bool shown) {
+ 			anim::easeOutCirc);
+ 	}
+ 	_mainMenuCacheWidth = (_mainMenuCache.width() / style::DevicePixelRatio())
+-		- st::boxRoundShadow.extend.right();
++		- (MainMenuRightFlag
++			? st::boxRoundShadow.extend.left()
++			: st::boxRoundShadow.extend.right());
+ 	_mainMenuRight = _mainMenuShown ? _mainMenuCacheWidth : 0;
+ 	checkWasShown(wasShown);
+ }
+@@ -248,11 +273,12 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
+ 	auto mainMenuRight = (_mainMenuCache.isNull() || mainMenuProgress < 0) ? _mainMenuRight : (mainMenuProgress < 0) ? _mainMenuRight : anim::interpolate(0, _mainMenuCacheWidth, mainMenuProgress);
+ 	if (mainMenuRight) {
+ 		// Move showing boxes to the right while main menu is hiding.
++		const auto shift = MainMenuRightFlag ? -mainMenuRight / 2 : mainMenuRight / 2;
+ 		if (!_specialLayerCache.isNull()) {
+-			specialLayerBox.moveLeft(specialLayerBox.left() + mainMenuRight / 2);
++			specialLayerBox.moveLeft(specialLayerBox.left() + shift);
+ 		}
+ 		if (!_layerCache.isNull()) {
+-			layerBox.moveLeft(layerBox.left() + mainMenuRight / 2);
++			layerBox.moveLeft(layerBox.left() + shift);
+ 		}
+ 	}
+ 	auto bgOpacity = _a_shown.value(isShown() ? 1. : 0.);
+@@ -264,12 +290,18 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
+ 
+ 	p.setOpacity(bgOpacity);
+ 	auto overSpecialOpacity = (layerOpacity * specialLayerOpacity);
+-	auto bg = myrtlrect(mainMenuRight, 0, width() - mainMenuRight, height());
++	auto bg = MainMenuRightFlag
++		? QRect(0, 0, width() - mainMenuRight, height())
++		: myrtlrect(mainMenuRight, 0, width() - mainMenuRight, height());
+ 
+ 	if (_mainMenuCache.isNull() && mainMenuRight > 0) {
+ 		// All cache images are taken together with their shadows,
+ 		// so we paint shadow only when there is no cache.
+-		Ui::Shadow::paint(p, myrtlrect(0, 0, mainMenuRight, height()), width(), st::boxRoundShadow, RectPart::Right);
++		if (MainMenuRightFlag) {
++			Ui::Shadow::paint(p, QRect(width() - mainMenuRight, 0, mainMenuRight, height()), width(), st::boxRoundShadow, RectPart::Left);
++		} else {
++			Ui::Shadow::paint(p, myrtlrect(0, 0, mainMenuRight, height()), width(), st::boxRoundShadow, RectPart::Right);
++		}
+ 	}
+ 
+ 	if (_specialLayerCache.isNull() && !specialLayerBox.isEmpty()) {
+@@ -299,17 +331,50 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
  		// (alpha_final - alpha_current) / (1 - alpha_current) so we won't get glitches
  		// in the transparent special layer cache corners after filling special layer
  		// rect above its cache with alpha_current opacity.
@@ -136,6 +207,57 @@ index ec3171e..ee18c18 100644
  	if (!_specialLayerCache.isNull() && specialLayerOpacity > 0) {
  		p.setOpacity(specialLayerOpacity);
  		auto cacheLeft = specialLayerBox.x() - st::boxRoundShadow.extend.left();
+@@ -332,10 +397,20 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
+ 	}
+ 	if (!_mainMenuCache.isNull() && mainMenuRight > 0) {
+ 		p.setOpacity(1.);
+-		auto shownWidth = mainMenuRight + st::boxRoundShadow.extend.right();
+-		auto sourceWidth = shownWidth * style::DevicePixelRatio();
+-		auto sourceRect = style::rtlrect(_mainMenuCache.width() - sourceWidth, 0, sourceWidth, _mainMenuCache.height(), _mainMenuCache.width());
+-		p.drawPixmapLeft(0, 0, shownWidth, height(), width(), _mainMenuCache, sourceRect);
++		if (MainMenuRightFlag) {
++			// Выезжает справа: видна левая часть кэша (с тенью слева).
++			auto shownWidth = mainMenuRight + st::boxRoundShadow.extend.left();
++			auto sourceWidth = shownWidth * style::DevicePixelRatio();
++			p.drawPixmap(
++				QRect(width() - shownWidth, 0, shownWidth, height()),
++				_mainMenuCache,
++				QRect(0, 0, sourceWidth, _mainMenuCache.height()));
++		} else {
++			auto shownWidth = mainMenuRight + st::boxRoundShadow.extend.right();
++			auto sourceWidth = shownWidth * style::DevicePixelRatio();
++			auto sourceRect = style::rtlrect(_mainMenuCache.width() - sourceWidth, 0, sourceWidth, _mainMenuCache.height(), _mainMenuCache.width());
++			p.drawPixmapLeft(0, 0, shownWidth, height(), width(), _mainMenuCache, sourceRect);
++		}
+ 	}
+ 	if (!_repaintIssued && !_a_shown.animating()) {
+ 		_repaintIssued = true;
+@@ -571,7 +646,7 @@ void LayerStackWidget::setCacheImages() {
+ 		hideChildren();
+ 		bodyCache = Ui::GrabWidget(parentWidget());
+ 		showChildren();
+-		mainMenuCache = Ui::Shadow::grab(_mainMenu, st::boxRoundShadow, RectPart::Right);
++		mainMenuCache = Ui::Shadow::grab(_mainMenu, st::boxRoundShadow, MainMenuRightFlag ? RectPart::Left : RectPart::Right);
+ 	}
+ 	setAttribute(Qt::WA_OpaquePaintEvent, !bodyCache.isNull());
+ 	updateLayerBoxes();
+@@ -728,6 +803,7 @@ void LayerStackWidget::resizeEvent(QResizeEvent *e) {
+ 	}
+ 	if (_mainMenu) {
+ 		_mainMenu->parentResized();
++		PlaceMainMenu(_mainMenu.data());
+ 		if (!weak) {
+ 			return;
+ 		}
+@@ -843,7 +919,7 @@ void LayerStackWidget::showMainMenu(
+ 	startAnimation([&] {
+ 		_mainMenu = std::move(layer);
+ 		initChildLayer(_mainMenu);
+-		_mainMenu->moveToLeft(0, 0);
++		PlaceMainMenu(_mainMenu.data());
+ 	}, [&] {
+ 		clearLayers();
+ 		_specialLayer.destroy();
 diff --git i/ui/text/custom_emoji_instance.cpp w/ui/text/custom_emoji_instance.cpp
 index 256b889..cf0b5c0 100644
 --- i/ui/text/custom_emoji_instance.cpp

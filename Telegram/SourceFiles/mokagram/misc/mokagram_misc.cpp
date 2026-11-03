@@ -62,6 +62,11 @@
 #include "ui/widgets/popup_menu.h"
 #include "window/window_session_controller.h"
 #include "window/window_controller.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/labels.h"
+#include "ui/wrap/vertical_layout.h"
+#include "ui/vertical_list.h"
+#include "styles/style_layers.h"
 #include "styles/style_boxes.h"
 #include "styles/style_menu_icons.h"
 
@@ -74,12 +79,240 @@ namespace Mokagram::Guard {
 void RegisterSettings();
 } // namespace Mokagram::Guard
 
+namespace Ui {
+void SetMainMenuOnRight(bool right);
+} // namespace Ui
+
 namespace Mokagram::Misc {
 namespace {
 
 constexpr auto kMaxAccountsKey = "misc.max_accounts";
 
+rpl::lifetime MenuSideLifetime;
+
+// Приватный режим: пачка правил приватности одним тумблером и одним окном.
+struct LockRow {
+	Api::UserPrivacy::Key key;
+	Api::UserPrivacy::Option target;
+	const char *title;
+	bool preset;
+};
+
+[[nodiscard]] const std::vector<LockRow> &LockRows() {
+	using K = Api::UserPrivacy::Key;
+	using O = Api::UserPrivacy::Option;
+	static const auto rows = std::vector<LockRow>{
+		{ K::PhoneNumber, O::Nobody, "Скрыть номер телефона от всех", true },
+		{ K::AddedByPhone, O::Contacts, "Не находить меня по номеру телефона", true },
+		{ K::LastSeen, O::Nobody, "Скрыть время захода", true },
+		{ K::Invites, O::Nobody, "Запретить добавлять меня в группы и каналы", true },
+		{ K::CallsPeer2Peer, O::Nobody, "Звонки только через серверы Telegram (без p2p)", true },
+		{ K::Calls, O::Contacts, "Звонить мне могут только контакты", true },
+		{ K::ProfilePhoto, O::Contacts, "Фото профиля только контактам", true },
+		{ K::About, O::Contacts, "Описание профиля только контактам", true },
+		{ K::Birthday, O::Contacts, "День рождения только контактам", true },
+		{ K::Forwards, O::Nobody, "Скрывать ссылку на меня при пересылке", true },
+		{ K::Voices, O::Contacts, "Голосовые и кружки только от контактов", false },
+	};
+	return rows;
+}
+
+constexpr auto kLockBackupKey = "privacy.lock_backup";
+
+// Прежние значения хранятся отдельно для каждого аккаунта: {"<id аккаунта>": {"<правило>": опция}}.
+[[nodiscard]] QString LockAccountKey(not_null<Main::Session*> session) {
+	return QString::number(session->userId().bare);
+}
+
+[[nodiscard]] QJsonObject LockBackupRoot() {
+	return QJsonDocument::fromJson(
+		Settings::String(QString::fromLatin1(kLockBackupKey)).toUtf8()).object();
+}
+
+[[nodiscard]] QJsonObject LockBackup(not_null<Main::Session*> session) {
+	return LockBackupRoot().value(LockAccountKey(session)).toObject();
+}
+
+void SaveLockBackup(
+		not_null<Main::Session*> session,
+		const QJsonObject &object) {
+	auto root = LockBackupRoot();
+	if (object.isEmpty()) {
+		root.remove(LockAccountKey(session));
+	} else {
+		root.insert(LockAccountKey(session), object);
+	}
+	Settings::SetString(
+		QString::fromLatin1(kLockBackupKey),
+		root.isEmpty()
+			? QString()
+			: QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+}
+
+// Применяет опцию к одному правилу: старое значение запоминается один раз,
+// исключения («всегда» и «никогда») не трогаются.
+void ApplyLock(
+		not_null<Main::Session*> session,
+		Api::UserPrivacy::Key key,
+		Api::UserPrivacy::Option target,
+		bool remember) {
+	auto &privacy = session->api().userPrivacy();
+	privacy.reload(key);
+	privacy.value(key) | rpl::take(1) | rpl::on_next([=](Api::UserPrivacy::Rule rule) {
+		if (remember) {
+			auto backup = LockBackup(session);
+			const auto id = QString::number(int(key));
+			if (!backup.contains(id)) {
+				backup.insert(id, int(rule.option));
+				SaveLockBackup(session, backup);
+			}
+		}
+		if (rule.option == target) {
+			return;
+		}
+		rule.option = target;
+		session->api().userPrivacy().save(key, rule);
+	}, session->lifetime());
+}
+
+// Что закрывать: индексы строк через запятую, пусто значит набор по умолчанию.
+constexpr auto kLockSelectionKey = "privacy.lock_selection";
+
+[[nodiscard]] std::vector<bool> LockSelection() {
+	const auto &rows = LockRows();
+	auto result = std::vector<bool>(rows.size(), false);
+	const auto saved = Settings::String(QString::fromLatin1(kLockSelectionKey));
+	if (saved.isEmpty()) {
+		for (auto i = 0; i != int(rows.size()); ++i) {
+			result[i] = rows[i].preset;
+		}
+		return result;
+	}
+	for (const auto &part : saved.split(',', Qt::SkipEmptyParts)) {
+		const auto index = part.toInt();
+		if (index >= 0 && index < int(result.size())) {
+			result[index] = true;
+		}
+	}
+	return result;
+}
+
+void SaveLockSelection(const std::vector<bool> &selection) {
+	auto parts = QStringList();
+	for (auto i = 0; i != int(selection.size()); ++i) {
+		if (selection[i]) {
+			parts.push_back(QString::number(i));
+		}
+	}
+	// Пустой набор хранится как «-1», чтобы не путать его с набором по умолчанию.
+	Settings::SetString(
+		QString::fromLatin1(kLockSelectionKey),
+		parts.isEmpty() ? u"-1"_q : parts.join(','));
+}
+
 } // namespace
+
+bool PrivacyLocked(not_null<Main::Session*> session) {
+	return !LockBackup(session).isEmpty();
+}
+
+rpl::producer<bool> PrivacyLockedValue(not_null<Main::Session*> session) {
+	return Settings::StringValue(QString::fromLatin1(kLockBackupKey))
+		| rpl::map([=](const QString &) { return PrivacyLocked(session); })
+		| rpl::distinct_until_changed();
+}
+
+// Закрывает выбранное (locked) или возвращает запомненные значения.
+void SetPrivacyLocked(not_null<Main::Session*> session, bool locked) {
+	if (locked) {
+		const auto selection = LockSelection();
+		for (auto i = 0; i != int(selection.size()); ++i) {
+			if (selection[i]) {
+				const auto &row = LockRows()[i];
+				ApplyLock(session, row.key, row.target, true);
+			}
+		}
+		return;
+	}
+	const auto backup = LockBackup(session);
+	for (auto i = backup.begin(); i != backup.end(); ++i) {
+		ApplyLock(
+			session,
+			Api::UserPrivacy::Key(i.key().toInt()),
+			Api::UserPrivacy::Option(i.value().toInt()),
+			false);
+	}
+	SaveLockBackup(session, QJsonObject());
+}
+
+void ShowPrivacyLockBox() {
+	const auto window = Core::App().activePrimaryWindow();
+	if (!window) {
+		return;
+	}
+	const auto controller = window->sessionController();
+	if (!controller) {
+		return;
+	}
+	const auto session = &controller->session();
+	window->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(QString::fromUtf8(
+			Mokagram::Lang::Tr("Приватный режим"))));
+		box->setWidth(460);
+		const auto content = box->verticalLayout();
+		Ui::AddSkip(content);
+		content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				QString::fromUtf8(Mokagram::Lang::Tr(
+					"Отметьте, что скрыть. Исключения «всегда разрешать» и «никогда не разрешать» не меняются. Прежние значения запомнятся, их можно вернуть.")),
+				st::boxLabel),
+			QMargins(24, 0, 24, 8));
+		auto checks = std::make_shared<std::vector<QPointer<Ui::Checkbox>>>();
+		const auto selection = LockSelection();
+		for (auto i = 0; i != int(LockRows().size()); ++i) {
+			checks->push_back(content->add(
+				object_ptr<Ui::Checkbox>(
+					content,
+					QString::fromUtf8(Mokagram::Lang::Tr(LockRows()[i].title)),
+					selection[i],
+					st::defaultBoxCheckbox),
+				QMargins(24, 4, 24, 4)));
+		}
+		Ui::AddSkip(content);
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Включить выбранное"))),
+			[=] {
+				auto count = 0;
+				auto chosen = std::vector<bool>(LockRows().size(), false);
+				for (auto i = 0; i != int(LockRows().size()); ++i) {
+					const auto check = (*checks)[i];
+					chosen[i] = check && check->checked();
+					count += chosen[i] ? 1 : 0;
+				}
+				SaveLockSelection(chosen);
+				SetPrivacyLocked(session, true);
+				box->closeBox();
+				if (count) {
+					controller->showToast(QString::fromUtf8(
+						Mokagram::Lang::Tr("Скрыто: ")) + QString::number(count));
+				}
+			});
+		if (!LockBackup(session).isEmpty()) {
+			box->addLeftButton(
+				rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Вернуть как было"))),
+				[=] {
+					SetPrivacyLocked(session, false);
+					box->closeBox();
+					controller->showToast(QString::fromUtf8(
+						Mokagram::Lang::Tr("Прежние значения возвращены")));
+				});
+		}
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отмена"))),
+			[=] { box->closeBox(); });
+	}));
+}
 
 void RegisterSettings() {
 	Settings::Register({
@@ -280,6 +513,63 @@ void RegisterSettings() {
 		.defaultValue = QString(),
 		.category = u"chats"_q,
 	});
+	Settings::Register({
+		.key = u"look.menu_side"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("С какой стороны открывать меню")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Меню с аккаунтами, контактами и настройками выезжает с выбранного края окна.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Mokagram::Lang::Tr("Слева")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Справа")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Сверху (панелью, при закреплении)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Снизу (панелью, при закреплении)")),
+		},
+		.category = u"look"_q,
+		.sectionIcon = u"hide"_q,
+	});
+	Settings::Register({
+		.key = u"privacy.lock_all"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Приватный режим")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Приватный режим")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Номер, время захода, приглашения в группы и звонки p2p меняются одним нажатием. Прежние значения можно вернуть.")),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString::fromUtf8(Mokagram::Lang::Tr("Открыть")),
+		.category = u"privacy"_q,
+		.sectionIcon = u"hide"_q,
+		.action = [] { ShowPrivacyLockBox(); },
+	});
+	Settings::Register({
+		.key = QString::fromLatin1(kLockSelectionKey),
+		.title = u"lock_selection"_q,
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.hidden = true,
+	});
+	Settings::Register({
+		.key = u"look.menu_pinned"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Закрепить меню колонкой")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Меню остаётся открытым у выбранного края окна, как правая панель, и не закрывается по клику рядом.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.category = u"look"_q,
+		.sectionIcon = u"hide"_q,
+	});
+	Settings::Register({
+		.key = QString::fromLatin1(kLockBackupKey),
+		.title = u"lock_backup"_q,
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.hidden = true,
+	});
+	Settings::IntValue(u"look.menu_side"_q) | rpl::on_next([](int side) {
+		Ui::SetMainMenuOnRight(side == 1);
+	}, MenuSideLifetime);
 }
 
 void CopyWithAuthor(not_null<HistoryItem*> item) {

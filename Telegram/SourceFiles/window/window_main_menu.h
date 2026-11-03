@@ -54,9 +54,24 @@ public:
 	void parentResized() override;
 	void showFinished() override;
 
+	// Mokagram: те же пункты горизонтальной панелью (закрепление сверху или снизу).
+	// side: 2 сверху, 3 снизу.
+	[[nodiscard]] not_null<Ui::RpWidget*> createDockBar(
+		QWidget *parent,
+		int side);
+
 private:
 	class ToggleAccountsButton;
 	class ResetScaleButton;
+
+	struct BarEntry {
+		QString text;
+		const style::icon *icon = nullptr;
+		QPointer<Ui::SettingsButton> button;
+		bool toggle = false;
+		Fn<void()> alt;
+	};
+	std::vector<BarEntry> _barEntries;
 
 	bool eventHook(QEvent *event) override;
 	void paintEvent(QPaintEvent *e) override;
