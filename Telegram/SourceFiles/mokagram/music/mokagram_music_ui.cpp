@@ -3933,6 +3933,10 @@ protected:
 		if (hover == InfoHover::None) {
 			return;
 		}
+		if (hover == InfoHover::BarCover) {
+			openNowPlayingFromBar();
+			return;
+		}
 		const auto track = PlayingTrack();
 		const auto artist = track.artist.trimmed();
 		const auto controller = _controller;
@@ -3953,7 +3957,7 @@ protected:
 	void leaveEventHook(QEvent *e) override {
 		setHover(InfoHover::None);
 	}
-	enum class InfoHover { None, Title, Artist };
+	enum class InfoHover { None, Title, Artist, BarCover };
 	[[nodiscard]] QFont titleFont() const {
 		auto result = st::semiboldFont->f;
 		result.setPixelSize(style::ConvertScale(22));
@@ -3971,7 +3975,9 @@ protected:
 			setCursor((hover == InfoHover::None)
 				? style::cur_default
 				: style::cur_pointer);
-			update(computeLayout().info);
+			const auto layout = computeLayout();
+			update(layout.info);
+			update(layout.barCover);
 		}
 	}
 	enum class Tab { Now, Home, Search, Library, Playlists, Queue };
@@ -4142,6 +4148,12 @@ protected:
 			layout.info.y() + s(32),
 			textWidth(artistFont(), _artist),
 			s(22));
+		if (_tab != Tab::Now
+			&& !layout.ultra
+			&& width() >= s(760)
+			&& layout.barCover.contains(point)) {
+			return InfoHover::BarCover;
+		}
 		if (!layout.showRight || _tab != Tab::Now) {
 			return InfoHover::None;
 		}
@@ -4341,6 +4353,13 @@ protected:
 		}
 	}
 
+	// Клик по маленькой обложке внизу: большая вырастает из неё на «Сейчас играет», маленькая гаснет.
+	void openNowPlayingFromBar() {
+		_morphFrom = computeLayout().barCover;
+		setTab(Tab::Now);
+		setHover(InfoHover::None);
+		_coverMorph.start([=] { update(); }, 0., 1., 360, anim::easeOutCubic);
+	}
 	void setTab(Tab tab) {
 		if (_tab == tab) {
 			return;
@@ -4515,7 +4534,7 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		paintBackgroundPart(p, e->rect(), e->rect().topLeft());
+		paintBackgroundPart(p, e->rect());
 		// Вне «Сейчас играет» экран в цветах клиента, как остальные окна.
 		if (const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.); plain > 0.) {
 			p.setOpacity(plain);
@@ -4548,8 +4567,24 @@ protected:
 			}
 		}
 
+		// Обложка: сжимается на паузе, при смене трека плавно перетекает в новую.
+		const auto playing = _playAnim.value(_isPlaying ? 1. : 0.);
+		const auto scale = 0.94 + 0.06 * playing;
 		const auto fade = _infoFade.value(1.);
-		const auto coverRect = QRectF(layout.cover);
+		const auto morph = _coverMorph.animating() ? _coverMorph.value(1.) : 1.;
+		const auto coverRect = [&] {
+			const auto to = QRectF(layout.cover);
+			if (morph >= 1. || _morphFrom.isEmpty()) {
+				return to;
+			}
+			const auto from = QRectF(_morphFrom);
+			return QRectF(
+				from.x() + (to.x() - from.x()) * morph,
+				from.y() + (to.y() - from.y()) * morph,
+				from.width() + (to.width() - from.width()) * morph,
+				from.height() + (to.height() - from.height()) * morph);
+		}();
+		const auto coverRadius = s(10) + (s(22) - s(10)) * morph;
 		const auto drawCover = [&](const QPixmap &pixmap, double opacity, bool current) {
 			if (opacity <= 0. || !layout.showRight || _tab != Tab::Now) {
 				return;
@@ -4560,7 +4595,7 @@ protected:
 			p.scale(scale, scale);
 			p.translate(-coverRect.center());
 			auto path = QPainterPath();
-			path.addRoundedRect(coverRect, s(22), s(22));
+			path.addRoundedRect(coverRect, coverRadius, coverRadius);
 			p.setClipPath(path);
 			auto frame = current ? motionFrame(_spotifyCanvas, layout.cover.size()) : QImage();
 			if (!frame.isNull()) {
@@ -4649,8 +4684,11 @@ protected:
 			QColor(0x28, 0x28, 0x28),
 			_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
 		p.drawRoundedRect(layout.bar, layout.bar.height() / 2., layout.bar.height() / 2.);
-		if (!layout.ultra) {
+		// На «Сейчас играет» маленькая обложка уходит: её заменяет большая.
+		const auto barCoverShown = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		if (!layout.ultra && barCoverShown > 0.) {
 			p.save();
+			p.setOpacity(barCoverShown);
 			auto path = QPainterPath();
 			path.addRoundedRect(QRectF(layout.barCover), s(10), s(10));
 			p.setClipPath(path);
@@ -4662,20 +4700,24 @@ protected:
 			p.restore();
 		}
 		if (!layout.ultra && !layout.compact && layout.barInfo.width() > 0) {
+			// Без маленькой обложки текст сдвигается влево на её место.
+			const auto infoShift = int((s(56) + s(12)) * (1. - barCoverShown));
+			const auto infoLeft = layout.barInfo.x() - infoShift;
+			const auto infoWidth = layout.barInfo.width() + infoShift;
 			auto font = labelFont(15, true);
 			p.setFont(font);
 			p.setPen(Qt::white);
 			p.drawText(
-				QRect(layout.barInfo.x(), layout.barInfo.y() + s(6), layout.barInfo.width(), s(22)),
+				QRect(infoLeft, layout.barInfo.y() + s(6), infoWidth, s(22)),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(font).elidedText(_title, Qt::ElideRight, layout.barInfo.width()));
+				QFontMetrics(font).elidedText(_title, Qt::ElideRight, infoWidth));
 			font = labelFont(13, false);
 			p.setFont(font);
 			p.setPen(QColor(255, 255, 255, 170));
 			p.drawText(
-				QRect(layout.barInfo.x(), layout.barInfo.y() + s(28), layout.barInfo.width(), s(20)),
+				QRect(infoLeft, layout.barInfo.y() + s(28), infoWidth, s(20)),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(font).elidedText(_artist, Qt::ElideRight, layout.barInfo.width()));
+				QFontMetrics(font).elidedText(_artist, Qt::ElideRight, infoWidth));
 		}
 
 		// Время по сторонам полосы перемотки.
@@ -4809,7 +4851,7 @@ private:
 			track.title, track.artist, playing);
 		if (_isPlaying != playing) {
 			_isPlaying = playing;
-			update();
+			_playAnim.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 180, anim::easeOutCubic);
 		}
 		_play->setPlaying(playing);
 		_seek->setExpressive(true, playing);
@@ -4921,6 +4963,9 @@ private:
 	Fn<void()> _cancelMotion;
 	QColor _accent;
 	Ui::Animations::Simple _fade;
+	Ui::Animations::Simple _playAnim;
+	Ui::Animations::Simple _coverMorph;
+	QRect _morphFrom;
 	Ui::Animations::Simple _plainAnim;
 	Ui::Animations::Simple _colorAnim;
 	Ui::Animations::Simple _infoFade;

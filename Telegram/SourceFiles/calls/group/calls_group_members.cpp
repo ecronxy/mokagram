@@ -24,6 +24,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_values.h" // Data::CanWriteValue.
 #include "data/data_session.h" // Data::Session::invitedToCallUsers.
 #include "settings/settings_common.h"
+#include "ui/abstract_button.h"
+#include "ui/effects/animations.h"
+#include "ui/effects/animation_value.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/popup_menu.h"
@@ -49,6 +52,85 @@ namespace {
 constexpr auto kKeepRaisedHandStatusDuration = 3 * crl::time(1000);
 
 using Row = MembersRow;
+
+// Mokagram: «Пригласить» и «Поделиться ссылкой» как заметные таблетки, а не плоские полосы.
+class InviteCard final : public Ui::AbstractButton {
+public:
+	InviteCard(
+		QWidget *parent,
+		rpl::producer<QString> text,
+		const style::icon &icon,
+		bool accent)
+	: AbstractButton(parent)
+	, _icon(&icon)
+	, _accent(accent) {
+		setPointerCursor(true);
+		std::move(text) | rpl::on_next([=](QString value) {
+			_text = std::move(value);
+			update();
+		}, lifetime());
+	}
+
+private:
+	int resizeGetHeight(int newWidth) override {
+		return style::ConvertScale(60);
+	}
+	void onStateChanged(State was, StateChangeSource source) override {
+		const auto now = isOver();
+		if (now != bool(was & StateFlag::Over)) {
+			_hover.start(
+				[=] { update(); },
+				now ? 0. : 1.,
+				now ? 1. : 0.,
+				160,
+				anim::easeOutCubic);
+		}
+	}
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto over = _hover.value(isOver() ? 1. : 0.);
+		const auto pill = QRectF(rect()).marginsRemoved(
+			{ double(s(12)), double(s(8)), double(s(12)), double(s(8)) });
+		const auto base = _accent
+			? st::windowBgActive->c
+			: st::groupCallMembersBgOver->c;
+		const auto hovered = _accent
+			? base.lighter(112)
+			: st::groupCallMembersBgRipple->c;
+		p.setPen(Qt::NoPen);
+		p.setBrush(anim::color(base, hovered, over));
+		p.drawRoundedRect(pill, pill.height() / 2., pill.height() / 2.);
+
+		const auto fg = _accent
+			? st::windowFgActive->c
+			: st::groupCallMemberNotJoinedStatus->c;
+		const auto font = st::semiboldFont;
+		const auto iconWidth = _icon->width();
+		const auto gap = s(10);
+		const auto textWidth = font->width(_text);
+		const auto full = iconWidth + gap + textWidth;
+		const auto left = int(pill.x() + (pill.width() - full) / 2);
+		_icon->paint(
+			p,
+			QPoint(left, int(pill.y() + (pill.height() - _icon->height()) / 2)),
+			width(),
+			fg);
+		p.setFont(font);
+		p.setPen(fg);
+		p.drawText(
+			QRect(left + iconWidth + gap, int(pill.y()), textWidth + s(4), int(pill.height())),
+			Qt::AlignLeft | Qt::AlignVCenter,
+			_text);
+	}
+
+	const style::icon *_icon = nullptr;
+	bool _accent = false;
+	QString _text;
+	Ui::Animations::Simple _hover;
+
+};
 
 } // namespace
 
@@ -1890,13 +1972,13 @@ void Members::setupAddMember(not_null<GroupCall*> call) {
 			}
 			return;
 		}
-		auto addMember = Settings::CreateButtonWithIcon(
+		auto addMember = object_ptr<InviteCard>(
 			_layout.get(),
 			(conference
 				? tr::lng_group_call_invite_conf()
 				: tr::lng_group_call_invite()),
-			st::groupCallAddMember,
-			{ .icon = &st::groupCallAddMemberIcon });
+			st::groupCallAddMemberIcon,
+			true);
 		addMember->clicks(
 		) | rpl::to_empty | rpl::start_to_stream(
 			_addMemberRequests,
@@ -1907,11 +1989,11 @@ void Members::setupAddMember(not_null<GroupCall*> call) {
 		_addMemberButton = addMember.data();
 		_layout->insert(baseIndex, std::move(addMember));
 		if (conference) {
-			auto shareLink = Settings::CreateButtonWithIcon(
+			auto shareLink = object_ptr<InviteCard>(
 				_layout.get(),
 				tr::lng_group_invite_share(),
-				st::groupCallAddMember,
-				{ .icon = &st::groupCallShareLinkIcon });
+				st::groupCallShareLinkIcon,
+				false);
 			shareLink->clicks() | rpl::to_empty | rpl::start_to_stream(
 				_shareLinkRequests,
 				shareLink->lifetime());
@@ -1983,6 +2065,7 @@ void Members::setupList() {
 		object_ptr<ListWidget>(
 			_layout.get(),
 			_listController.get()));
+	_list->setRoundedRows(true);
 	_bottomSkip = addSkip();
 
 	using namespace rpl::mappers;
