@@ -79,6 +79,35 @@ void Varint(QByteArray &data, quint64 value) {
 
 } // namespace
 
+MotionMetadata Metadata(QString title, QString artist, bool soundcloud) {
+	static const auto decoration = QRegularExpression(
+		uR"re(\s*[\(\[]\s*(?:official\s+(?:audio|video|music\s+video)|lyrics?(?:\s+video)?|visuali[sz]er|audio|hd|hq)\s*[\)\]]\s*)re"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	title.replace(decoration, u" "_q);
+	static const auto separator = QRegularExpression(u"\\s+[-–—]\\s+"_q);
+	static const auto version = QRegularExpression(
+		uR"re(^(?:live|remix|remaster(?:ed)?|slowed|sped\s*up|instrumental|acoustic|radio\s*edit)(?:\b|$))re"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	const auto split = separator.match(title);
+	if (split.hasMatch()) {
+		const auto prefix = title.left(split.capturedStart()).trimmed();
+		const auto suffix = title.mid(split.capturedEnd()).trimmed();
+		if (!prefix.isEmpty() && !suffix.isEmpty()
+			&& ((soundcloud && !version.match(suffix).hasMatch())
+				|| Normalize(prefix) == Normalize(artist))) {
+			title = suffix;
+			artist = prefix;
+		}
+	}
+	return { title.simplified(), artist.simplified() };
+}
+
+bool MatchesTitle(const QString &title, const QString &candidate) {
+	const auto a = Normalize(Metadata(title, {}).title);
+	const auto b = Normalize(Metadata(candidate, {}).title);
+	return !a.isEmpty() && a == b;
+}
+
 QUrl HlsVariant(const QUrl &base, const QByteArray &playlist) {
 	const auto lines = QString::fromUtf8(playlist).split('\n');
 	auto result = QUrl();
@@ -228,8 +257,7 @@ bool MatchesTrack(
 	const auto b = Normalize(candidateArtist);
 	return !a.isEmpty() && !b.isEmpty()
 		&& (a == b || (a.size() >= 4 && b.contains(a)))
-		&& !Normalize(title).isEmpty()
-		&& Normalize(title) == Normalize(candidateTitle)
+		&& MatchesTitle(title, candidateTitle)
 		&& duration > 0 && candidateDuration > 0
 		&& std::abs(duration - candidateDuration) <= 5000;
 }

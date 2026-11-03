@@ -35,6 +35,7 @@ void BoostTrack(const Track &track);
 void BlockArtist(const Track &track);
 void UnblockArtist(const QString &artistId);
 [[nodiscard]] bool IsArtistBlocked(const Track &track);
+[[nodiscard]] std::vector<QString> TrackIdentityKeys(const Track &track);
 
 // Контекст бесконечного потока: что играет сейчас и что недавно было или уже в очереди.
 struct StreamContext {

@@ -785,7 +785,7 @@ void MainMenu::setupMenu() {
 			Mokagram::Music::ShowMusicBox(controller);
 		});
 		addAction(
-			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Лента каналов"))),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Лента"))),
 			{ &st::menuIconChannel }
 		)->setClickedCallback([=] {
 			Mokagram::Feed::Show(controller);

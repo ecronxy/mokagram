@@ -3,20 +3,24 @@ using "ui/widgets/widgets.style";
 using "ui/layers/layers.style";
 using "boxes/boxes.style";
 
-feedHeaderHeight: 104px;
+feedHeaderHeight: 96px;
 feedTitleLeft: 56px;
 feedTitleRight: 56px;
-feedTitleTop: 12px;
-feedSummaryTop: 34px;
+feedTitleTop: 16px;
 feedControlInset: 8px;
-feedFilterTop: 56px;
+feedFilterTop: 48px;
 feedFilterHeight: 40px;
 feedCategoryMinWidth: 96px;
-feedPostPadding: 16px;
+feedPostPadding: 20px;
+feedPostCompactPadding: 12px;
+feedCompactWidth: 480px;
 feedPostGap: 12px;
-feedAvatarSize: 36px;
-feedMetaGap: 4px;
+feedPostMargin: margins(12px, 0px, 12px, 12px);
+feedFocusInset: 2px;
 feedFocusWidth: 2px;
+feedFocusRadius: 4px;
+feedAvatarSize: 48px;
+feedMetaGap: 4px;
 feedEmptyPadding: 32px;
 feedEmptyGap: 8px;
 feedEmptyActionGap: 20px;
@@ -96,3 +100,49 @@ feedEditorBox: Box(defaultBox) {
     bg: mainMenuBg;
 }
 feedReloadIcon: icon {{ "settings/reload", menuIconColor }};
+
+feedPostPreviewLines: 8;
+feedMediaMaxHeight: 320px;
+feedMediaLabelHeight: 48px;
+feedLoading: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
+    color: windowActiveTextFg;
+    thickness: 2px;
+    size: size(16px, 16px);
+}
+feedMediaPlaySize: 48px;
+feedMediaPlayIcon: icon {{ "history_file_play", windowFg }};
+
+feedPostRadius: 16px;
+feedPostMaxWidth: 720px;
+feedReactionGap: 8px;
+feedReactionButton: RoundButton(defaultLightButton) {
+    height: 32px;
+    width: -24px;
+    radius: 12px;
+    textTop: 6px;
+    textFg: windowFg;
+    textFgOver: windowFg;
+    textBg: windowBgRipple;
+    textBgOver: windowBgOver;
+    style: defaultTextStyle;
+}
+feedChosenReactionButton: RoundButton(feedReactionButton) {
+    textFg: lightButtonFg;
+    textFgOver: lightButtonFg;
+    textBg: lightButtonBg;
+    textBgOver: lightButtonBgOver;
+}
+feedViews: FlatLabel(defaultFlatLabel) {
+    minWidth: 0px;
+    textFg: windowSubTextFg;
+    style: TextStyle(defaultTextStyle) {
+        font: feedMetaFont;
+    }
+}
+
+feedPostLabel: FlatLabel(defaultFlatLabel) {
+    minWidth: 0px;
+    style: feedPostText;
+    textFg: windowFg;
+}
+feedMediaRadius: 12px;

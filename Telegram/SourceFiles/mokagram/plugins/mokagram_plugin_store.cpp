@@ -16,7 +16,6 @@
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
-#include "ui/widgets/buttons.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/vertical_list.h"
 #include "ui/painter.h"
@@ -55,8 +54,8 @@ constexpr auto kBaseUrl
 constexpr auto kMaxIndexBytes = qint64(256 * 1024);
 constexpr auto kMaxPluginBytes = qint64(2 * 1024 * 1024);
 constexpr auto kTimeout = 20 * 1000;
-constexpr auto kAvatar = 48;
 constexpr auto kCardPad = 16;
+constexpr auto kAvatar = 48;
 
 struct Entry {
 	QString id;
@@ -428,9 +427,8 @@ void StoreBox(
 	const auto alive = base::make_weak(box);
 
 	const auto header = content->add(
-		object_ptr<Ui::RpWidget>(content),
-		QMargins(10, 10, 10, 0));
-	header->resize(header->width(), 40);
+		object_ptr<Ui::FixedHeightWidget>(content, 48),
+		QMargins(16, 16, 16, 0));
 	const auto close = MakeHeaderButton(
 		header,
 		true,
@@ -441,12 +439,21 @@ void StoreBox(
 		st::boxTitle);
 	header->widthValue() | rpl::on_next([=](int width) {
 		close->moveToLeft(0, 0);
-		title->moveToLeft((width - title->width()) / 2, 6);
+		title->resizeToNaturalWidth(std::max(0, width - 112));
+		title->moveToLeft(56, (48 - title->height()) / 2);
 	}, header->lifetime());
-	Ui::AddSkip(content, 8);
-	const auto sources = content->add(object_ptr<Ui::LinkButton>(
-		content,
-		U(Mokagram::Lang::Tr("Источники плагинов"))), st::boxPadding);
+	static const auto storeAction = [] {
+		auto result = st::defaultLightButton;
+		result.height = 36;
+		result.textTop = 8;
+		result.radius = 18;
+		result.fullRadius = true;
+		return result;
+	}();
+	const auto sources = content->add(object_ptr<Ui::RoundButton>(content,
+		rpl::single(U(Mokagram::Lang::Tr("Источники плагинов"))), storeAction),
+		QMargins(24, 12, 24, 12));
+	sources->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 	sources->setClickedCallback([=] {
 		if (const auto strong = weak.get()) {
 			strong->show(Box(SourcesBox, strong, changed));
@@ -458,8 +465,10 @@ void StoreBox(
 			content,
 			U(Mokagram::Lang::Tr("Загружаю каталог...")),
 			st::boxDividerLabel),
-		QMargins(24, 10, 24, 14));
+		QMargins(24, 8, 24, 16));
+	const auto retryArea = content->add(object_ptr<Ui::VerticalLayout>(content));
 	const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
+	box->setMinHeight(240);
 
 	// Счётчики установок приходят от бота (inline «pstats»): плагин -> число людей.
 	struct Counts {
@@ -482,8 +491,8 @@ void StoreBox(
 	};
 	const auto updateCounts = [=] {
 		for (const auto &[id, label] : counts->labels) {
-			if (label) {
-				label->setText(installsText(counts->values.value(id, 0)));
+			if (label && counts->values.contains(id)) {
+				label->setText(installsText(counts->values.value(id)));
 				label->show();
 			}
 		}
@@ -506,6 +515,17 @@ void StoreBox(
 			return;
 		}
 		status->setText(text);
+		status->show();
+		retryArea->clear();
+		const auto retry = retryArea->add(object_ptr<Ui::RoundButton>(retryArea,
+			tr::lng_bot_download_retry(), storeAction), QMargins(24, 0, 24, 20));
+		retry->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+		retry->setClickedCallback([=] {
+			if (const auto strong = weak.get()) {
+				box->closeBox();
+				strong->show(Box(StoreBox, strong, changed));
+			}
+		});
 	};
 	const auto build = [=](std::vector<Entry> entries) {
 		if (!alive) {
@@ -520,169 +540,116 @@ void StoreBox(
 		for (const auto &entry : entries) {
 			const auto installed = InstalledVersion(entry.id);
 			const auto current = (installed == entry.version);
-			const auto wrap = list->add(
-				object_ptr<Ui::RpWidget>(list),
+			const auto wrap = list->add(object_ptr<Ui::VerticalLayout>(list),
 				QMargins(14, 10, 14, 0));
-			const auto avatar = Ui::CreateChild<Ui::RpWidget>(wrap);
+			const auto heading = wrap->add(object_ptr<Ui::FixedHeightWidget>(wrap, kAvatar),
+				QMargins(kCardPad, kCardPad, kCardPad, 0));
+			const auto avatar = Ui::CreateChild<Ui::RpWidget>(heading);
 			avatar->resize(kAvatar, kAvatar);
 			const auto letter = entry.icon.isEmpty()
-				? entry.name.left(1).toUpper()
-				: entry.icon.left(8);
-			// Эмодзи значка берём из набора iOSTelegram (анимированные), пока он не загрузился или эмодзи там нет, рисуем обычный.
-			auto packState = std::make_shared<std::shared_ptr<void>>();
+				? entry.name.left(1).toUpper() : entry.icon.left(8);
+			const auto packState = std::make_shared<std::shared_ptr<void>>();
 			if (controller) {
 				Settings::PreloadRowIcons(&controller->session());
-				Settings::RowIconsUpdated(
-				) | rpl::on_next([=] {
+				Settings::RowIconsUpdated() | rpl::on_next([=] {
 					avatar->update();
 				}, avatar->lifetime());
 			}
-			const auto iconAlt = entry.icon;
 			avatar->paintOn([=](QPainter &p) {
-				{
-					auto hq = PainterHighQualityEnabler(p);
-					p.setPen(Qt::NoPen);
-					p.setBrush(st::windowBgRipple);
-					p.drawRoundedRect(avatar->rect(), 14, 14);
-				}
-				if (!iconAlt.isEmpty() && Settings::PaintPackIcon(
-						p,
-						avatar->rect(),
-						iconAlt,
-						*packState,
-						avatar)) {
+				auto hq = PainterHighQualityEnabler(p);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBgRipple);
+				p.drawRoundedRect(avatar->rect(), 14, 14);
+				if (!entry.icon.isEmpty() && Settings::PaintPackIcon(
+						p, avatar->rect(), entry.icon, *packState, avatar)) {
 					return;
 				}
 				p.setPen(st::windowFg);
 				p.setFont(style::font(24, 0, 0));
 				p.drawText(avatar->rect(), Qt::AlignCenter, letter);
 			});
-			const auto title = Ui::CreateChild<Ui::FlatLabel>(
-				wrap,
-				entry.name,
-				st::boxTitle);
-			auto subtitleText = U("v") + entry.version;
+			const auto title = Ui::CreateChild<Ui::FlatLabel>(heading, entry.name, st::boxTitle);
+			auto subtitleText = u"v"_q + entry.version;
 			if (!entry.author.isEmpty()) {
-				subtitleText += U("  •  ") + entry.author;
+				subtitleText += u" · "_q + entry.author;
 			}
-			const auto subtitle = Ui::CreateChild<Ui::FlatLabel>(
-				wrap,
-				subtitleText,
-				st::boxDividerLabel);
-			const auto text = Ui::CreateChild<Ui::FlatLabel>(
-				wrap,
-				entry.description,
-				st::boxLabel);
-			// Подробное описание: под кнопкой «Подробнее», раскрывается в карточке.
-			const auto more = entry.details.isEmpty()
-				? nullptr
-				: Ui::CreateChild<Ui::LinkButton>(
-					wrap,
-					U(Mokagram::Lang::Tr("Подробнее")));
-			// Полный текст создаём только при раскрытии и убираем при сворачивании.
-			const auto moreText = std::make_shared<QPointer<Ui::FlatLabel>>();
-			const auto expanded = std::make_shared<bool>(false);
-			const auto relayout = std::make_shared<Fn<void()>>();
-			const auto access = entry.permissions.isEmpty()
-				? nullptr
-				: Ui::CreateChild<Ui::FlatLabel>(
-					wrap,
+			const auto subtitle = Ui::CreateChild<Ui::FlatLabel>(heading,
+				subtitleText, st::boxDividerLabel);
+			heading->widthValue() | rpl::on_next([=](int width) {
+				const auto left = kAvatar + 12;
+				const auto available = std::max(0, width - left);
+				title->resizeToNaturalWidth(available);
+				subtitle->resizeToNaturalWidth(available);
+				const auto top = (kAvatar - title->height() - 2 - subtitle->height()) / 2;
+				title->moveToLeft(left, top);
+				subtitle->moveToLeft(left, top + title->height() + 2);
+			}, heading->lifetime());
+			heading->showChildren();
+			if (!entry.description.isEmpty()) {
+				wrap->add(object_ptr<Ui::FlatLabel>(wrap,
+					entry.description, st::boxLabel),
+					QMargins(kCardPad, 12, kCardPad, 0));
+			}
+			if (!entry.details.isEmpty()) {
+				const auto more = wrap->add(object_ptr<Ui::LinkButton>(wrap,
+					U(Mokagram::Lang::Tr("Подробнее"))),
+					QMargins(kCardPad, 8, kCardPad, 0));
+				const auto details = wrap->add(object_ptr<Ui::VerticalLayout>(wrap));
+				const auto expanded = more->lifetime().make_state<bool>(false);
+				more->setClickedCallback([=] {
+					*expanded = !*expanded;
+					details->clear();
+					if (*expanded) {
+						details->add(object_ptr<Ui::FlatLabel>(details,
+							entry.details, st::boxLabel),
+							QMargins(kCardPad, 8, kCardPad, 0));
+					}
+					more->setText(U(Mokagram::Lang::Tr(
+						*expanded ? "Свернуть" : "Подробнее")));
+				});
+			}
+			if (!entry.permissions.isEmpty()) {
+				wrap->add(object_ptr<Ui::FlatLabel>(wrap,
 					U(Mokagram::Lang::Tr("Доступ: ")) + entry.permissions,
-					st::boxDividerLabel);
-			static const auto stInstall = [] {
+					st::boxDividerLabel), QMargins(kCardPad, 8, kCardPad, 0));
+			}
+			static const auto installStyle = [] {
 				auto result = st::defaultActiveButton;
-				result.height = 34;
-				result.textTop = 7;
-				result.radius = 17;
+				result.height = 36;
+				result.textTop = 8;
+				result.radius = 18;
 				result.fullRadius = true;
 				return result;
 			}();
-			static const auto stDone = [] {
-				auto result = st::defaultLightButton;
-				result.height = 34;
-				result.textTop = 7;
-				result.radius = 17;
-				result.fullRadius = true;
-				return result;
-			}();
-			const auto button = Ui::CreateChild<Ui::RoundButton>(
-				wrap,
-				rpl::single(installed.isEmpty()
-					? U(Mokagram::Lang::Tr("Установить"))
-					: (current ? U(Mokagram::Lang::Tr("Установлен")) : U(Mokagram::Lang::Tr("Обновить")))),
-				current ? stDone : stInstall);
-			const auto installs = Ui::CreateChild<Ui::FlatLabel>(
-				wrap,
-				QString(),
-				st::boxDividerLabel);
+			const auto actions = wrap->add(object_ptr<Ui::FixedHeightWidget>(wrap, 36),
+				QMargins(kCardPad, 16, kCardPad, kCardPad));
+			const auto button = Ui::CreateChild<Ui::RoundButton>(actions,
+				rpl::single(U(Mokagram::Lang::Tr(installed.isEmpty()
+					? "Установить" : (current ? "Установлен" : "Обновить")))),
+				current ? storeAction : installStyle);
+			button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+			button->setDisabled(current);
+			const auto installs = Ui::CreateChild<Ui::FlatLabel>(actions,
+				QString(), st::boxDividerLabel);
 			installs->hide();
 			counts->labels.emplace_back(entry.id, installs);
-			if (counts->loaded) {
-				installs->setText(installsText(counts->values.value(entry.id, 0)));
+			if (counts->loaded && counts->values.contains(entry.id)) {
+				installs->setText(installsText(counts->values.value(entry.id)));
 				installs->show();
 			}
+			actions->widthValue() | rpl::on_next([=](int width) {
+				button->moveToRight(0, 0);
+				installs->resizeToWidth(std::max(0, width - button->width() - 12));
+				installs->moveToLeft(0, (36 - installs->height()) / 2);
+			}, actions->lifetime());
+			actions->showChildren();
+			installs->setVisible(counts->loaded && counts->values.contains(entry.id));
 			wrap->paintOn([=](QPainter &p) {
 				auto hq = PainterHighQualityEnabler(p);
 				p.setPen(Qt::NoPen);
 				p.setBrush(st::windowBg);
 				p.drawRoundedRect(wrap->rect(), 22, 22);
 			});
-			*relayout = [=] {
-				const auto width = wrap->width();
-				const auto textLeft = kCardPad + kAvatar + 12;
-				avatar->move(kCardPad, kCardPad);
-				title->resizeToNaturalWidth(width - kCardPad - textLeft);
-				const auto block = title->height() + 2 + subtitle->height();
-				const auto top = kCardPad + (kAvatar - block) / 2;
-				title->move(textLeft, top);
-				subtitle->move(textLeft, top + title->height() + 2);
-				auto bottom = kCardPad + kAvatar;
-				text->resizeToWidth(width - 2 * kCardPad);
-				text->move(kCardPad, bottom + 12);
-				bottom += 12 + text->height();
-				if (more) {
-					more->move(kCardPad, bottom + 4);
-					bottom += 4 + more->height();
-					if (*expanded && *moreText) {
-						(*moreText)->resizeToWidth(width - 2 * kCardPad);
-						(*moreText)->move(kCardPad, bottom + 6);
-						bottom += 6 + (*moreText)->height();
-					}
-				}
-				if (access) {
-					access->resizeToWidth(width - 2 * kCardPad);
-					access->move(kCardPad, bottom + 6);
-					bottom += 6 + access->height();
-				}
-				button->move(width - kCardPad - button->width(), bottom + 12);
-				installs->moveToLeft(
-					kCardPad,
-					bottom + 12 + (button->height() - installs->height()) / 2);
-				wrap->resize(width, bottom + 12 + button->height() + kCardPad);
-			};
-			if (more) {
-				more->setClickedCallback([=] {
-					*expanded = !*expanded;
-					if (*expanded) {
-						*moreText = Ui::CreateChild<Ui::FlatLabel>(
-							wrap,
-							entry.details,
-							st::boxLabel);
-						(*moreText)->show();
-					} else if (*moreText) {
-						(*moreText)->deleteLater();
-						*moreText = nullptr;
-					}
-					more->setText(*expanded
-						? U(Mokagram::Lang::Tr("Свернуть"))
-						: U(Mokagram::Lang::Tr("Подробнее")));
-					(*relayout)();
-				});
-			}
-			wrap->widthValue() | rpl::on_next([=](int) {
-				(*relayout)();
-			}, wrap->lifetime());
-			wrap->showChildren();
 			if (current) {
 				button->setAttribute(Qt::WA_TransparentForMouseEvents);
 				continue;
@@ -690,8 +657,8 @@ void StoreBox(
 			button->setClickedCallback([=] {
 				button->setAttribute(Qt::WA_TransparentForMouseEvents);
 				const auto reply = Get(entry.file, kMaxPluginBytes);
-				QObject::connect(reply, &QNetworkReply::finished, [=] {
-					reply->deleteLater();
+				QObject::connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
+				QObject::connect(reply, &QNetworkReply::finished, button, [=] {
 					button->setAttribute(
 						Qt::WA_TransparentForMouseEvents,
 						false);
@@ -714,7 +681,7 @@ void StoreBox(
 				});
 			});
 		}
-		Ui::AddSkip(list, 14);
+		Ui::AddSkip(list, 12);
 		box->verticalLayout()->resizeToWidth(box->width());
 	};
 

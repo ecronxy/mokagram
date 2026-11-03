@@ -1,5 +1,7 @@
 #include "mokagram/music/mokagram_music_canvas.h"
 
+#include "mokagram/music/mokagram_motion.h"
+
 #include "media/streaming/media_streaming_loader_local.h"
 #include "media/streaming/media_streaming_reader.h"
 #include "ui/effects/animations.h"
@@ -21,7 +23,7 @@ namespace {
 
 constexpr auto kMetadataLimit = 1024 * 1024;
 constexpr auto kVideoLimit = 8 * 1024 * 1024;
-constexpr auto kCandidateLimit = 30;
+constexpr auto kCandidateLimit = 60;
 
 QString Normalize(const QString &text) {
 	auto result = QString();
@@ -101,12 +103,19 @@ void CanvasPlayer::refresh(
 	_pages = 0;
 	_nextPage = QUrl();
 	_id = std::move(id);
-	_title = Normalize(title);
+	const auto metadata = MotionProtocol::Metadata(
+		title, artist, !_id.startsWith(u"telegram:"_q));
+	_title = metadata.title;
+	artist = metadata.artist;
 	_repaint();
 	if (_id.isEmpty() || _title.isEmpty() || artist.trimmed().isEmpty()) {
 		return;
 	}
 	setLoading(true);
+	QTimer::singleShot(90000, _requests.get(), [=] {
+		_requests.reset();
+		setLoading(false);
+	});
 	if (const auto cached = Videos().object(_id)) {
 		startVideo(*cached);
 		return;
@@ -152,9 +161,6 @@ void CanvasPlayer::get(
 			&& reply->bytesAvailable() <= limit;
 		const auto data = ok ? reply->readAll() : QByteArray();
 		reply->deleteLater();
-		if (data.isEmpty()) {
-			setLoading(false);
-		}
 		done(data);
 	});
 }
@@ -212,7 +218,7 @@ void CanvasPlayer::readCandidates(const QByteArray &data) {
 		uR"re(href="([^"]+)"\s+aria-label="Next")re"_q);
 	const auto match = next.match(html);
 	_nextPage = QUrl();
-	if (++_pages < 3 && match.hasMatch()) {
+	if (++_pages < 6 && match.hasMatch()) {
 		const auto url = QUrl(u"https://www.canvasdownloader.com"_q)
 			.resolved(QUrl(match.captured(1)));
 		if (url.scheme() == u"https"_q
@@ -228,7 +234,7 @@ void CanvasPlayer::findTitle() {
 	while (_candidate < int(_candidates.size())) {
 		const auto candidate = _candidates[_candidate++];
 		if (const auto title = Titles().object(candidate.trackId)) {
-			if (*title == _title) {
+			if (MotionProtocol::MatchesTitle(_title, *title)) {
 				loadVideo(candidate.video);
 				return;
 			}
@@ -241,14 +247,14 @@ void CanvasPlayer::findTitle() {
 			u"https://open.spotify.com/track/"_q + candidate.trackId);
 		url.setQuery(query);
 		get(url, kMetadataLimit, [=](QByteArray data) {
-			const auto title = Normalize(QJsonDocument::fromJson(data).object()
-				.value(u"title"_q).toString());
+			const auto title = QJsonDocument::fromJson(data).object()
+				.value(u"title"_q).toString();
 			if (!title.isEmpty()) {
 				Titles().insert(candidate.trackId, new QString(title));
 			}
-			if (!title.isEmpty() && title == _title) {
+			if (MotionProtocol::MatchesTitle(_title, title)) {
 				loadVideo(candidate.video);
-			} else if (!data.isEmpty()) {
+			} else {
 				findTitle();
 			}
 		});
@@ -269,6 +275,8 @@ void CanvasPlayer::loadVideo(QUrl url) {
 	get(url, kVideoLimit, [=](QByteArray data) {
 		if (!data.isEmpty()) {
 			startVideo(std::move(data));
+		} else {
+			findTitle();
 		}
 	});
 }

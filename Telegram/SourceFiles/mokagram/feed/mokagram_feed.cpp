@@ -1,15 +1,32 @@
 #include "mokagram/feed/mokagram_feed.h"
 
 #include "boxes/peer_list_box.h"
+#include "boxes/peer_list_controllers.h"
+#include "apiwrap.h"
+#include "base/call_delayed.h"
+#include "data/data_changes.h"
+#include "data/data_message_reactions.h"
+#include "core/ui_integration.h"
 #include "data/data_channel.h"
+#include "data/data_chat.h"
+#include "data/data_folder.h"
+#include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "data/data_file_origin.h"
+#include "data/data_media_types.h"
+#include "data/data_photo_media.h"
 #include "data/data_session.h"
+#include "history/history.h"
+#include "history/history_item.h"
 #include "lang/lang_keys.h"
 #include "main/session/session_show.h"
 #include "main/main_session.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mtproto/sender.h"
+#include "ui/effects/radial_animation.h"
 #include "ui/layers/generic_box.h"
+#include "ui/image/image.h"
 #include "ui/text/text.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
@@ -40,7 +57,7 @@ namespace Mokagram::Feed {
 namespace {
 
 constexpr auto kMaxCategories = 20;
-constexpr auto kMaxChannels = 32;
+constexpr auto kMaxSources = 32;
 constexpr auto kPageSize = 20;
 constexpr auto kMaxPosts = 2000;
 
@@ -48,10 +65,23 @@ QString Text(const char *value) {
 	return QString::fromUtf8(Lang::Tr(value));
 }
 
+void PaintFocus(Painter &p, not_null<QWidget*> parent, QWidget *control) {
+	if (!control || !control->hasFocus() || control->isHidden()) {
+		return;
+	}
+	const auto inset = st::feedFocusInset;
+	const auto area = QRect(control->mapTo(parent, QPoint()), control->size())
+		.adjusted(-inset, -inset, inset, inset);
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(QPen(st::windowActiveTextFg->c, st::feedFocusWidth));
+	p.setBrush(Qt::NoBrush);
+	p.drawRoundedRect(area, st::feedFocusRadius, st::feedFocusRadius);
+}
+
 struct Category {
 	QString id;
 	QString name;
-	std::vector<PeerId> channels;
+	std::vector<PeerId> sources;
 };
 
 struct Post {
@@ -70,7 +100,9 @@ struct Source {
 struct FeedSnapshot {
 	std::vector<Post> posts;
 	std::vector<Source> sources;
+	std::vector<PeerId> pendingSources;
 	int failures = 0;
+	int unavailableSources = 0;
 };
 
 class FeedMemento final : public Window::SectionMemento {
@@ -89,37 +121,76 @@ public:
 
 };
 
-class PostRow final : public Ui::RippleButton {
+struct ReactionControl {
+	Data::ReactionId id;
+	Ui::RoundButton *button = nullptr;
+};
+
+class PostRow final : public Ui::RpWidget {
 public:
 	PostRow(QWidget *parent, not_null<Main::Session*> session,
-		const Post &post, Fn<void()> open);
+		const Post &post, Fn<void()> open, Fn<void()> comments,
+		Fn<void()> openMedia);
 	QString accessibilityName() override;
 
 protected:
 	int resizeGetHeight(int newWidth) override;
 	void paintEvent(QPaintEvent *event) override;
+	bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
+	void syncReactions();
+	void scheduleReactionsUpdate();
+	void toggleReaction(const Data::ReactionId &id);
+	void showReactionMenu();
+
+	not_null<Main::Session*> _session;
+	FullMsgId _itemId;
+	std::vector<ReactionControl> _reactionControls;
+	Ui::RoundButton *_reactionMore = nullptr;
+	Ui::FlatLabel *_views = nullptr;
+	base::unique_qptr<Ui::PopupMenu> _reactionMenu;
 	PeerData *_peer = nullptr;
 	Ui::PeerUserpicView _userpic;
 	Ui::Text::String _title;
-	Ui::Text::String _body;
+	style::FlatLabel _bodyStyle;
+	Ui::FlatLabel *_body = nullptr;
+	Ui::FlatLabel *_sender = nullptr;
 	QString _date;
+	QString _mediaLabel;
+	std::shared_ptr<Data::PhotoMedia> _photo;
+	std::shared_ptr<Data::DocumentMedia> _document;
+	Ui::LinkButton *_expand = nullptr;
+	Ui::LinkButton *_open = nullptr;
+	Ui::LinkButton *_comments = nullptr;
+	Ui::AbstractButton *_mediaButton = nullptr;
+	QSize _mediaSize;
+	int _padding = 0;
+	int _bodyHeight = 0;
+	int _mediaTop = 0;
+	int _mediaHeight = 0;
+	int _mediaWidth = 0;
+	bool _expanded = false;
+	bool _reactionUpdatePending = false;
 
 };
 
-class ChannelsController final : public PeerListController {
+class SourcesController final : public ChatsListBoxController {
 public:
-	ChannelsController(not_null<Main::Session*> session, Category category);
+	SourcesController(not_null<Main::Session*> session, Category category);
 	Main::Session &session() const override;
-	void prepare() override;
 	void rowClicked(not_null<PeerListRow*> row) override;
+	void loadMoreRows() override;
 	rpl::producer<QString> searchPlaceholder() const override;
+	QString savedMessagesChatStatus() const override;
 	QString categoryName() const;
 	void setNameField(not_null<Ui::InputField*> field);
 	void showNameError();
 
 private:
+	void prepareViewHook() override;
+	std::unique_ptr<Row> createRow(not_null<History*> history) override;
+
 	not_null<Main::Session*> _session;
 	Category _category;
 	QPointer<Ui::InputField> _name;
@@ -144,6 +215,7 @@ protected:
 	void resizeEvent(QResizeEvent *event) override;
 	void keyPressEvent(QKeyEvent *event) override;
 	void showFinishedHook() override;
+	bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
 	void syncVisibility();
@@ -158,16 +230,17 @@ private:
 	void populateCategories(int selected = 0);
 	void editCategory(bool create);
 	void refresh();
+	void resolvePendingSources();
 	void loadMore();
 	void loadNext();
 
 	not_null<Main::Session*> _session;
+	Ui::InfiniteRadialAnimation _loading;
 	QString _key;
 	std::unique_ptr<MTP::Sender> _api;
 	Ui::IconButton *_back = nullptr;
 	Ui::IconButton *_menuButton = nullptr;
 	Ui::RoundButton *_category = nullptr;
-	Ui::LinkButton *_edit = nullptr;
 	Ui::ScrollArea *_scroll = nullptr;
 	QPointer<Ui::VerticalLayout> _content;
 	Ui::RpWidget *_empty = nullptr;
@@ -177,14 +250,15 @@ private:
 	QPointer<Ui::RoundButton> _older;
 	QPointer<PeerListBox> _editor;
 	base::unique_qptr<Ui::PopupMenu> _menu;
-	QString _summary;
 	std::vector<Category> _groups;
 	std::vector<Source> _sources;
+	std::vector<PeerId> _pendingSources;
 	std::vector<Post> _posts;
 	int _selected = -1;
 	int _restoreTop = 0;
 	size_t _source = 0;
 	int _failures = 0;
+	int _unavailableSources = 0;
 	bool _busy = false;
 	bool _showingEmpty = true;
 
@@ -216,40 +290,234 @@ PostRow::PostRow(
 		QWidget *parent,
 		not_null<Main::Session*> session,
 		const Post &post,
-		Fn<void()> open)
-: Ui::RippleButton(parent, st::defaultRippleAnimationBgOver)
+		Fn<void()> open,
+		Fn<void()> comments,
+		Fn<void()> openMedia)
+: Ui::RpWidget(parent)
+, _session(session)
+, _itemId(post.peer, MsgId(post.id))
 , _peer(session->data().peerLoaded(post.peer))
-, _title(st::semiboldTextStyle, _peer ? _peer->name() : QString())
-, _body(st::feedPostText, post.text)
+, _title(st::semiboldTextStyle, _peer
+	? (_peer->isSelf() ? tr::lng_saved_messages(tr::now) : _peer->name())
+	: QString())
+, _bodyStyle(st::feedPostLabel)
 , _date(QDateTime::fromSecsSinceEpoch(post.date).toLocalTime()
 	.toString(u"dd.MM · HH:mm"_q)) {
-	setClickedCallback(std::move(open));
-	setPointerCursor(true);
-	setFocusPolicy(Qt::StrongFocus);
+	setToolTip(_title.toString() + u" · "_q + _date);
+	_body = Ui::CreateChild<Ui::FlatLabel>(this, post.text, _bodyStyle);
+	_body->setSelectable(true);
+	_open = Ui::CreateChild<Ui::LinkButton>(this, Text("Показать в чате"));
+	_open->setClickedCallback(std::move(open));
+	_open->setFocusPolicy(Qt::StrongFocus);
+	_open->installEventFilter(this);
+	_expand = Ui::CreateChild<Ui::LinkButton>(this, Text("Показать ещё"));
+	_expand->setFocusPolicy(Qt::StrongFocus);
+	_expand->installEventFilter(this);
+	_expand->setClickedCallback([=] {
+		_expanded = !_expanded;
+		_expand->setText(_expanded ? Text("Свернуть") : Text("Показать ещё"));
+		resizeToWidth(width());
+		update();
+	});
+	_reactionMore = Ui::CreateChild<Ui::RoundButton>(this,
+		rpl::single(u"+"_q), st::feedReactionButton);
+	_reactionMore->setAccessibleName(tr::lng_notification_reactions(tr::now));
+	_reactionMore->setClickedCallback([=] { showReactionMenu(); });
+	_reactionMore->setFocusPolicy(Qt::StrongFocus);
+	_reactionMore->installEventFilter(this);
+	_views = Ui::CreateChild<Ui::FlatLabel>(this, QString(), st::feedViews);
+	syncReactions();
+	session->data().itemDataChanges() | rpl::on_next([=](const auto item) {
+		if (item->fullId() == _itemId) {
+			scheduleReactionsUpdate();
+		}
+	}, lifetime());
+	session->data().itemRepaintRequest() | rpl::on_next([=](const auto item) {
+		if (item->fullId() == _itemId) {
+			update();
+		}
+	}, lifetime());
+	if (_peer) {
+		session->changes().peerUpdates(_peer,
+			Data::PeerUpdate::Flag::Reactions
+		) | rpl::on_next([=] { scheduleReactionsUpdate(); }, lifetime());
+	}
+	session->data().reactions().defaultUpdates(
+	) | rpl::on_next([=] { scheduleReactionsUpdate(); }, lifetime());
+	const auto item = session->data().message(post.peer, MsgId(post.id));
+	if (!item) {
+		return;
+	}
+	if (item->author() != _peer && !item->author()->name().isEmpty()) {
+		_sender = Ui::CreateChild<Ui::FlatLabel>(
+			this, item->author()->name(), st::feedViews);
+		_sender->setSelectable(true);
+	}
+	_body->setMarkedText(item->originalText(), Core::TextContext({
+		.session = session,
+		.repaint = [=] { update(); },
+		.customEmojiLoopLimit = -1,
+	}));
+	if (item->repliesAreComments()) {
+		const auto count = item->repliesCount();
+		_comments = Ui::CreateChild<Ui::LinkButton>(this, count
+			? tr::lng_comments_open_count(tr::now, lt_count, count)
+			: tr::lng_comments_open_none(tr::now));
+		_comments->setClickedCallback(std::move(comments));
+		_comments->setFocusPolicy(Qt::StrongFocus);
+		_comments->installEventFilter(this);
+	}
+	const auto media = item->media();
+	if (!media) {
+		return;
+	}
+	if (media->webpage()) {
+		return;
+	}
+	_mediaLabel = media->photo() ? Text("Фото") : media->notificationText().text;
+	if (media->hasSpoilerForPreview() || media->ttlSeconds()) {
+		return;
+	}
+	if (const auto photo = media->photo()) {
+		_photo = photo->createMediaView();
+		_mediaSize = photo->size(Data::PhotoSize::Large).value_or(QSize());
+		_photo->wanted(Data::PhotoSize::Thumbnail, item->fullId());
+	} else if (const auto document = media->document()) {
+		_mediaLabel = document->isVideoFile()
+			? Text("Видео") : document->filename();
+		if (_mediaLabel.isEmpty()) {
+			_mediaLabel = media->notificationText().text;
+		}
+		_mediaSize = document->dimensions;
+		_document = document->createMediaView();
+		_document->thumbnailWanted(item->fullId());
+	}
+	if (_photo || _document) {
+		_mediaButton = Ui::CreateChild<Ui::AbstractButton>(this);
+		_mediaButton->setClickedCallback(std::move(openMedia));
+		_mediaButton->setAccessibleName(_mediaLabel);
+		_mediaButton->setPointerCursor(true);
+		_mediaButton->setFocusPolicy(Qt::StrongFocus);
+		_mediaButton->installEventFilter(this);
+	}
 }
 
 QString PostRow::accessibilityName() {
-	return _title.toString() + u" · "_q + _date + '\n' + _body.toString();
+	return _title.toString() + u" · "_q + _date
+		+ '\n' + (_sender ? _sender->accessibilityName() + '\n' : QString())
+		+ _body->accessibilityName() + '\n' + _mediaLabel;
 }
 
 int PostRow::resizeGetHeight(int newWidth) {
-	const auto textWidth = std::max(st::feedAvatarSize,
-		newWidth - 2 * st::feedPostPadding);
-	return 2 * st::feedPostPadding + st::feedAvatarSize
-		+ st::feedPostGap + _body.countHeight(textWidth);
+	_padding = (newWidth < st::feedCompactWidth)
+		? st::feedPostCompactPadding
+		: st::feedPostPadding;
+	const auto textWidth = std::max(1, newWidth - 2 * _padding);
+	_bodyStyle.maxHeight = 0;
+	_body->resizeToWidth(textWidth);
+	const auto fullHeight = _body->height();
+	const auto limit = st::feedPostText.lineHeight * st::feedPostPreviewLines;
+	_bodyStyle.maxHeight = _expanded ? 0 : limit;
+	_body->resizeToWidth(textWidth);
+	_bodyHeight = _body->height();
+	_expand->setVisible(fullHeight > limit);
+	auto top = _padding + st::feedAvatarSize;
+	if (_sender) {
+		top += st::feedPostGap;
+		_sender->resizeToWidth(textWidth);
+		_sender->moveToLeft(_padding, top, newWidth);
+		top += _sender->height();
+	}
+	if (_bodyHeight) {
+		top += st::feedPostGap;
+		_body->moveToLeft(_padding, top, newWidth);
+		top += _bodyHeight;
+	}
+	if (!_expand->isHidden()) {
+		top += st::feedMetaGap;
+		_expand->resizeToNaturalWidth(textWidth);
+		_expand->moveToLeft(_padding, top, newWidth);
+		top += _expand->height();
+	}
+	_mediaWidth = textWidth;
+	_mediaHeight = _mediaLabel.isEmpty() ? 0 : st::feedMediaLabelHeight;
+	if ((_photo || _document) && !_mediaSize.isEmpty()) {
+		const auto fitted = _mediaSize.scaled(
+			QSize(textWidth, st::feedMediaMaxHeight), Qt::KeepAspectRatio);
+		_mediaWidth = fitted.width();
+		_mediaHeight = fitted.height();
+	}
+	_mediaTop = top + st::feedPostGap;
+	if (_mediaHeight) {
+		top = _mediaTop + _mediaHeight;
+	}
+	if (_mediaButton) {
+		_mediaButton->resize(_mediaWidth, _mediaHeight);
+		_mediaButton->moveToLeft(_padding, _mediaTop, newWidth);
+	}
+	if (!_reactionControls.empty() || !_reactionMore->isHidden()) {
+		top += st::feedPostGap;
+		auto x = _padding;
+		const auto place = [&](not_null<Ui::RoundButton*> button) {
+			button->setFullWidth(0);
+			if (button->width() > textWidth) {
+				button->setFullWidth(textWidth);
+			}
+			if (x > _padding && x + button->width()
+					> newWidth - _padding) {
+				x = _padding;
+				top += button->height() + st::feedReactionGap;
+			}
+			button->moveToLeft(x, top, newWidth);
+			x += button->width() + st::feedReactionGap;
+		};
+		for (const auto &control : _reactionControls) {
+			place(control.button);
+		}
+		if (!_reactionMore->isHidden()) {
+			place(_reactionMore);
+		}
+		top += st::feedReactionButton.height;
+	}
+	top += st::feedPostGap;
+	_open->resizeToNaturalWidth(textWidth);
+	_open->moveToLeft(_padding, top, newWidth);
+	if (_comments) {
+		_comments->resizeToNaturalWidth(textWidth);
+		const auto available = std::max(0,
+			textWidth - _open->width() - st::feedPostGap);
+		if (_comments->width() > available) {
+			top += _open->height() + st::feedPostGap;
+			_comments->moveToLeft(_padding, top, newWidth);
+		} else {
+			_comments->moveToLeft(_padding + _open->width()
+				+ st::feedPostGap, top, newWidth);
+		}
+	}
+	top += std::max(_open->height(), _comments ? _comments->height() : 0);
+	if (!_views->isHidden()) {
+		top += st::feedPostGap;
+		_views->resizeToWidth(textWidth);
+		_views->moveToLeft(_padding, top, newWidth);
+		top += _views->height();
+	}
+	return top + _padding;
 }
 
 void PostRow::paintEvent(QPaintEvent *event) {
 	auto p = Painter(this);
 	p.fillRect(event->rect(), st::mainMenuBg);
-	if (isOver() || hasFocus()) {
-		auto hover = st::windowFg->c;
-		hover.setAlphaF(0.04);
-		p.fillRect(rect(), hover);
+	{
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(rect(), st::feedPostRadius, st::feedPostRadius);
 	}
-	paintRipple(p, 0, 0);
-	const auto left = st::feedPostPadding;
-	const auto top = st::feedPostPadding;
+	if (const auto item = _session->data().message(_itemId)) {
+		_session->data().reactions().poll(item, crl::now());
+	}
+	const auto left = _padding;
+	const auto top = _padding;
 	if (_peer) {
 		_peer->paintUserpicLeft(p, _userpic, left, top,
 			width(), st::feedAvatarSize);
@@ -265,76 +533,265 @@ void PostRow::paintEvent(QPaintEvent *event) {
 	p.setFont(st::feedMetaFont);
 	p.setPen(st::windowSubTextFg);
 	p.drawTextLeft(textLeft, top + st::semiboldFont->height
-		+ st::feedMetaGap, width(), _date);
+		+ st::feedMetaGap, width(), st::feedMetaFont->elided(
+			_date, std::max(1, width() - textLeft - left)));
 	p.setPen(st::windowFg);
-	_body.draw(p, {
-		.position = { left, top + st::feedAvatarSize + st::feedPostGap },
-		.outerWidth = width(),
-		.availableWidth = width() - 2 * left,
-		.clip = event->rect(),
-	});
-	auto line = st::windowFg->c;
-	line.setAlphaF(0.08);
-	p.fillRect(left, height() - st::lineWidth,
-		width() - 2 * left, st::lineWidth, line);
-	if (hasFocus()) {
-		p.fillRect(0, 0, st::feedFocusWidth, height(), st::windowActiveTextFg);
+	if (_mediaHeight) {
+		const auto area = myrtlrect(left, _mediaTop, _mediaWidth, _mediaHeight);
+		p.save();
+		auto clip = QPainterPath();
+		clip.addRoundedRect(area, st::feedMediaRadius, st::feedMediaRadius);
+		p.setClipPath(clip, Qt::IntersectClip);
+		p.fillRect(area, st::windowBgOver);
+		auto image = _photo
+			? _photo->image(Data::PhotoSize::Large)
+			: (_document ? _document->thumbnail() : nullptr);
+		if (!image && _photo) {
+			image = _photo->image(Data::PhotoSize::Thumbnail);
+		}
+		if (image && !image->isNull()) {
+			const auto fitted = image->size().scaled(area.size(), Qt::KeepAspectRatio);
+			p.drawPixmap(area.x() + (area.width() - fitted.width()) / 2,
+				area.y() + (area.height() - fitted.height()) / 2,
+				image->pix(fitted));
+			if (_document && _document->owner()->isVideoFile()) {
+				const auto size = st::feedMediaPlaySize;
+				const auto center = area.center();
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::mainMenuBg);
+				p.drawEllipse(center, size / 2, size / 2);
+				st::feedMediaPlayIcon.paintInCenter(p, area);
+			}
+		} else {
+			p.setFont(st::feedMetaFont);
+			p.setPen(st::windowSubTextFg);
+			p.drawText(area.adjusted(st::feedPostGap, 0, -st::feedPostGap, 0),
+				Qt::AlignCenter, st::feedMetaFont->elided(_mediaLabel,
+					std::max(1, area.width() - 2 * st::feedPostGap)));
+		}
+		p.restore();
+	}
+
+	for (const auto child : std::array<QWidget*, 5>{
+			_open, _expand, _comments, _mediaButton, _reactionMore }) {
+		PaintFocus(p, this, child);
+	}
+	for (const auto &control : _reactionControls) {
+		PaintFocus(p, this, control.button);
 	}
 }
 
-ChannelsController::ChannelsController(
+bool PostRow::eventFilter(QObject *object, QEvent *event) {
+	if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut) {
+		update();
+	}
+	return Ui::RpWidget::eventFilter(object, event);
+}
+
+void PostRow::scheduleReactionsUpdate() {
+	if (_reactionUpdatePending) {
+		return;
+	}
+	_reactionUpdatePending = true;
+	base::call_delayed(0, this, [=] {
+		_reactionUpdatePending = false;
+		syncReactions();
+	});
+}
+
+void PostRow::syncReactions() {
+	auto focused = std::optional<Data::ReactionId>();
+	for (const auto &control : _reactionControls) {
+		if (control.button->hasFocus()) {
+			focused = control.id;
+		}
+		control.button->hide();
+		control.button->deleteLater();
+	}
+	_reactionControls.clear();
+	const auto item = _session->data().message(_itemId);
+	auto shown = item ? item->reactionsWithLocal() : std::vector<Data::MessageReaction>();
+	const auto possible = item ? Data::LookupPossibleReactions(item)
+		: Data::PossibleItemReactionsRef();
+	auto allowed = std::vector<Data::ReactionId>();
+	for (const auto reaction : possible.recent) {
+		if (!reaction->id.paid()) {
+			allowed.push_back(reaction->id);
+		}
+	}
+	for (const auto &id : allowed | ranges::views::take(3)) {
+		if (!ranges::contains(shown, id, &Data::MessageReaction::id)) {
+			shown.push_back({ .id = id });
+		}
+	}
+	_reactionMore->setVisible(!allowed.empty());
+	for (const auto &reaction : shown) {
+		if (reaction.id.paid()) {
+			continue;
+		}
+		const auto button = Ui::CreateChild<Ui::RoundButton>(this,
+			rpl::single(QString()), reaction.my
+				? st::feedChosenReactionButton : st::feedReactionButton);
+		button->setContext(Core::TextContext({
+			.session = _session,
+			.repaint = [=] { button->update(); },
+			.customEmojiLoopLimit = -1,
+		}));
+		auto label = TextWithEntities{ reaction.id.emoji() };
+		if (reaction.id.custom()) {
+			label.text = u"￼"_q;
+			label.entities.push_back({ EntityType::CustomEmoji, 0, 1,
+				Data::ReactionEntityData(reaction.id) });
+		}
+		if (reaction.count > 0) {
+			label.text += u" "_q + QString::number(reaction.count);
+		}
+		button->setText(rpl::single(std::move(label)));
+		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+		button->setDisabled(!reaction.my && !ranges::contains(allowed, reaction.id));
+		button->setFocusPolicy(Qt::StrongFocus);
+		button->installEventFilter(this);
+		const auto id = reaction.id;
+		button->setClickedCallback([=] { toggleReaction(id); });
+		button->show();
+		if (focused == id) {
+			button->setFocus();
+		}
+		_reactionControls.push_back({ id, button });
+	}
+	if (item && _comments) {
+		const auto count = item->repliesCount();
+		_comments->setText(count
+			? tr::lng_comments_open_count(tr::now, lt_count, count)
+			: tr::lng_comments_open_none(tr::now));
+	}
+	_views->setVisible(item && item->hasViews());
+	if (item && item->hasViews()) {
+		_views->setText(tr::lng_views_tooltip(tr::now, lt_count, item->viewsCount()));
+	}
+	if (width() > 2 * st::feedPostPadding) {
+		resizeToWidth(width());
+	}
+	update();
+}
+
+void PostRow::toggleReaction(const Data::ReactionId &id) {
+	const auto item = _session->data().message(_itemId);
+	if (!item || id.paid()) {
+		return;
+	}
+	const auto chosen = item->chosenReactions();
+	const auto possible = Data::LookupPossibleReactions(item);
+	if (ranges::contains(chosen, id)
+		|| ranges::any_of(possible.recent, [&](const auto reaction) {
+			return reaction->id == id;
+		})) {
+		item->toggleReaction(id, HistoryReactionSource::Existing);
+	}
+}
+
+void PostRow::showReactionMenu() {
+	const auto item = _session->data().message(_itemId);
+	if (!item) {
+		return;
+	}
+	const auto possible = Data::LookupPossibleReactions(item);
+	_reactionMenu = base::make_unique_q<Ui::PopupMenu>(this);
+	for (const auto reaction : possible.recent) {
+		const auto id = reaction->id;
+		if (id.paid()) {
+			continue;
+		}
+		const auto label = id.emoji().isEmpty() ? reaction->title : id.emoji();
+		if (!label.isEmpty()) {
+			_reactionMenu->addAction(label, [=] { toggleReaction(id); });
+		}
+	}
+	_reactionMenu->popup(_reactionMore->mapToGlobal(QPoint(0, _reactionMore->height())));
+}
+
+SourcesController::SourcesController(
 		not_null<Main::Session*> session,
 		Category category)
-: _session(session)
+: ChatsListBoxController(std::unique_ptr<PeerListSearchController>())
+, _session(session)
 , _category(std::move(category)) {
 	setStyleOverrides(&st::feedPeerList, &st::feedSearch);
 }
 
-Main::Session &ChannelsController::session() const {
+Main::Session &SourcesController::session() const {
 	return *_session;
 }
 
-void ChannelsController::prepare() {
-	delegate()->peerListSetTitle(rpl::single(Text("Выбрать каналы")));
-	delegate()->peerListSetSearchMode(PeerListSearchMode::Enabled);
+void SourcesController::prepareViewHook() {
+	delegate()->peerListSetTitle(rpl::single(Text("Выбрать источники")));
 	auto selected = std::vector<not_null<PeerData*>>();
-	_session->data().enumerateBroadcasts([&](not_null<ChannelData*> channel) {
-		if (!channel->amIn()) {
-			return;
-		}
-		delegate()->peerListAppendRow(std::make_unique<PeerListRow>(channel));
-		if (std::find(_category.channels.begin(), _category.channels.end(),
-				channel->id) != _category.channels.end()) {
-			selected.push_back(channel);
-		}
-	});
-	sortByName();
+	for (const auto id : _category.sources) {
+		const auto peer = _session->data().peer(id);
+		delegate()->peerListAppendRow(
+			std::make_unique<Row>(_session->data().history(peer)));
+		selected.push_back(peer);
+	}
 	delegate()->peerListAddSelectedPeers(selected);
-	delegate()->peerListRefreshRows();
+	_session->api().requestDialogs();
+	_session->api().requestDialogs(
+		_session->data().folder(Data::Folder::kId));
 }
 
-void ChannelsController::rowClicked(not_null<PeerListRow*> row) {
+std::unique_ptr<ChatsListBoxController::Row> SourcesController::createRow(
+		not_null<History*> history) {
+	if (!history->peer->isSelf() && !history->inChatList()) {
+		return nullptr;
+	}
+	if (const auto channel = history->peer->asChannel()) {
+		if (!channel->amIn()) {
+			return nullptr;
+		}
+	}
+	if (const auto chat = history->peer->asChat()) {
+		if (!chat->amIn()) {
+			return nullptr;
+		}
+	}
+	return std::make_unique<Row>(history);
+}
+
+QString SourcesController::savedMessagesChatStatus() const {
+	return tr::lng_saved_messages(tr::now);
+}
+
+void SourcesController::loadMoreRows() {
+	if (!_session->data().chatsListLoaded()) {
+		_session->api().requestDialogs();
+	}
+	const auto archive = _session->data().folder(Data::Folder::kId);
+	if (!_session->data().chatsListLoaded(archive)) {
+		_session->api().requestDialogs(archive);
+	}
+}
+
+void SourcesController::rowClicked(not_null<PeerListRow*> row) {
 	const auto checked = delegate()->peerListIsRowChecked(row);
-	if (!checked && delegate()->peerListSelectedRowsCount() >= kMaxChannels) {
-		delegate()->peerListUiShow()->showToast(Text("Выберите не больше 32 каналов"));
+	if (!checked && delegate()->peerListSelectedRowsCount() >= kMaxSources) {
+		delegate()->peerListUiShow()->showToast(Text("Выберите не больше 32 источников"));
 		return;
 	}
 	delegate()->peerListSetRowChecked(row, !checked);
 }
 
-rpl::producer<QString> ChannelsController::searchPlaceholder() const {
-	return rpl::single(Text("Найти канал"));
+rpl::producer<QString> SourcesController::searchPlaceholder() const {
+	return rpl::single(Text("Найти источник"));
 }
 
-QString ChannelsController::categoryName() const {
+QString SourcesController::categoryName() const {
 	return _name ? _name->getLastText().trimmed() : QString();
 }
 
-void ChannelsController::setNameField(not_null<Ui::InputField*> field) {
+void SourcesController::setNameField(not_null<Ui::InputField*> field) {
 	_name = field;
 }
 
-void ChannelsController::showNameError() {
+void SourcesController::showNameError() {
 	if (_name) {
 		_name->showError();
 		_name->setFocusFast();
@@ -347,12 +804,16 @@ FeedSection::FeedSection(
 		const FeedMemento &memento)
 : Window::SectionWidget(parent, controller)
 , _session(&controller->session())
+, _loading([=] { update(); }, st::feedLoading)
 , _key(u"feed.%1.categories"_q.arg(_session->uniqueId()))
 , _api(std::make_unique<MTP::Sender>(&_session->mtp()))
 , _restoreTop(memento.scrollTop) {
 	Settings::Register({ .key = _key, .kind = Settings::Kind::String,
 		.defaultValue = QString(), .hidden = true });
 	loadCategories();
+	_session->data().chatsListChanges() | rpl::on_next([=] {
+		base::call_delayed(0, this, [=] { resolvePendingSources(); });
+	}, lifetime());
 	_back = Ui::CreateChild<Ui::IconButton>(this, st::backButton);
 	_back->setAccessibleName(tr::lng_go_back(tr::now));
 	_back->setClickedCallback([=] { this->controller()->showBackFromStack(); });
@@ -363,8 +824,6 @@ FeedSection::FeedSection(
 		rpl::single(QString()), st::feedCategoryButton);
 	_category->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 	_category->setClickedCallback([=] { showCategories(); });
-	_edit = Ui::CreateChild<Ui::LinkButton>(this, Text("Каналы"));
-	_edit->setClickedCallback([=] { editCategory(false); });
 	_scroll = Ui::CreateChild<Ui::ScrollArea>(this, st::feedScroll);
 	_content = _scroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_scroll));
 	_empty = Ui::CreateChild<Ui::RpWidget>(this);
@@ -376,6 +835,19 @@ FeedSection::FeedSection(
 		rpl::single(Text("Добавить категорию")), st::feedAction);
 	_emptyAction->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 	_emptyAction->setClickedCallback([=] { editCategory(_groups.empty()); });
+	for (const auto control : std::array<Ui::AbstractButton*, 4>{
+			_back, _menuButton, _category, _emptyAction }) {
+		control->setFocusPolicy(Qt::StrongFocus);
+		control->installEventFilter(this);
+	}
+	_empty->paintRequest() | rpl::on_next([=] {
+		auto p = Painter(_empty);
+		PaintFocus(p, _empty, _emptyAction);
+	}, _empty->lifetime());
+	_content->paintRequest() | rpl::on_next([=] {
+		auto p = Painter(_content.data());
+		PaintFocus(p, _content.data(), _older.data());
+	}, _content->lifetime());
 	style::PaletteChanged() | rpl::on_next([=] {
 		update();
 		_content->update();
@@ -400,11 +872,14 @@ FeedSection::FeedSection(
 		updateCategory();
 		_posts = memento.snapshot->posts;
 		_sources = memento.snapshot->sources;
+		_pendingSources = memento.snapshot->pendingSources;
 		_failures = memento.snapshot->failures;
+		_unavailableSources = memento.snapshot->unavailableSources;
 		std::sort(_posts.begin(), _posts.end(), [](const Post &a, const Post &b) {
 			return std::tie(a.date, a.peer, a.id) > std::tie(b.date, b.peer, b.id);
 		});
 		renderPosts();
+		resolvePendingSources();
 	} else {
 		populateCategories(position == _groups.end()
 			? 0 : int(position - _groups.begin()));
@@ -443,7 +918,9 @@ std::shared_ptr<Window::SectionMemento> FeedSection::createIdentityMemento() {
 		: std::make_shared<FeedSnapshot>(FeedSnapshot{
 			.posts = _posts,
 			.sources = _sources,
+			.pendingSources = _pendingSources,
 			.failures = _failures,
+			.unavailableSources = _unavailableSources,
 		});
 	return std::make_shared<FeedMemento>(
 		_selected >= 0 ? _groups[_selected].id : QString(),
@@ -464,7 +941,6 @@ void FeedSection::showFinishedHook() {
 void FeedSection::syncVisibility() {
 	_empty->setVisible(_showingEmpty);
 	_scroll->setVisible(!_showingEmpty);
-	_edit->setVisible(_selected >= 0);
 }
 
 bool FeedSection::floatPlayerHandleWheelEvent(QEvent *event) {
@@ -485,17 +961,29 @@ void FeedSection::paintEvent(QPaintEvent *event) {
 	p.setFont(st::boxTitleFont);
 	p.setPen(st::windowFg);
 	p.drawTextLeft(st::feedTitleLeft, st::feedTitleTop, width(),
-		st::boxTitleFont->elided(Text("Лента каналов"),
+		st::boxTitleFont->elided(Text("Лента"),
 			width() - st::feedTitleLeft - st::feedTitleRight));
-	p.setFont(st::feedMetaFont);
-	p.setPen(st::windowSubTextFg);
-	p.drawTextLeft(st::feedTitleLeft, st::feedSummaryTop, width(),
-		st::feedMetaFont->elided(_summary,
-			width() - st::feedTitleLeft - st::feedTitleRight));
+	if (_busy) {
+		_loading.draw(p, QPoint(width() - st::feedTitleRight,
+			st::feedTitleTop), width());
+	}
 	auto line = st::windowFg->c;
 	line.setAlphaF(0.08);
 	p.fillRect(0, st::feedHeaderHeight - st::lineWidth,
 		width(), st::lineWidth, line);
+	for (const auto control : std::array<QWidget*, 3>{
+			_back, _menuButton, _category }) {
+		PaintFocus(p, this, control);
+	}
+}
+
+bool FeedSection::eventFilter(QObject *object, QEvent *event) {
+	if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut) {
+		if (const auto control = qobject_cast<QWidget*>(object)) {
+			control->parentWidget()->update();
+		}
+	}
+	return Window::SectionWidget::eventFilter(object, event);
 }
 
 void FeedSection::resizeEvent(QResizeEvent *event) {
@@ -512,21 +1000,21 @@ void FeedSection::keyPressEvent(QKeyEvent *event) {
 }
 
 void FeedSection::updateLayout() {
+	const auto padding = (width() < st::feedCompactWidth)
+		? st::feedPostCompactPadding
+		: st::feedPostPadding;
 	_back->moveToLeft(st::feedControlInset, st::feedControlInset);
 	_menuButton->moveToRight(st::feedControlInset, st::feedControlInset);
-	_edit->moveToRight(st::feedPostPadding,
-		st::feedFilterTop + (st::feedFilterHeight - _edit->height()) / 2);
 	_category->setFullWidth(0);
-	_category->setFullWidth(std::max(st::feedCategoryMinWidth,
-		std::min(_category->width(),
-			width() - 3 * st::feedPostPadding - _edit->width())));
-	_category->moveToLeft(st::feedPostPadding,
+	const auto available = std::max(1, width() - 2 * padding);
+	_category->setFullWidth(std::min(_category->width(), available));
+	_category->moveToLeft(padding,
 		st::feedFilterTop + (st::feedFilterHeight - _category->height()) / 2);
 	_scroll->setGeometry(0, st::feedHeaderHeight, width(),
 		std::max(0, height() - st::feedHeaderHeight));
 	_content->resizeToWidth(_scroll->width());
 	_empty->setGeometry(_scroll->geometry());
-	const auto textWidth = std::max(st::feedCategoryMinWidth,
+	const auto textWidth = std::max(1,
 		width() - 2 * st::feedEmptyPadding);
 	_emptyTitle->resizeToWidth(textWidth);
 	_emptyHint->resizeToWidth(textWidth);
@@ -537,6 +1025,10 @@ void FeedSection::updateLayout() {
 	_emptyTitle->moveToLeft(st::feedEmptyPadding, top);
 	_emptyHint->moveToLeft(st::feedEmptyPadding,
 		top + _emptyTitle->height() + st::feedEmptyGap);
+	_emptyAction->setFullWidth(0);
+	if (_emptyAction->width() > textWidth) {
+		_emptyAction->setFullWidth(textWidth);
+	}
 	_emptyAction->move((width() - _emptyAction->width()) / 2,
 		top + _emptyTitle->height() + st::feedEmptyGap
 			+ _emptyHint->height() + st::feedEmptyActionGap);
@@ -545,13 +1037,12 @@ void FeedSection::updateLayout() {
 void FeedSection::updateCategory() {
 	_category->setText(rpl::single(_selected >= 0
 		? _groups[_selected].name : Text("Категории")));
-	_edit->setVisible(_selected >= 0);
 	updateLayout();
 	update();
 }
 
 void FeedSection::showCategories() {
-	_menu = base::make_unique_q<Ui::PopupMenu>(this);
+	_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
 	for (auto i = 0; i != int(_groups.size()); ++i) {
 		_menu->addAction(_groups[i].name, [=] {
 			_restoreTop = 0;
@@ -568,10 +1059,10 @@ void FeedSection::showCategories() {
 }
 
 void FeedSection::showMenu() {
-	_menu = base::make_unique_q<Ui::PopupMenu>(this);
+	_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
 	_menu->addAction(Text("Обновить"), [=] { refresh(); }, &st::feedReloadIcon)
-		->setEnabled(!_sources.empty() && !_busy);
-	_menu->addAction(Text("Выбрать каналы"), [=] { editCategory(false); },
+		->setEnabled(_selected >= 0 && !_busy);
+	_menu->addAction(Text("Выбрать источники"), [=] { editCategory(false); },
 		&st::menuIconChannel)->setEnabled(_selected >= 0);
 	_menu->addAction(Text("Добавить категорию"), [=] { editCategory(true); },
 		&st::menuIconAdd)->setEnabled(_groups.size() < kMaxCategories);
@@ -602,7 +1093,7 @@ void FeedSection::showEmpty(
 	_emptyHint->setText(hint);
 	_emptyAction->setVisible(canEdit);
 	_emptyAction->setText(rpl::single(_groups.empty()
-		? Text("Добавить категорию") : Text("Выбрать каналы")));
+		? Text("Добавить категорию") : Text("Выбрать источники")));
 	_empty->show();
 	updateLayout();
 	update();
@@ -619,7 +1110,23 @@ void FeedSection::renderPosts() {
 				if (const auto peer = _session->data().peerLoaded(post.peer)) {
 					controller()->showPeerHistory(peer, {}, MsgId(post.id));
 				}
-			}), style::al_justify);
+			}, [=] {
+				if (const auto item = _session->data().message(post.peer, MsgId(post.id))) {
+					controller()->showRepliesForMessage(item->history(), item->id);
+				}
+			}, [=] {
+				const auto item = _session->data().message(post.peer, MsgId(post.id));
+				const auto media = item ? item->media() : nullptr;
+				if (!media) {
+					return;
+				}
+				if (const auto photo = media->photo()) {
+					controller()->openPhoto(photo, { .id = item->fullId() });
+				} else if (const auto document = media->document()) {
+					controller()->openDocument(document, true, { .id = item->fullId() });
+				}
+			}), st::feedPostMargin, Qt::AlignHCenter);
+		row->setNaturalWidth(st::feedPostMaxWidth);
 		row->show();
 	}
 	const auto canLoad = _posts.size() < kMaxPosts && std::any_of(
@@ -629,26 +1136,26 @@ void FeedSection::renderPosts() {
 	if (canLoad) {
 		_older = _content->add(object_ptr<Ui::RoundButton>(_content,
 			rpl::single(Text("Ещё сообщения")), st::feedMoreButton),
-			st::feedMorePadding, style::al_center);
+			st::feedMorePadding, Qt::AlignHCenter);
 		_older->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		_older->setClickedCallback([=] { loadMore(); });
+		_older->setFocusPolicy(Qt::StrongFocus);
+		_older->installEventFilter(this);
 	}
 	_content->resizeToWidth(_scroll->width());
 	if (_posts.empty()) {
 		showEmpty(Text("Пока нет публикаций"), _failures
-			? Text("Не удалось загрузить каналы. Обновите ленту через меню")
-			: Text("Новые сообщения выбранных каналов появятся здесь"), false);
+			? Text("Не удалось загрузить часть источников. Обновите ленту через меню")
+			: Text("Новые сообщения выбранных источников появятся здесь"), false);
 	} else {
 		_showingEmpty = false;
 		_empty->hide();
 		_scroll->show();
 		_scroll->scrollToY(scrollTop);
 	}
-	_summary = _failures
-		? Text("Сообщений: %1 · Ошибок загрузки: %2")
-			.arg(_posts.size()).arg(_failures)
-		: Text("Сообщений: %1 · Каналов: %2")
-			.arg(_posts.size()).arg(_sources.size());
+	if (_failures && !_posts.empty()) {
+		controller()->showToast(Text("Не удалось загрузить часть источников. Обновите ленту через меню"));
+	}
 	update();
 }
 
@@ -668,10 +1175,10 @@ void FeedSection::loadCategories() {
 			auto ok = false;
 			const auto raw = id.toString().toULongLong(&ok);
 			const auto peer = PeerId(raw);
-			if (ok && raw && std::find(category.channels.begin(),
-				category.channels.end(), peer) == category.channels.end()) {
-				category.channels.push_back(peer);
-				if (category.channels.size() == kMaxChannels) break;
+			if (ok && raw && std::find(category.sources.begin(),
+				category.sources.end(), peer) == category.sources.end()) {
+				category.sources.push_back(peer);
+				if (category.sources.size() == kMaxSources) break;
 			}
 		}
 		_groups.push_back(std::move(category));
@@ -682,7 +1189,7 @@ void FeedSection::saveCategories() {
 	auto groups = QJsonArray();
 	for (const auto &category : _groups) {
 		auto channels = QJsonArray();
-		for (const auto id : category.channels) channels.push_back(QString::number(id.value));
+		for (const auto id : category.sources) channels.push_back(QString::number(id.value));
 		groups.push_back(QJsonObject{
 			{ u"id"_q, category.id }, { u"name"_q, category.name },
 			{ u"channels"_q, channels },
@@ -707,7 +1214,7 @@ void FeedSection::editCategory(bool create) {
 	const auto category = create ? Category{
 		.id = QUuid::createUuid().toString(QUuid::WithoutBraces),
 	} : _groups[_selected];
-	auto list = std::make_unique<ChannelsController>(_session, category);
+	auto list = std::make_unique<SourcesController>(_session, category);
 	const auto listController = list.get();
 	const auto weak = QPointer(this);
 	controller()->show(Box<PeerListBox>(std::move(list),
@@ -728,7 +1235,7 @@ void FeedSection::editCategory(bool create) {
 			name->setMaxLength(80);
 			listController->setNameField(name);
 			header->add(object_ptr<Ui::FlatLabel>(header,
-				rpl::single(Text("Выберите до 32 каналов")), st::feedHint),
+				rpl::single(Text("Выберите до 32 источников")), st::feedHint),
 				st::feedEditorHintPadding);
 			box->widthValue() | rpl::on_next([=](int width) {
 				header->resizeToWidth(width);
@@ -752,11 +1259,11 @@ void FeedSection::editCategory(bool create) {
 					listController->showNameError();
 					return;
 				}
-				updated.channels.clear();
+				updated.sources.clear();
 				for (const auto &peer : box->collectSelectedRows()) {
-					updated.channels.push_back(peer->id);
+					updated.sources.push_back(peer->id);
 				}
-				if (updated.channels.size() > kMaxChannels) {
+				if (updated.sources.size() > kMaxSources) {
 					return;
 				}
 				const auto position = std::find_if(weak->_groups.begin(),
@@ -785,26 +1292,66 @@ void FeedSection::editCategory(bool create) {
 void FeedSection::refresh() {
 	_api = std::make_unique<MTP::Sender>(&_session->mtp());
 	_busy = false;
+	_loading.stop(anim::type::instant);
 	_failures = 0;
+	_unavailableSources = 0;
 	_sources.clear();
+	_pendingSources.clear();
 	_posts.clear();
 	_older = nullptr;
 	_content->clear();
 	if (_selected >= 0) {
-		for (const auto id : _groups[_selected].channels) {
+		for (const auto id : _groups[_selected].sources) {
 			const auto peer = _session->data().peerLoaded(id);
-			const auto channel = peer ? peer->asChannel() : nullptr;
-			if (channel && channel->isBroadcast() && channel->amIn()) {
-				_sources.push_back({ .peer = id });
+			if (!peer) {
+				_pendingSources.push_back(id);
+				++_unavailableSources;
+				continue;
 			}
+			if (const auto channel = peer->asChannel()) {
+				if (!channel->amIn()) {
+					++_unavailableSources;
+					continue;
+				}
+			}
+			if (const auto chat = peer->asChat()) {
+				if (!chat->amIn()) {
+					++_unavailableSources;
+					continue;
+				}
+			}
+			_sources.push_back({ .peer = id });
 		}
 	}
+	_failures = _unavailableSources;
 	if (_sources.empty()) {
-		_summary.clear();
-		showEmpty(Text("Выберите каналы для ленты"),
-			Text("Объедините каналы в категорию, чтобы читать их вместе"), true);
+		showEmpty(Text("Выберите источники для ленты"),
+			_unavailableSources
+				? Text("Не удалось загрузить часть источников. Обновите ленту через меню")
+				: Text("Объедините каналы, группы и личные чаты в категорию"), true);
 	} else {
 		loadMore();
+	}
+	resolvePendingSources();
+}
+
+void FeedSection::resolvePendingSources() {
+	if (_pendingSources.empty()) {
+		return;
+	}
+	if (ranges::any_of(_pendingSources, [=](PeerId id) {
+		return _session->data().peerLoaded(id) != nullptr;
+	})) {
+		_restoreTop = _scroll->scrollTop();
+		refresh();
+		return;
+	}
+	if (!_session->data().chatsListLoaded()) {
+		_session->api().requestDialogs();
+	}
+	const auto archive = _session->data().folder(Data::Folder::kId);
+	if (!_session->data().chatsListLoaded(archive)) {
+		_session->api().requestDialogs(archive);
 	}
 }
 
@@ -813,6 +1360,7 @@ void FeedSection::loadMore() {
 		return;
 	}
 	_busy = true;
+	_loading.start();
 	if (_older) {
 		_older->setDisabled(true);
 		_older->setText(rpl::single(Text("Загрузка…")));
@@ -821,7 +1369,7 @@ void FeedSection::loadMore() {
 		showEmpty(Text("Загрузка публикаций"), QString(), false);
 	}
 	_source = 0;
-	_failures = 0;
+	_failures = _unavailableSources;
 	loadNext();
 }
 
@@ -831,6 +1379,7 @@ void FeedSection::loadNext() {
 	}
 	if (_source == _sources.size() || _posts.size() >= kMaxPosts) {
 		_busy = false;
+		_loading.stop(anim::type::instant);
 		std::sort(_posts.begin(), _posts.end(), [](const Post &a, const Post &b) {
 			return std::tie(a.date, a.peer, a.id) > std::tie(b.date, b.peer, b.id);
 		});
@@ -839,15 +1388,19 @@ void FeedSection::loadNext() {
 	}
 	const auto peer = _session->data().peerLoaded(_sources[_source].peer);
 	if (!peer) {
+		++_failures;
 		++_source;
 		loadNext();
 		return;
 	}
-	_summary = Text("Загрузка: %1").arg(peer->name());
 	update();
+	if (!_sources[_source].offset) {
+		_session->api().requestFullPeer(peer);
+	}
 	_api->request(MTPmessages_GetHistory(peer->input(), MTP_int(_sources[_source].offset),
 		MTP_int(0), MTP_int(0), MTP_int(kPageSize), MTP_int(0), MTP_int(0), MTP_long(0)
 	)).done([=](const MTPmessages_Messages &result) {
+		_session->data().processExistingMessages(peer->asChannel(), result);
 		auto messages = QVector<MTPMessage>();
 		result.match([&](const MTPDmessages_messages &data) { messages = data.vmessages().v; },
 			[&](const MTPDmessages_messagesSlice &data) { messages = data.vmessages().v; },
@@ -864,8 +1417,7 @@ void FeedSection::loadNext() {
 					return p.peer == source.peer && p.id == id;
 				})) return;
 				if (_posts.size() < kMaxPosts) _posts.push_back({ source.peer, id,
-					data.vdate().v, data.vmessage().v.isEmpty() ? Text("[Медиа]")
-						: qs(data.vmessage()).left(4000) });
+					data.vdate().v, qs(data.vmessage()) });
 			}, [&](const MTPDmessageService &data) {
 				lowest = lowest ? std::min(lowest, data.vid().v) : data.vid().v;
 			}, [&](const MTPDmessageEmpty &) {});

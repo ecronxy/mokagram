@@ -1031,6 +1031,10 @@ bool IsArtistBlocked(const Track &track) {
 	return IsBlockedArtist(track);
 }
 
+std::vector<QString> TrackIdentityKeys(const Track &track) {
+	return KeysFor(track);
+}
+
 bool HasTaste() {
 	return !Lib().liked.empty() || !Lib().history.empty();
 }

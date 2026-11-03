@@ -3,6 +3,7 @@
 // of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
 // mokagram-id: cfb896c6
 #include "mokagram/music/mokagram_soundcloud.h"
+
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "core/application.h"
@@ -170,7 +171,11 @@ void ApiGet(
 	result.id = QString::number(object.value("id").toVariant().toLongLong());
 	result.title = object.value("title").toString();
 	const auto user = object.value("user").toObject();
-	result.artist = user.value("username").toString();
+	result.artist = object.value("publisher_metadata").toObject()
+		.value("artist").toString().trimmed();
+	if (result.artist.isEmpty()) {
+		result.artist = user.value("username").toString();
+	}
 	result.artworkUrl = object.value("artwork_url").toString();
 	if (result.artworkUrl.isEmpty()) {
 		result.artworkUrl = user.value("avatar_url").toString();
@@ -424,6 +429,48 @@ void Related(
 	auto q = QUrlQuery();
 	q.addQueryItem(u"limit"_q, QString::number(limit));
 	CollectionRequest(u"/tracks/"_q + trackId + u"/related"_q, q, std::move(done));
+}
+
+void LoadRelatedPage(
+		const QString &trackId,
+		const QString &cursor,
+		Fn<void(RelatedPage)> done) {
+	const auto endpoint = QString::fromLatin1(kApi)
+		+ u"/tracks/"_q + trackId + u"/related"_q;
+	const auto url = QUrl(cursor.isEmpty() ? endpoint : cursor);
+	if (!trackId.toULongLong()
+		|| url.scheme() != u"https"_q
+		|| url.host() != QUrl(endpoint).host()
+		|| url.path() != QUrl(endpoint).path()) {
+		done({ {}, {}, u"Invalid radio source"_q });
+		return;
+	}
+	auto query = QUrlQuery(url);
+	query.removeAllQueryItems(u"client_id"_q);
+	if (cursor.isEmpty()) {
+		query.addQueryItem(u"limit"_q, u"50"_q);
+		query.addQueryItem(u"linked_partitioning"_q, u"1"_q);
+	}
+	ApiGet(endpoint, std::move(query), [=](QByteArray data, QString error) {
+		auto result = RelatedPage();
+		result.error = error;
+		if (error.isEmpty()) {
+			const auto document = QJsonDocument::fromJson(data);
+			const auto root = document.object();
+			if (!document.isObject() || !root.value("collection").isArray()) {
+				result.error = u"Invalid radio response"_q;
+			} else {
+				result.next = root.value("next_href").toString();
+				for (const auto &value : root.value("collection").toArray()) {
+					auto track = ParseTrack(value.toObject());
+					if (track.id.toULongLong() && !track.transcodingUrl.isEmpty()) {
+						result.tracks.push_back(std::move(track));
+					}
+				}
+			}
+		}
+		done(std::move(result));
+	});
 }
 
 void UserTracks(

@@ -92,6 +92,7 @@
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
+#include <QtGui/QContextMenuEvent>
 #include <QtGui/QLinearGradient>
 #include <QtGui/QTextLayout>
 #include <QtGui/QGuiApplication>
@@ -108,7 +109,18 @@ constexpr auto kCoverFadeDuration = crl::time(320);
 constexpr auto kTypingDelay = crl::time(400);
 constexpr auto kArtSize = 56;
 
+struct Radio {
+	Track seed;
+	std::set<QString> seen;
+	std::set<QString> cursors;
+	QString next;
+	bool exhausted = false;
+	bool loading = false;
+};
+
 struct Queue {
+	std::shared_ptr<Radio> radio;
+	std::shared_ptr<Radio> pendingRadio;
 	base::flat_map<QString, FullMsgId> messages;
 	base::weak_ptr<Main::Session> session;
 	std::vector<Track> tracks;       // очередь воспроизведения
@@ -168,6 +180,8 @@ void BindController(not_null<Window::SessionController*> controller) {
 	auto &queue = QueueState();
 	if (queue.session.get() != &controller->session()) {
 		++queue.pendingToken;
+		queue.radio.reset();
+		queue.pendingRadio.reset();
 		queue.messages.clear();
 		queue.selectedChat = {};
 		queue.tracks.clear();
@@ -420,6 +434,7 @@ void ChatMusicSearch::searchMore() {
 
 void PlayIndex(int index);
 void RefillStream();
+void Subscribe();
 
 void ResolveThen(const Track &track, Fn<void(Track, QString)> done) {
 	if (!track.transcodingUrl.isEmpty()) {
@@ -464,9 +479,276 @@ void DropUpcoming(Fn<bool(const Track &)> predicate, int from, bool onlyAuto) {
 	queue.changes.fire({});
 }
 
+void RememberRadioTrack(Radio &radio, const Track &track) {
+	for (const auto &key : TrackIdentityKeys(track)) {
+		radio.seen.insert(key);
+	}
+}
+
+[[nodiscard]] bool RadioAccepts(const Radio &radio, const Track &track) {
+	if (!track.id.toULongLong() || IsArtistBlocked(track)) {
+		return false;
+	}
+	for (const auto &key : TrackIdentityKeys(track)) {
+		if (radio.seen.contains(key)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void FetchRadioBatch(
+		std::shared_ptr<Radio> radio,
+		Fn<bool()> valid,
+		Fn<void(std::vector<Track>, QString)> done,
+		int pagesLeft = 4) {
+	const auto cursor = radio->next;
+	LoadRelatedPage(radio->seed.id, cursor, [=](RelatedPage page) {
+		if (!valid()) {
+			return;
+		}
+		if (!page.error.isEmpty()) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr(
+				"Не удалось загрузить радио. Попробуйте ещё раз.")));
+			return;
+		}
+		radio->cursors.insert(cursor);
+		radio->next = page.next;
+		radio->exhausted = page.next.isEmpty()
+			|| radio->cursors.contains(page.next);
+		auto tracks = std::vector<Track>();
+		for (auto &track : page.tracks) {
+			if (RadioAccepts(*radio, track)) {
+				RememberRadioTrack(*radio, track);
+				tracks.push_back(std::move(track));
+			}
+		}
+		if (tracks.empty() && !radio->exhausted && pagesLeft > 1) {
+			FetchRadioBatch(radio, valid, done, pagesLeft - 1);
+		} else {
+			done(std::move(tracks), QString());
+		}
+	});
+}
+
+void RefillRadio() {
+	auto &queue = QueueState();
+	const auto radio = queue.radio;
+	if (!radio || radio->loading) {
+		return;
+	}
+	if (radio->exhausted) {
+		if (!base::take(queue.waiting)) {
+			return;
+		}
+		if (const auto controller = queue.controller.get()) {
+			controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
+				"Радио закончилось. Запустите радио от другого трека.")));
+		}
+		return;
+	}
+	for (const auto &track : queue.tracks) {
+		RememberRadioTrack(*radio, track);
+	}
+	radio->loading = true;
+	const auto session = queue.session;
+	const auto valid = [=] {
+		return session && QueueState().session.get() == session.get()
+			&& QueueState().radio == radio;
+	};
+	FetchRadioBatch(radio, valid, [=](std::vector<Track> tracks, QString error) {
+		auto &queue = QueueState();
+		radio->loading = false;
+		auto queued = Radio();
+		for (const auto &track : queue.tracks) {
+			RememberRadioTrack(queued, track);
+		}
+		for (auto &track : tracks) {
+			if (RadioAccepts(queued, track)) {
+				RememberRadioTrack(queued, track);
+				queue.tracks.push_back(std::move(track));
+			}
+		}
+		const auto waiting = base::take(queue.waiting);
+		queue.changes.fire({});
+		if (waiting && queue.index + 1 < int(queue.tracks.size())) {
+			PlayIndex(queue.index + 1);
+		} else if (waiting || !error.isEmpty()) {
+			if (const auto controller = queue.controller.get()) {
+				controller->showToast(error.isEmpty()
+					? QString::fromUtf8(Mokagram::Lang::Tr(
+						"Нет новых подходящих треков для радио."))
+					: error);
+			}
+		}
+	});
+}
+
+void CommitRadio(
+		std::shared_ptr<Radio> radio,
+		std::vector<Track> tracks,
+		const Track &seed,
+		const QString &path) {
+	auto &queue = QueueState();
+	const auto controller = queue.controller.get();
+	queue.pendingRadio.reset();
+	if (!controller) {
+		return;
+	}
+	if (IsArtistBlocked(seed)) {
+		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
+			"Радио недоступно: автор скрыт")));
+		return;
+	}
+	tracks.erase(std::remove_if(tracks.begin(), tracks.end(), [](const Track &track) {
+		return IsArtistBlocked(track);
+	}), tracks.end());
+	if (tracks.empty()) {
+		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
+			"Нет новых подходящих треков для радио.")));
+		return;
+	}
+	const auto keepPlaying = PlayingTrack().id == seed.id;
+	if (!keepPlaying) {
+		RecordCurrentListen(false);
+	}
+	++queue.pendingToken;
+	++queue.streamEpoch;
+	queue.pendingRadio.reset();
+	queue.radio = radio;
+	queue.stream = false;
+	queue.refilling = false;
+	queue.waiting = false;
+	queue.custom = false;
+	queue.autoIds.clear();
+	queue.tracks = { seed };
+	queue.tracks.insert(queue.tracks.end(), tracks.begin(), tracks.end());
+	queue.index = 0;
+	queue.currentId = seed.id;
+	if (!keepPlaying) {
+		queue.current = seed;
+		queue.recorded = false;
+		const auto document = MakeDocument(&controller->session(), seed, path);
+		LoadImage(ArtUrl(seed.artworkUrl, u"t500x500"_q), [id = document->id](QImage image) {
+			SetCover(id, std::move(image));
+			QueueState().changes.fire({});
+		});
+		Media::Player::instance()->play(
+			AudioMsgId(document, FullMsgId()),
+			std::nullopt);
+	}
+	Subscribe();
+	queue.changes.fire({});
+	controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
+		"Радио по треку: ")) + seed.title);
+	if (queue.tracks.size() <= 4 && !radio->exhausted) {
+		RefillRadio();
+	}
+}
+
+void FailRadio() {
+	QueueState().pendingRadio.reset();
+	if (const auto controller = QueueState().controller.get()) {
+		controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
+			"Не удалось загрузить радио. Попробуйте ещё раз.")));
+	}
+}
+
+void PrepareRadioSeed(
+		std::shared_ptr<Radio> radio,
+		std::vector<Track> tracks,
+		Fn<bool()> valid) {
+	const auto seed = radio->seed;
+	if (PlayingTrack().id == seed.id) {
+		CommitRadio(radio, tracks, seed, {});
+		return;
+	}
+	Resolve(seed, [=](Track resolved, QString error) {
+		if (!valid()) {
+			return;
+		}
+		if (!error.isEmpty()) {
+			FailRadio();
+			return;
+		}
+		Download(resolved, [=](const QString &path, const QString &error) {
+			if (!valid()) {
+				return;
+			}
+			if (!error.isEmpty()) {
+				FailRadio();
+				return;
+			}
+			CommitRadio(radio, tracks, resolved, path);
+		});
+	});
+}
+
+void StartRadio(
+		not_null<Window::SessionController*> controller,
+		Track seed) {
+	BindController(controller);
+	if (IsTelegramTrack(seed) || !seed.id.toULongLong() || IsArtistBlocked(seed)) {
+		return;
+	}
+	auto &queue = QueueState();
+	const auto radio = std::make_shared<Radio>();
+	radio->seed = seed;
+	RememberRadioTrack(*radio, seed);
+	queue.pendingRadio = radio;
+	const auto session = queue.session;
+	const auto token = queue.pendingToken;
+	const auto playback = Media::Player::instance()->current(AudioMsgId::Type::Song);
+	const auto valid = [=] {
+		return session && QueueState().session.get() == session.get()
+			&& QueueState().pendingRadio == radio
+			&& QueueState().pendingToken == token
+			&& Media::Player::instance()->current(AudioMsgId::Type::Song) == playback;
+	};
+	controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
+		"Загружаю радио по треку: ")) + seed.title);
+	FetchRadioBatch(radio, valid, [=](std::vector<Track> tracks, QString error) {
+		const auto controller = QueueState().controller.get();
+		if (!controller) {
+			return;
+		}
+		if (!error.isEmpty() || tracks.empty()) {
+			QueueState().pendingRadio.reset();
+			controller->showToast(error.isEmpty()
+				? QString::fromUtf8(Mokagram::Lang::Tr(
+					"Нет новых подходящих треков для радио."))
+				: error);
+			return;
+		}
+		PrepareRadioSeed(radio, std::move(tracks), valid);
+	});
+}
+
+void AddRadioAction(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<Window::SessionController*> controller,
+		const Track &track) {
+	const auto supported = !IsTelegramTrack(track) && track.id.toULongLong();
+	const auto text = !supported
+		? Mokagram::Lang::Tr("Радио недоступно для треков Telegram")
+		: IsArtistBlocked(track)
+		? Mokagram::Lang::Tr("Радио недоступно: автор скрыт")
+		: Mokagram::Lang::Tr("Радио по треку");
+	const auto weak = base::make_weak(controller);
+	menu->addAction(QString::fromUtf8(text), [=] {
+		if (const auto controller = weak.get()) {
+			StartRadio(controller, track);
+		}
+	}, &st::menuIconSoundOn)->setEnabled(supported && !IsArtistBlocked(track));
+}
+
 // Дозагрузка очереди с учётом того, что играет сейчас и что недавно было.
 void RefillStream() {
 	auto &queue = QueueState();
+	if (queue.radio) {
+		RefillRadio();
+		return;
+	}
 	if (!queue.stream || queue.refilling || !StreamEnabled()) {
 		return;
 	}
@@ -524,7 +806,7 @@ void Subscribe() {
 					Media::Player::kOptionDisableAutoplayNext)
 				|| !Mokagram::Settings::Bool(u"player.autoplay_next"_q)) {
 				return;
-			} else if (queue.stream && StreamEnabled()) {
+			} else if (queue.radio || (queue.stream && StreamEnabled())) {
 				if (queue.index + 1 < count) {
 					PlayIndex(queue.index + 1);
 				} else {
@@ -589,7 +871,8 @@ void PlayIndex(int index) {
 	ResolveThen(track, [=](Track resolved, QString error) {
 		auto &queue = QueueState();
 		const auto controller = queue.controller.get();
-		if (!controller || token != queue.pendingToken) {
+		if (!controller || token != queue.pendingToken
+			|| (queue.radio && IsArtistBlocked(track))) {
 			return;
 		}
 		if (!error.isEmpty()) {
@@ -602,7 +885,8 @@ void PlayIndex(int index) {
 		Download(resolved, [=](const QString &path, const QString &error) {
 			auto &queue = QueueState();
 			const auto controller = queue.controller.get();
-			if (!controller || token != queue.pendingToken) {
+			if (!controller || token != queue.pendingToken
+				|| (queue.radio && IsArtistBlocked(resolved))) {
 				return;
 			}
 			if (!error.isEmpty()) {
@@ -619,7 +903,8 @@ void PlayIndex(int index) {
 			Media::Player::instance()->play(
 				AudioMsgId(document, FullMsgId()),
 				std::nullopt);
-			if (queue.stream && int(queue.tracks.size()) - index - 1 <= 3) {
+			if ((queue.radio || queue.stream)
+				&& int(queue.tracks.size()) - index - 1 <= 3) {
 				RefillStream();
 			}
 			// Следующий трек качаем заранее, чтобы переход был без паузы.
@@ -867,6 +1152,8 @@ void PlayFromResults(int resultIndex) {
 	}
 	const auto track = queue.results[resultIndex];
 	if (!queue.custom) {
+		queue.radio.reset();
+		queue.pendingRadio.reset();
 		queue.tracks = queue.results;
 		queue.stream = false;
 		++queue.streamEpoch;
@@ -1167,6 +1454,8 @@ void PlayAll(const std::vector<Track> &tracks) {
 		return;
 	}
 	queue.custom = false;
+	queue.radio.reset();
+	queue.pendingRadio.reset();
 	queue.tracks = tracks;
 	queue.stream = StreamEnabled();
 	queue.refilling = false;
@@ -1196,6 +1485,7 @@ public:
 	, _mode(mode) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
+		setFocusPolicy(Qt::StrongFocus);
 		_equalizerTimer.setInterval(33);
 		connect(&_equalizerTimer, &QTimer::timeout, this, [=] {
 			_equalizerPhase += _equalizerClock.restart() / 1000.;
@@ -1256,8 +1546,9 @@ public:
 		events(
 		) | rpl::filter([](not_null<QEvent*> e) {
 			return e->type() == QEvent::ContextMenu;
-		}) | rpl::on_next([=](not_null<QEvent*>) {
-			showMenu(controller, index);
+		}) | rpl::on_next([=](not_null<QEvent*> e) {
+			e->accept();
+			showMenu(controller, index, static_cast<QContextMenuEvent*>(e.get()));
 		}, lifetime());
 	}
 
@@ -1270,6 +1561,7 @@ public:
 protected:
 	void showEvent(QShowEvent *e) override;
 	void hideEvent(QHideEvent *e) override;
+	void keyPressEvent(QKeyEvent *e) override;
 
 private:
 	void updateAnimation();
@@ -1283,11 +1575,15 @@ private:
 			28);
 	}
 
-	void showMenu(not_null<Window::SessionController*> controller, int index) {
+	void showMenu(
+			not_null<Window::SessionController*> controller,
+			int index,
+			QContextMenuEvent *event) {
 		_menu = base::make_unique_q<Ui::PopupMenu>(
 			this,
 			st::popupMenuWithIcons);
 		const auto track = _track;
+		AddRadioAction(_menu.get(), controller, track);
 		const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
 			_menu->addAction(text, std::move(callback), icon);
 		};
@@ -1334,7 +1630,9 @@ private:
 				controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Ссылка скопирована")));
 			}, &st::menuIconLink);
 		}
-		_menu->popup(QCursor::pos());
+		_menu->popup(event->reason() == QContextMenuEvent::Keyboard
+			? mapToGlobal(rect().center())
+			: event->globalPos());
 	}
 
 	void paint() {
@@ -1468,6 +1766,20 @@ void Row::updateAnimation() {
 		_equalizerTimer.start();
 	} else if (!animate) {
 		_equalizerTimer.stop();
+	}
+}
+
+void Row::keyPressEvent(QKeyEvent *e) {
+	if (e->key() == Qt::Key_Menu
+		|| (e->key() == Qt::Key_F10 && e->modifiers() == Qt::ShiftModifier)) {
+		auto event = QContextMenuEvent(
+			QContextMenuEvent::Keyboard,
+			rect().center(),
+			mapToGlobal(rect().center()));
+		QCoreApplication::sendEvent(this, &event);
+		e->accept();
+	} else {
+		AbstractButton::keyPressEvent(e);
 	}
 }
 
@@ -3326,6 +3638,12 @@ public:
 		) | rpl::on_next([=] { refresh(); }, lifetime());
 		CoversChanged() | rpl::on_next([=] { refresh(); }, lifetime());
 		LikesChanged() | rpl::on_next([=] { refresh(); }, lifetime());
+		MotionChanges() | rpl::on_next([=] {
+			_motionFor.clear();
+			_motionCover = nullptr;
+			_spotifyCanvas = nullptr;
+			refresh();
+		}, lifetime());
 		Mokagram::Settings::Changed() | rpl::on_next([=](const QString &key) {
 			if (key.startsWith(u"player."_q)) {
 				if (key == u"player.motion_covers"_q || key == u"player.spotify_canvas"_q) {
@@ -4289,17 +4607,18 @@ bool NextAvailable() {
 	const auto &settings = Core::App().settings();
 	return !queue.tracks.empty()
 		&& (queue.index + 1 < int(queue.tracks.size())
-			|| (queue.stream && StreamEnabled())
-			|| settings.playerRepeatMode() == Media::RepeatMode::All
-			|| settings.playerOrderMode() == Media::OrderMode::Shuffle);
+			|| (queue.radio && !queue.radio->exhausted)
+			|| (!queue.radio && ((queue.stream && StreamEnabled())
+				|| settings.playerRepeatMode() == Media::RepeatMode::All
+				|| settings.playerOrderMode() == Media::OrderMode::Shuffle)));
 }
 
 bool PreviousAvailable() {
 	const auto &queue = QueueState();
 	return !queue.tracks.empty()
 		&& (queue.index > 0
-			|| Core::App().settings().playerRepeatMode()
-				== Media::RepeatMode::All);
+			|| (!queue.radio && Core::App().settings().playerRepeatMode()
+				== Media::RepeatMode::All));
 }
 
 [[nodiscard]] bool FeedbackAllowed() {
@@ -4353,7 +4672,7 @@ void Step(int delta) {
 		return;
 	}
 	auto target = queue.index + delta;
-	if (delta > 0 && queue.stream && StreamEnabled()) {
+	if (delta > 0 && (queue.radio || (queue.stream && StreamEnabled()))) {
 		if (target >= count) {
 			queue.waiting = true;
 			RefillStream();
@@ -4370,6 +4689,9 @@ void Step(int delta) {
 	} else if (target >= count) {
 		target = 0;
 	} else if (target < 0) {
+		if (queue.radio) {
+			return;
+		}
 		target = count - 1;
 	}
 	PlayIndex(target);
@@ -4407,6 +4729,7 @@ void ShowCurrentTrackMenu(
 	const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
 		menu->addAction(text, std::move(callback), icon);
 	};
+	AddRadioAction(menu.get(), controller, track);
 	const auto instance = Media::Player::instance();
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Пауза / играть")), [=] {
 		instance->playPause(AudioMsgId::Type::Song);
@@ -4457,13 +4780,29 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		Mokagram::Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();
+		content->setFocusPolicy(Qt::StrongFocus);
 		const auto instance = Media::Player::instance();
 		content->events(
 		) | rpl::filter([](not_null<QEvent*> e) {
+			if (e->type() == QEvent::KeyPress) {
+				const auto key = static_cast<QKeyEvent*>(e.get());
+				return key->key() == Qt::Key_Menu
+					|| (key->key() == Qt::Key_F10
+						&& key->modifiers() == Qt::ShiftModifier);
+			}
 			return e->type() == QEvent::ContextMenu;
 		}) | rpl::on_next([=](not_null<QEvent*> e) {
 			e->accept();
-			ShowCurrentTrackMenu(controller, QCursor::pos());
+			if (e->type() == QEvent::KeyPress) {
+				ShowCurrentTrackMenu(controller,
+					content->mapToGlobal(content->rect().center()));
+				return;
+			}
+			const auto event = static_cast<QContextMenuEvent*>(e.get());
+			ShowCurrentTrackMenu(controller,
+				event->reason() == QContextMenuEvent::Keyboard
+					? content->mapToGlobal(content->rect().center())
+					: event->globalPos());
 		}, box->lifetime());
 
 		// Смена трека: старая обложка с названием плавно растворяется в новой.

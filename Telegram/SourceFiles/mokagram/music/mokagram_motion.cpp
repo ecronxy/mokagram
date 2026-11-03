@@ -2,6 +2,7 @@
 
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "rpl/event_stream.h"
 #include "ui/toast/toast.h"
 
 #include <QtCore/QCryptographicHash>
@@ -42,6 +43,11 @@ struct Session {
 	qint64 spotifyExpires = 0;
 	QPointer<QTcpServer> login;
 };
+
+rpl::event_stream<> &Changes() {
+	static auto result = rpl::event_stream<>();
+	return result;
+}
 
 Session &Tokens() {
 	static auto result = Session();
@@ -252,7 +258,8 @@ void LoginSpotify() {
 							session.spotifyRefresh = json.value(u"refresh_token"_q).toString();
 							session.spotifyExpires = QDateTime::currentSecsSinceEpoch()
 								+ std::clamp(json.value(u"expires_in"_q).toInt(), 60, 86400);
-							toast("Spotify подключён. Переключите трек, чтобы загрузить Canvas.");
+							Changes().fire({});
+							toast("Spotify подключён.");
 						} else {
 							toast("Spotify не подтвердил вход. Проверьте Client ID и Redirect URI.");
 						}
@@ -378,10 +385,11 @@ private:
 					attributes.value(u"durationInMillis"_q).toInteger())) continue;
 				const auto isrc = attributes.value(u"isrc"_q).toString();
 				if (isrc.isEmpty()) continue;
-				appleAlbum(isrc);
-				return;
+				if (!_appleIsrcs.contains(isrc)) {
+					_appleIsrcs.push_back(isrc);
+				}
 			}
-			spotify();
+			nextAppleAlbum();
 		}, {}, "Bearer " + Tokens().appleToken.toUtf8());
 	}
 
@@ -395,6 +403,14 @@ private:
 			if (!found.isEmpty()) return found;
 		}
 		return {};
+	}
+
+	void nextAppleAlbum() {
+		if (_appleCandidate == _appleIsrcs.size()) {
+			spotify();
+			return;
+		}
+		appleAlbum(_appleIsrcs[_appleCandidate++]);
 	}
 
 	void appleAlbum(const QString &isrc) {
@@ -417,17 +433,20 @@ private:
 					return;
 				}
 			}
-			spotify();
+			nextAppleAlbum();
 		}, {}, "Bearer " + Tokens().appleToken.toUtf8());
 	}
 
 	void hls(const QUrl &url) {
+		_parts.clear();
+		_part = 0;
+		_video.clear();
 		Request(_requests.get(), url, [=](QByteArray bytes, int) {
 			const auto variant = MotionProtocol::HlsVariant(url, bytes);
-			if (variant.isEmpty()) { spotify(); return; }
+			if (variant.isEmpty()) { nextAppleAlbum(); return; }
 			Request(_requests.get(), variant, [=](QByteArray playlist, int) {
 				_parts = MotionProtocol::HlsParts(variant, playlist);
-				if (_parts.empty()) { spotify(); return; }
+				if (_parts.empty()) { nextAppleAlbum(); return; }
 				downloadPart();
 			});
 		});
@@ -437,7 +456,11 @@ private:
 		if (_part == _parts.size()) {
 			_files.artwork = save(u"apple"_q, _video);
 			_video.clear();
-			spotify();
+			if (_files.artwork.isEmpty()) {
+				nextAppleAlbum();
+			} else {
+				spotify();
+			}
 			return;
 		}
 		const auto part = _parts[_part];
@@ -448,7 +471,7 @@ private:
 				&& (status != 206 || bytes.size() != part.length))
 				|| _video.size() + bytes.size() > kMaxVideo) {
 				_video.clear();
-				spotify();
+				nextAppleAlbum();
 				return;
 			}
 			_video.append(bytes);
@@ -497,12 +520,20 @@ private:
 						track.value(u"duration_ms"_q).toInteger())) continue;
 					const auto uri = track.value(u"uri"_q).toString();
 					if (!uri.startsWith(u"spotify:track:"_q)) continue;
-					canvas(uri, token);
-					return;
+					_spotifyUris.push_back(uri);
 				}
-				finish();
+				_spotifyToken = token;
+				nextCanvas();
 			}, {}, "Bearer " + token.toUtf8());
 		});
+	}
+
+	void nextCanvas() {
+		if (_spotifyCandidate == _spotifyUris.size()) {
+			finish();
+			return;
+		}
+		canvas(_spotifyUris[_spotifyCandidate++], _spotifyToken);
 	}
 
 	void canvas(const QString &uri, const QString &token) {
@@ -510,15 +541,24 @@ private:
 			[=](QByteArray bytes, int status) {
 				if (status == 401) Tokens().spotifyExpires = 0;
 				const auto url = MotionProtocol::CanvasUrl(bytes, uri);
-				if (url.isEmpty()) { finish(); return; }
+				if (url.isEmpty()) { nextCanvas(); return; }
 				Request(_requests.get(), url, [=](QByteArray video, int) {
 					_files.canvas = save(u"spotify"_q, video);
-					finish();
+					if (_files.canvas.isEmpty()) {
+						nextCanvas();
+					} else {
+						finish();
+					}
 				}, {}, {}, {}, {}, kMaxVideo);
 			}, MotionProtocol::CanvasRequest(uri), "Bearer " + token.toUtf8(),
 			"application/x-protobuf");
 	}
 
+	QStringList _appleIsrcs;
+	qsizetype _appleCandidate = 0;
+	QStringList _spotifyUris;
+	QString _spotifyToken;
+	qsizetype _spotifyCandidate = 0;
 	QString _key;
 	QString _title;
 	QString _artist;
@@ -563,7 +603,7 @@ void RegisterMotionSettings() {
 		.title = QString::fromUtf8(Lang::Tr("Spotify Client ID")),
 		.description = QString::fromUtf8(Lang::Tr("Client ID приложения Spotify с Redirect URI http://127.0.0.1:8899/mokagram. Секрет приложения не нужен.")),
 		.kind = Settings::Kind::String, .defaultValue = u"a3a01911beb24158bb925ad5ba8dd26c"_q,
-		.dependsOn = u"player.spotify_canvas"_q });
+		.dependsOn = u"player.spotify_canvas"_q, .hidden = true });
 	add({ .key = u"player.spotify_login"_q,
 		.title = QString::fromUtf8(Lang::Tr("Войти в Spotify")),
 		.description = QString::fromUtf8(Lang::Tr("Вход через браузер. Сеанс Spotify хранится в памяти до выхода из mokaGram.")),
@@ -579,13 +619,21 @@ void RegisterMotionSettings() {
 			session.spotifyToken.clear();
 			session.spotifyRefresh.clear();
 			session.spotifyExpires = 0;
+			Changes().fire({});
 			Ui::Toast::Show(QString::fromUtf8(Lang::Tr("Spotify отключён.")));
 		} });
 }
 
+rpl::producer<> MotionChanges() {
+	return Changes().events();
+}
+
 Fn<void()> FetchMotion(const QString &key, const QString &title,
 		const QString &artist, qint64 duration, Fn<void(MotionFiles)> done) {
-	const auto job = new MotionJob(key, title, artist, duration, std::move(done));
+	const auto metadata = MotionProtocol::Metadata(
+		title, artist, !key.startsWith(u"telegram:"_q));
+	const auto job = new MotionJob(
+		key, metadata.title, metadata.artist, duration, std::move(done));
 	job->start();
 	return [weak = QPointer(job)] {
 		if (weak) weak->cancel();
