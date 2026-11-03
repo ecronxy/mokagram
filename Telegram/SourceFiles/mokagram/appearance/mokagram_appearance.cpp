@@ -7,6 +7,7 @@
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/music/mokagram_motion.h"
 #include "ui/style/style_core.h"
 #include "ui/style/style_core_palette.h"
 #include "styles/palette.h"
@@ -190,7 +191,7 @@ void RegisterSettings() {
 	playerEntry({
 		.key = u"player.cover_colors"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Цвета плеера из обложки")),
-		.description = QString::fromUtf8(Mokagram::Lang::Tr("Окно «Сейчас играет» и панель плеера берут цвет с обложки трека.")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Фон полноэкранного плеера под цвет обложки и лёгкий оттенок на панели воспроизведения.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});
@@ -224,12 +225,13 @@ void RegisterSettings() {
 	});
 	playerEntry({
 		.key = u"lyrics.plasma"_q,
-		.title = QString::fromUtf8(Mokagram::Lang::Tr("Плазма за текстом")),
-		.description = QString::fromUtf8(Mokagram::Lang::Tr("Цветные пятна обложки медленно плывут за словами.")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Оттенок обложки за текстом")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Лёгкий оттенок обложки на фоне текста песни.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 		.dependsOn = u"lyrics.enabled"_q,
 	});
+	Music::RegisterMotionSettings();
 }
 
 void Start() {

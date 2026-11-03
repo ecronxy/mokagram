@@ -160,7 +160,7 @@ mediaPlayerPlayButton: MediaPlayerPlayButton {
 	size: size(34px, 34px);
 	icon: mediaPlayerPlayIcon;
 	iconPosition: point(0px, 0px);
-	color: mediaPlayerActiveFg;
+	color: windowFg;
 
 	rippleAreaPosition: point(0px, 0px);
 	rippleAreaSize: 34px;
@@ -243,15 +243,15 @@ mediaPlayerSpeedButton: MediaSpeedButton {
 }
 
 mediaPlayerVolumeIcon0: icon {
-	{ "player/player_mini_off", mediaPlayerActiveFg },
+	{ "player/player_mini_off", windowFg },
 };
 mediaPlayerVolumeIcon1: icon {
-	{ "player/player_mini_half", mediaPlayerActiveFg },
+	{ "player/player_mini_half", windowFg },
 };
 mediaPlayerVolumeToggle: IconButton(mediaPlayerRepeatButton) {
 	width: 34px;
 	icon: icon {
-		{ "player/player_mini_full", mediaPlayerActiveFg },
+		{ "player/player_mini_full", windowFg },
 	};
 	iconPosition: point(5px, 6px);
 	rippleAreaPosition: point(5px, 6px);
@@ -265,7 +265,7 @@ mediaPlayerNextButton: IconButton(mediaPlayerRepeatButton) {
 	width: 32px;
 	height: 34px;
 	icon: icon {
-		{ "player/player_forward_big", mediaPlayerActiveFg },
+		{ "player/player_forward_big", windowFg },
 	};
 	iconPosition: point(0px, 1px);
 	rippleAreaPosition: point(0px, 1px);
@@ -276,7 +276,7 @@ mediaPlayerNextDisabledIcon: icon {
 };
 mediaPlayerPreviousButton: IconButton(mediaPlayerNextButton) {
 	icon: icon {
-		{ "player/player_backward_big", mediaPlayerActiveFg },
+		{ "player/player_backward_big", windowFg },
 	};
 }
 mediaPlayerPreviousDisabledIcon: icon {

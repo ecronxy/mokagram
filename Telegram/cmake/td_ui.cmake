@@ -12,6 +12,8 @@ include(lib_ui/cmake/generate_styles.cmake)
 include(cmake/generate_numbers.cmake)
 
 set(style_files
+    mokagram/feed/mokagram_feed.style
+    mokagram/music/mokagram_motion.style
     ui/td_common.style
     ui/filter_icons.style
     ui/menu_icons.style

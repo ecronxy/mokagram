@@ -26,6 +26,7 @@ std::string PluginsDir();
 // {"meta": {...__поля__...}, "detected": ["network", ...], "error": null|"текст"}
 // Запускает Python при необходимости.
 std::string ParseMetadataJson(const std::string &source);
+std::string RequestInfoJson(const std::string &encoded);
 
 // Загружает (или перезагружает) один файл из папки плагинов, например "hello_moka.plugin".
 // Возвращает id плагина или пустую строку.

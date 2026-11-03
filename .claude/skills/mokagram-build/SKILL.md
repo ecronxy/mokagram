@@ -34,17 +34,23 @@ Stop if the build fails; report the error and install nothing.
 
 ## 2. Install into /Applications
 
-Run right after a successful build, without asking:
+Run right after a successful build, without asking. For this checkout, the user
+has explicitly requested that the agent close and relaunch the installed app.
+Do not ask the user to quit mokaGram manually on every installation.
 
-```bash
-APP=out/Release/mokaGram.app
-test -d "$APP" || { echo "no $APP"; exit 1; }
-osascript -e 'tell application "mokaGram" to quit' 2>/dev/null; sleep 1
-rm -rf /Applications/mokaGram.app
-ditto "$APP" /Applications/mokaGram.app
-codesign --force --deep -s - /Applications/mokaGram.app
-xattr -dr com.apple.quarantine /Applications/mokaGram.app 2>/dev/null
-```
+1. Copy `out/Release/mokaGram.app` with `ditto` into a temporary directory under
+   `/Applications/.mokagram-install-*`. Ad-hoc sign that copy with
+   `codesign --force --deep -s -`, clear quarantine with
+   `xattr -dr com.apple.quarantine`, and verify with
+   `codesign --verify --deep --strict` before replacing the installed bundle.
+2. Quit mokaGram. If AppleScript quit fails, verify the PID and exact executable
+   under `/Applications/mokaGram.app/Contents/MacOS/`, send SIGTERM only to that
+   process and wait for it to exit. Never terminate another client or checkout.
+   Stop and report an installation failure if the process cannot exit.
+3. Move the installed bundle into the staging directory, then move the prepared
+   bundle to `/Applications/mokaGram.app`. Restore the previous bundle if the
+   replacement fails. Move the previous bundle to the user's Trash only after
+   replacement succeeds, and remove the empty staging directory.
 
 Then check the result and report it:
 
@@ -54,7 +60,8 @@ ls -lT /Applications/mokaGram.app/Contents/MacOS/mokaGram
 ```
 
 The binary timestamp must be from this build. If it is older, the build did
-not relink: say so instead of reporting success.
+not relink: say so instead of reporting success. After verification, run
+`open /Applications/mokaGram.app` to relaunch it.
 
 ## 3. dmg (only if asked)
 
@@ -66,3 +73,11 @@ rm -rf dmgroot
 ```
 
 Package `mokaGram.app` only, never `Telegram.app`.
+
+## 4. Publish when requested
+
+When the user asks to push or open a PR, follow
+[the publication skill](../mokagram-publish/SKILL.md). Publication requires both a
+pushed source branch and an open PR targeting `ecronxy/mokagram: mokagram`, using
+the authenticated user's fork as the head. Do not stop after pushing to `origin`,
+and do not create the final PR in a fork.

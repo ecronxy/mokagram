@@ -13,6 +13,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/weak_qptr.h"
 #include "base/platform/base_platform_info.h"
 #include "styles/style_widgets.h"
+#include "styles/style_mokagram_motion.h"
+#include "ui/power_saving.h"
+#include <QtGui/QGuiApplication>
+#include <QtGui/QPainterPath>
+#include <cmath>
 
 namespace Ui {
 namespace {
@@ -265,7 +270,24 @@ void FilledSlider::paintEvent(QPaintEvent *e) {
 }
 
 MediaSlider::MediaSlider(QWidget *parent, const style::MediaSlider &st) : ContinuousSlider(parent)
-, _st(st) {
+, _st(st)
+, _waveAnimation([=] {
+	if (!_wavy || !_wavePlaying || !isVisible()
+		|| QGuiApplication::applicationState() != Qt::ApplicationActive
+		|| PowerSaving::On(PowerSaving::kAnimations)) return false;
+	update();
+	return true;
+}) {
+	connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
+		[=] { update(); });
+}
+
+void MediaSlider::setWavy(bool enabled, bool playing) {
+	if (_wavy == enabled && _wavePlaying == playing) return;
+	_wavy = enabled;
+	_wavePlaying = playing;
+	if (!enabled || !playing) _waveAnimation.stop();
+	update();
 }
 
 QSize MediaSlider::getSeekDecreaseSize() const {
@@ -394,6 +416,42 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 		? QBrush(*_overrides.inactiveFg)
 		: anim::brush(_st.inactiveFg, _st.inactiveFgOver, over);
 	const auto borderFg = _st.borderFg;
+	if (_wavy && horizontal && _dividers.empty()) {
+		const auto animate = _wavePlaying && !isChanging() && !disabled
+			&& QGuiApplication::applicationState() == Qt::ApplicationActive
+			&& !PowerSaving::On(PowerSaving::kAnimations);
+		if (animate && !_waveAnimation.animating()) _waveAnimation.start();
+		else if (!animate) _waveAnimation.stop();
+		const auto y = height() / 2.;
+		const auto phase = animate ? crl::now() / 500. : 0.;
+		const auto stroke = std::max(_st.width, st::lineWidth);
+		const auto amplitude = animate
+			? std::max(0., std::min(double(st::motionWaveAmplitude), (height() - stroke) / 2.))
+			: 0.;
+		p.setPen(QPen(inactiveFg, stroke, Qt::SolidLine, Qt::RoundCap));
+		p.drawLine(QPointF(mid, y), QPointF(end, y));
+		if (till > mid) {
+			p.setPen(QPen(receivedTillFg, stroke, Qt::SolidLine, Qt::RoundCap));
+			p.drawLine(QPointF(mid, y), QPointF(till, y));
+		}
+		auto path = QPainterPath();
+		for (auto x = double(from); x <= mid; x += std::max(st::motionWaveSample, 1)) {
+			const auto envelope = std::clamp((mid - x) / st::motionWaveLength, 0., 1.);
+			const auto point = QPointF(x, y + amplitude * envelope
+				* std::sin(x * 2. * M_PI / st::motionWaveLength - phase));
+			if (x == from) path.moveTo(point); else path.lineTo(point);
+		}
+		p.setPen(QPen(activeFg, stroke, Qt::SolidLine, Qt::RoundCap));
+		p.drawPath(path);
+		if (!disabled) {
+			const auto handle = std::min(st::motionWaveHandle, _st.seekSize.width());
+			p.setPen(Qt::NoPen);
+			p.setBrush(activeFg);
+			p.drawRoundedRect(QRectF(mid - handle / 2., y - _st.seekSize.height() / 2.,
+				handle, _st.seekSize.height()), handle / 2., handle / 2.);
+		}
+		return;
+	}
 	const auto gapStyle = (_dividerStyle == DividerStyle::Gaps);
 	if (gapStyle) {
 		rebuildDividerExclusion();

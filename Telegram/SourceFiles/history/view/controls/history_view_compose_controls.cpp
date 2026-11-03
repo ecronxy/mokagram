@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/controls/history_view_compose_controls.h"
+#include "mokagram/inline/mokagram_inline_ui.h"
 
 #include "history/view/controls/history_view_bot_menu_button.h"
 
@@ -3211,6 +3212,7 @@ void ComposeControls::initKeyHandler() {
 }
 
 void ComposeControls::initField() {
+	Mokagram::Inline::SetupInlineResults(_field);
 	_field->setMaxHeight(st::historyComposeFieldMaxHeight);
 	updateSubmitSettings();
 	_field->submits(

@@ -7,6 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_chat_filters.h"
 
+#include "mokagram/settings/mokagram_settings.h"
+#include "data/data_changes.h"
+
 #include "api/api_text_entities.h"
 #include "history/history.h"
 #include "data/data_peer.h"
@@ -28,6 +31,29 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Data {
 namespace {
 
+[[nodiscard]] QString ManagedFilterKey(
+		not_null<Main::Session*> session,
+		FilterId id) {
+	const auto key = u"folders.%1.%2.onlyManaged"_q
+		.arg(session->uniqueId()).arg(id);
+	Mokagram::Settings::Register({
+		.key = key,
+		.kind = Mokagram::Settings::Kind::Bool,
+		.defaultValue = false,
+		.hidden = true,
+	});
+	return key;
+}
+
+[[nodiscard]] ChatFilter::Flag ManagedFilterFlag(
+		not_null<Session*> owner,
+		FilterId id) {
+	return id && Mokagram::Settings::Bool(
+		ManagedFilterKey(&owner->session(), id))
+		? ChatFilter::Flag::OnlyManaged
+		: ChatFilter::Flag();
+}
+
 constexpr auto kRefreshSuggestedTimeout = 7200 * crl::time(1000);
 constexpr auto kLoadExceptionsAfter = 100;
 constexpr auto kLoadExceptionsPerRequest = 100;
@@ -39,6 +65,15 @@ constexpr auto kLoadExceptionsPerRequest = 100;
 }
 
 } // namespace
+
+void SaveChatFilterOnlyManaged(
+		not_null<Main::Session*> session,
+		FilterId id,
+		bool enabled) {
+	if (id) {
+		Mokagram::Settings::SetBool(ManagedFilterKey(session, id), enabled);
+	}
+}
 
 TextWithEntities ForceCustomEmojiStatic(TextWithEntities text) {
 	for (auto &entity : text.entities) {
@@ -86,7 +121,8 @@ ChatFilter ChatFilter::FromTL(
 			| (data.is_exclude_muted() ? Flag::NoMuted : Flag(0))
 			| (data.is_exclude_read() ? Flag::NoRead : Flag(0))
 			| (data.is_exclude_archived() ? Flag::NoArchived : Flag(0))
-			| (data.is_title_noanimate() ? Flag::StaticTitle : Flag(0));
+			| (data.is_title_noanimate() ? Flag::StaticTitle : Flag(0))
+			| ManagedFilterFlag(owner, data.vid().v);
 		auto &&to_histories = ranges::views::transform([&](
 				const MTPInputPeer &input) {
 			const auto peer = Data::PeerFromInputMTP(owner, input);
@@ -172,6 +208,7 @@ ChatFilter ChatFilter::FromTL(
 				? std::make_optional(data.vcolor()->v)
 				: std::nullopt,
 			(Flag::Chatlist
+				| ManagedFilterFlag(owner, data.vid().v)
 				| (data.is_has_my_invites() ? Flag::HasMyLinks : Flag())
 				| (data.is_title_noanimate() ? Flag::StaticTitle : Flag(0))),
 			std::move(list),
@@ -339,6 +376,19 @@ const base::flat_set<not_null<History*>> &ChatFilter::never() const {
 bool ChatFilter::contains(
 		not_null<History*> history,
 		bool ignoreFakeUnread) const {
+	if (_flags & Flag::OnlyManaged) {
+		const auto peer = history->peer;
+		const auto chat = peer->asChat();
+		const auto channel = peer->asChannel();
+		const auto managed = chat
+			? (chat->amCreator() || chat->hasAdminRights())
+			: channel
+			? (channel->amCreator() || channel->hasAdminRights())
+			: false;
+		if (!managed) {
+			return false;
+		}
+	}
 	const auto flag = [&] {
 		const auto peer = history->peer;
 		if (const auto user = peer->asUser()) {
@@ -392,6 +442,13 @@ ChatFilters::ChatFilters(not_null<Session*> owner)
 , _moreChatsTimer([=] { checkLoadMoreChatsLists(); }) {
 	_list.emplace_back();
 	crl::on_main(&owner->session(), [=] { load(); });
+	owner->session().changes().peerUpdates(
+		PeerUpdate::Flag::Rights | PeerUpdate::Flag::ChannelAmIn
+	) | rpl::on_next([=](const PeerUpdate &update) {
+		if (const auto history = owner->historyLoaded(update.peer)) {
+			refreshHistory(history);
+		}
+	}, _managedFiltersLifetime);
 }
 
 ChatFilters::~ChatFilters() = default;

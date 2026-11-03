@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_music_ui.h"
+#include "mokagram/feed/mokagram_feed.h"
 #include <QtGui/QBitmap>
 
 #include "apiwrap.h"
@@ -782,6 +783,12 @@ void MainMenu::setupMenu() {
 			{ &st::menuIconSoundOn }
 		)->setClickedCallback([=] {
 			Mokagram::Music::ShowMusicBox(controller);
+		});
+		addAction(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Лента"))),
+			{ &st::menuIconChannel }
+		)->setClickedCallback([=] {
+			Mokagram::Feed::Show(controller);
 		});
 		for (auto &item : Mokagram::Plugins::DrawerMenuItems()) {
 			addAction(

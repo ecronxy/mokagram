@@ -59,6 +59,17 @@ void Related(
 	int limit,
 	Fn<void(std::vector<Track>)> done);
 
+struct RelatedPage {
+	std::vector<Track> tracks;
+	QString next;
+	QString error;
+};
+
+void LoadRelatedPage(
+	const QString &trackId,
+	const QString &cursor,
+	Fn<void(RelatedPage)> done);
+
 // Последние треки исполнителя.
 void UserTracks(
 	const QString &userId,

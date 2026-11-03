@@ -1539,7 +1539,7 @@ void AskForRestart() {
 	} else if (starts({ "lag.", "misc.ping" })
 		|| group.name == U(Mokagram::Lang::Tr("Аккаунты"))) {
 		return u"system"_q;
-	} else if (starts({ "chats.", "fx." })) {
+	} else if (starts({ "chats.", "fx.", "inline.", "translation.", "documents." })) {
 		return u"chats"_q;
 	} else if (starts({ "misc.stars", "quote." })) {
 		return u"tools"_q;

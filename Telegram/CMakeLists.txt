@@ -92,6 +92,8 @@ PRIVATE
     mokagram/lang/mokagram_lang.h
     mokagram/msginfo/mokagram_message_info.cpp
     mokagram/msginfo/mokagram_message_info.h
+    mokagram/msginfo/mokagram_media_fingerprint.cpp
+    mokagram/msginfo/mokagram_media_fingerprint.h
     mokagram/snippets/mokagram_snippets.cpp
     mokagram/snippets/mokagram_snippets.h
     mokagram/notes/mokagram_notes.cpp
@@ -102,8 +104,21 @@ PRIVATE
     mokagram/quote/mokagram_quote.h
     mokagram/appearance/mokagram_appearance.cpp
     mokagram/appearance/mokagram_appearance.h
+    mokagram/music/mokagram_music_canvas.cpp
+    mokagram/music/mokagram_music_canvas.h
     mokagram/music/mokagram_lyrics.cpp
     mokagram/music/mokagram_lyrics.h
+    mokagram/music/mokagram_motion.cpp
+    mokagram/music/mokagram_motion.h
+    mokagram/music/mokagram_motion_protocol.cpp
+    mokagram/inline/mokagram_inline.cpp
+    mokagram/inline/mokagram_inline.h
+    mokagram/inline/mokagram_inline_ui.cpp
+    mokagram/inline/mokagram_inline_ui.h
+    mokagram/feed/mokagram_feed.cpp
+    mokagram/feed/mokagram_feed.h
+    lang/translate_external_provider.cpp
+    lang/translate_external_provider.h
     mokagram/music/mokagram_music_library.cpp
     mokagram/music/mokagram_music_library.h
     mokagram/music/mokagram_music_ui.cpp
@@ -116,6 +131,7 @@ PRIVATE
     mokagram/plugins/mokagram_plugin_install.h
     mokagram/plugins/mokagram_plugin_store.cpp
     mokagram/plugins/mokagram_plugin_store.h
+    mokagram/plugins/mokagram_plugin_sources.h
     mokagram/plugins/mokagram_plugins.cpp
     mokagram/plugins/mokagram_plugins.h
     mokagram/settings/mokagram_settings.cpp
@@ -149,6 +165,18 @@ set_source_files_properties(
     ${src_loc}/mokagram/plugins/mokagram_plugins.cpp
     PROPERTIES INCLUDE_DIRECTORIES "${Python3_INCLUDE_DIRS}")
 target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES})
+find_package(Qt6 COMPONENTS PdfWidgets QUIET)
+nice_target_sources(Telegram ${src_loc} PRIVATE
+    media/view/media_view_pdf.cpp
+    media/view/media_view_pdf.h
+)
+if (TARGET Qt6::PdfWidgets)
+    target_link_libraries(Telegram PRIVATE $<LINK_ONLY:Qt6::PdfWidgets>)
+    set_source_files_properties(${src_loc}/media/view/media_view_pdf.cpp
+        PROPERTIES
+            COMPILE_DEFINITIONS MOKAGRAM_HAS_QT_PDF
+            INCLUDE_DIRECTORIES "$<TARGET_PROPERTY:Qt6::PdfWidgets,INTERFACE_INCLUDE_DIRECTORIES>;$<TARGET_PROPERTY:Qt6::Pdf,INTERFACE_INCLUDE_DIRECTORIES>")
+endif()
 # sqlite3: системная, а если заголовков нет (docker-сборка Linux, Windows), качаем amalgamation и собираем сами
 find_package(SQLite3 QUIET)
 if (SQLite3_FOUND)
