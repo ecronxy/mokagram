@@ -2458,7 +2458,7 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 	} else if (op == "theme_get") {
 		return ThemeGet();
 	} else if (op == "plugin_unloaded") {
-		OnMain([pid = args.value("pid").toString().toStdString()] {
+		const auto overlays = OnMain([pid = args.value("pid").toString().toStdString()] {
 			OverlaysDropPlugin(pid);
 			return std::string();
 		});
@@ -2476,7 +2476,8 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 			{ "pid", args.value("pid") },
 			{ "kind", "badge" },
 			{ "on", false } });
-		return PluginUnloaded(args);
+		const auto result = PluginUnloaded(args);
+		return overlays.empty() ? result : overlays;
 	} else if (op == "filter_subscribe") {
 		return FilterSubscribe(args);
 	} else if (op == "get_dialogs") {
