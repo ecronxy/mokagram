@@ -1597,26 +1597,6 @@ QImage Delegate::background() {
 	{
 		auto p = QPainter(&bg);
 		auto hq = PainterHighQualityEnabler(p);
-		p.setOpacity(0.3);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowShadowFg);
-		p.drawRoundedRect(
-			QRectF(rect).translated(0, radius / 12.),
-			radius,
-			radius);
-	}
-	bg = bg.scaled(
-		(bgSize * ratio) / 2,
-		Qt::IgnoreAspectRatio,
-		Qt::SmoothTransformation);
-	bg = Images::Blur(std::move(bg), true);
-	bg = bg.scaled(
-		bgSize * ratio,
-		Qt::IgnoreAspectRatio,
-		Qt::SmoothTransformation);
-	{
-		auto p = QPainter(&bg);
-		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
 		p.drawRoundedRect(rect, radius, radius);

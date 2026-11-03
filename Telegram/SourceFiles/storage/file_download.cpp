@@ -157,6 +157,30 @@ void FileLoader::finishWithBytes(const QByteArray &data) {
 		Platform::File::PostprocessDownloaded(
 			QFileInfo(_file).absoluteFilePath());
 	}
+	notifyFinished();
+}
+
+void FileLoader::notifyFinished() {
+	// Mokagram: JPEG с цветовым профилем декодируется до 100+ мс, не на главном потоке.
+	if (base::take(_decodeImageInBackground)
+		&& _imageData.isNull()
+		&& _locationType == UnknownFileLocation
+		&& !_data.isEmpty()) {
+		auto bytes = _loadSize ? _data.left(_loadSize) : _data;
+		crl::async([
+			=,
+			bytes = std::move(bytes),
+			guard = _imageDecoding.make_guard()
+		]() mutable {
+			auto read = Images::Read({ .content = std::move(bytes) });
+			crl::on_main(std::move(guard), [=, read = std::move(read)] {
+				_imageData = read.image;
+				_imageFormat = read.format;
+				notifyFinished();
+			});
+		});
+		return;
+	}
 	const auto session = _session;
 	_updates.fire_done();
 	session->notifyDownloaderTaskFinished();
@@ -347,6 +371,7 @@ void FileLoader::cancel() {
 void FileLoader::cancel(FailureReason fail) {
 	const auto started = (currentOffset() > 0);
 
+	_imageDecoding = nullptr;
 	cancelHook();
 
 	_cancelled = true;
@@ -479,9 +504,7 @@ bool FileLoader::finalizeResult() {
 					_cacheTag));
 		}
 	}
-	const auto session = _session;
-	_updates.fire_done();
-	session->notifyDownloaderTaskFinished();
+	notifyFinished();
 	return true;
 }
 

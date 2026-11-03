@@ -6,6 +6,7 @@
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_music_canvas.h"
 #include "mokagram/music/mokagram_music_library.h"
 #include "mokagram/music/mokagram_lyrics.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -88,7 +89,6 @@
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
 #include <QtGui/QLinearGradient>
-#include <QtGui/QRadialGradient>
 #include <QtGui/QTextLayout>
 #include <QtGui/QGuiApplication>
 #include <QtCore/QPointer>
@@ -1335,7 +1335,7 @@ private:
 		if (playing || over) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBgOver);
-			p.drawRoundedRect(rect().marginsRemoved({ 10, 3, 10, 3 }), 18, 18);
+			p.drawRoundedRect(rect().marginsRemoved({ 8, 4, 8, 4 }), 12, 12);
 		}
 		const auto art = QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize);
 		if (_media) {
@@ -1346,7 +1346,7 @@ private:
 			}
 		}
 		auto path = QPainterPath();
-		path.addRoundedRect(art, 14, 14);
+		path.addRoundedRect(art, 8, 8);
 		if (!_art.isNull()) {
 			p.save();
 			p.setClipPath(path);
@@ -1494,7 +1494,7 @@ private:
 		if (isOver() || isDown()) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBgOver);
-			p.drawRoundedRect(rect().marginsRemoved({ 10, 3, 10, 3 }), 18, 18);
+			p.drawRoundedRect(rect().marginsRemoved({ 8, 4, 8, 4 }), 12, 12);
 		}
 		const auto art = QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize);
 		auto path = QPainterPath();
@@ -2404,6 +2404,40 @@ namespace {
 		std::clamp(v, 0.4f, 0.7f));
 }
 
+[[nodiscard]] QImage CoverBackgroundForPlayback() {
+	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
+	const auto cover = CoverForPlayback(current);
+	if (cover.isNull()) {
+		return {};
+	}
+	static auto cachedKey = qint64();
+	static auto cached = QImage();
+	if (cachedKey != cover.cacheKey() || cached.isNull()) {
+		cachedKey = cover.cacheKey();
+		cached = Images::BlurLargeImage(
+			cover.scaled(32, 32, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+				.convertToFormat(QImage::Format_ARGB32_Premultiplied),
+			10);
+		auto p = QPainter(&cached);
+		p.fillRect(cached.rect(), QColor(0x14, 0x14, 0x15, 180));
+	}
+	return cached;
+}
+
+class CoverBackground final {
+public:
+	void refresh(Fn<void()> repaint, bool visible);
+	void paint(QPainter &p, QRect area, QRect canvas) const;
+
+private:
+	[[nodiscard]] QImage frame() const;
+
+	QImage _from;
+	QImage _to;
+	Ui::Animations::Simple _animation;
+
+};
+
 class LyricsView final : public Ui::RpWidget {
 public:
 	explicit LyricsView(QWidget *parent)
@@ -2425,7 +2459,7 @@ public:
 	// Полноэкранный плеер: текст слева, крупнее, без своей подложки.
 	void setBig(bool big) {
 		_big = big;
-		_plasma = false;
+		_coverTint = false;
 		_heights.clear();
 		_layouts.clear();
 		updateTimer();
@@ -2436,8 +2470,8 @@ public:
 		_background = std::move(paint);
 		setAttribute(Qt::WA_OpaquePaintEvent, _background != nullptr);
 	}
-	void setPlasma(bool on) {
-		_plasma = on;
+	void setCoverTint(bool on) {
+		_coverTint = on;
 		updateTimer();
 		update();
 	}
@@ -2458,7 +2492,13 @@ public:
 		tick();
 		update();
 	}
+	void updateCover() {
+		if (!_big) {
+			_backdrop.refresh([=] { update(); }, isVisible());
+		}
+	}
 	void setPosition(qint64 ms, bool playing) {
+		updateCover();
 		_position = ms;
 		_positionAt = _clock.elapsed();
 		_playing = playing;
@@ -2560,8 +2600,7 @@ private:
 		const auto now = _clock.elapsed();
 		const auto dt = std::clamp((now - _last) / 1000., 0., 0.1);
 		_last = now;
-		_phase += dt * 0.7;
-		auto changed = _plasma && CurrentCoverAccent().isValid();
+		auto changed = false;
 		if (_lyrics.found && _lyrics.synced && !_lyrics.lines.empty()) {
 			auto index = -1;
 			const auto at = livePosition() + 120;
@@ -2625,45 +2664,13 @@ private:
 		return height() * (_big ? 0.38 : 0.5);
 	}
 	[[nodiscard]] int textWidth() const {
-		return width() - (_big ? 0 : 56);
-	}
-	// Переливы фона панели: рисуются в маленькую картинку и растягиваются, всё равно размыты.
-	[[nodiscard]] QImage plasmaFrame(const QColor &accent) {
-		constexpr auto kDown = 6;
-		const auto size = QSize(width() / kDown + 1, height() / kDown + 1);
-		if (_plasmaFrame.size() != size) {
-			_plasmaFrame = QImage(size, QImage::Format_ARGB32_Premultiplied);
-		}
-		_plasmaFrame.fill(Qt::transparent);
-		auto q = QPainter(&_plasmaFrame);
-		q.scale(1. / kDown, 1. / kDown);
-		const auto w = width();
-		const auto h = height();
-		for (auto i = 0; i != 3; ++i) {
-			auto color = QColor::fromHsvF(
-				std::fmod(accent.hsvHueF() + 0.09 * (i - 1) + 1., 1.),
-				accent.hsvSaturationF() < 0.05
-					? 0.
-					: std::min(1., accent.hsvSaturationF() + 0.1),
-				std::min(1., accent.valueF() + 0.1 * i));
-			const auto cx = w * (0.5 + 0.38 * std::sin(_phase * (1. + 0.4 * i) + i * 2.1));
-			const auto cy = h * (0.5 + 0.34 * std::cos(_phase * (0.8 + 0.3 * i) + i * 1.3));
-			auto gradient = QRadialGradient(cx, cy, w * 0.55);
-			color.setAlpha(120);
-			gradient.setColorAt(0., color);
-			color.setAlpha(0);
-			gradient.setColorAt(1., color);
-			q.fillRect(rect(), gradient);
-		}
-		q.fillRect(rect(), QColor(0, 0, 0, 90));
-		q.end();
-		return _plasmaFrame;
+		return width() - (_big ? 0 : style::ConvertScale(48));
 	}
 	[[nodiscard]] QFont lineFont() const {
 		auto font = st::semiboldFont->f;
-		font.setPixelSize(_big ? style::ConvertScale(34) : 19);
+		font.setPixelSize(style::ConvertScale(_big ? 34 : 24));
 		if (_big) {
-			font.setWeight(QFont::ExtraBold);
+			font.setWeight(QFont::DemiBold);
 		}
 		return font;
 	}
@@ -2698,7 +2705,7 @@ private:
 		}
 		if (_heights[index] < 0) {
 			_heights[index] = int(std::ceil(layoutOf(index).boundingRect().height()))
-				+ (_big ? style::ConvertScale(26) : 20);
+				+ style::ConvertScale(_big ? 26 : 24);
 		}
 		return _heights[index];
 	}
@@ -2757,14 +2764,13 @@ private:
 			}
 		} else {
 			// Скругление нужно только подложке и затуханию, текст рисуется без маски.
-			rounded.addRoundedRect(QRectF(rect()), 20, 20);
+			rounded.addRoundedRect(QRectF(rect()), 12, 12);
 			p.save();
 			p.setClipPath(rounded);
-			p.fillRect(rect(), st::windowBgOver);
-			if (_plasma) {
-				if (const auto accent = CurrentCoverAccent(); accent.isValid()) {
-					p.drawImage(rect(), plasmaFrame(accent));
-				}
+			if (_coverTint) {
+				_backdrop.paint(p, rect(), rect());
+			} else {
+				p.fillRect(rect(), st::windowBgOver);
 			}
 			p.restore();
 		}
@@ -2805,7 +2811,7 @@ private:
 				// Без масштабирования: текст с трансформацией не берётся из кэша глифов и тормозит.
 				const auto origin = _big
 					? QPointF(0., top + style::ConvertScale(13))
-					: QPointF((width() - textWidth()) / 2., top + 10);
+					: QPointF((width() - textWidth()) / 2., top + style::ConvertScale(12));
 				drawLayout(
 					p,
 					layoutOf(i),
@@ -2840,8 +2846,8 @@ private:
 	QElapsedTimer _clock;
 	std::vector<int> _heights;
 	std::vector<std::unique_ptr<QTextLayout>> _layouts;
+	CoverBackground _backdrop;
 	Fn<void(QPainter&, QRect)> _background;
-	QImage _plasmaFrame;
 	std::vector<float> _weights;
 	double _fill = 0.;
 	qint64 _position = 0;
@@ -2850,10 +2856,9 @@ private:
 	double _scroll = 0.;
 	double _plainScroll = 0.;
 	qint64 _manualUntil = 0;
-	double _phase = 0.;
 	int _current = -1;
 	bool _scrollReady = false;
-	bool _plasma = true;
+	bool _coverTint = true;
 	bool _playing = false;
 	bool _big = false;
 
@@ -2862,11 +2867,10 @@ private:
 void LyricsView::updateTimer() {
 	const auto animate = isVisible()
 		&& QGuiApplication::applicationState() == Qt::ApplicationActive
-		&& ((_plasma && CurrentCoverAccent().isValid())
-			|| (_playing
-				&& _lyrics.found
-				&& _lyrics.synced
-				&& !_lyrics.lines.empty()))
+		&& _playing
+		&& _lyrics.found
+		&& _lyrics.synced
+		&& !_lyrics.lines.empty()
 		&& !PowerSaving::On(PowerSaving::kAnimations);
 	if (animate && !_timer.isActive()) {
 		_last = _clock.elapsed();
@@ -2906,7 +2910,9 @@ public:
 	, _controller(controller)
 	, _anchor(anchor)
 	, _view(Ui::CreateChild<LyricsView>(this)) {
-		_view->setPlasma(Mokagram::Settings::Bool(u"lyrics.plasma"_q));
+		// Фон сплошной: анимация текста не перерисовывает третью колонку под панелью.
+		setAttribute(Qt::WA_OpaquePaintEvent);
+		_view->setCoverTint(Mokagram::Settings::Bool(u"lyrics.plasma"_q));
 		_close = Mokagram::Plugins::MakeHeaderButton(this, true, [] {
 			Mokagram::Settings::SetBool(u"lyrics.enabled"_q, false);
 		});
@@ -2963,7 +2969,7 @@ public:
 		Mokagram::Settings::Changed(
 		) | rpl::on_next([=](const QString &key) {
 			if (key == u"lyrics.plasma"_q) {
-				_view->setPlasma(Mokagram::Settings::Bool(key));
+				_view->setCoverTint(Mokagram::Settings::Bool(key));
 			} else if (key == u"lyrics.enabled"_q
 				&& !Mokagram::Settings::Bool(key)) {
 				deleteLater();
@@ -2980,6 +2986,7 @@ public:
 			refresh();
 		}, lifetime());
 		CoversChanged() | rpl::on_next([=] {
+			_view->updateCover();
 			_view->update();
 		}, lifetime());
 
@@ -3008,8 +3015,8 @@ protected:
 		auto p = QPainter(this);
 		p.fillRect(rect(), st::windowBg);
 		p.fillRect(0, 0, st::lineWidth, height(), st::shadowFg);
-		const auto left = 18;
-		const auto available = width() - left - _close->width() - 12;
+		const auto left = 24;
+		const auto available = width() - left - _close->width() - 16;
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
 		p.drawText(
@@ -3030,7 +3037,7 @@ protected:
 			width(),
 			std::max(height() - kLyricsHeaderHeight, 0));
 		_close->move(
-			width() - _close->width() - 6,
+			width() - _close->width() - 8,
 			(kLyricsHeaderHeight - _close->height()) / 2);
 		_resize->setGeometry(0, 0, st::historyResizeWidth, height());
 		_resize->raise();
@@ -3129,102 +3136,9 @@ private:
 	return result;
 }
 
-// Три цвета для фона полноэкранного плеера: два главных оттенка обложки и их тёмная смесь.
-[[nodiscard]] std::array<QColor, 3> CoverPalette(
-		const QImage &cover,
-		const QColor &accent) {
-	constexpr auto kBins = 12;
-	double weight[kBins] = {};
-	double sumR[kBins] = {}, sumG[kBins] = {}, sumB[kBins] = {};
-	if (!cover.isNull()) {
-		const auto small = cover.scaled(
-			24,
-			24,
-			Qt::IgnoreAspectRatio,
-			Qt::SmoothTransformation).convertToFormat(QImage::Format_ARGB32);
-		for (auto y = 0; y != small.height(); ++y) {
-			for (auto x = 0; x != small.width(); ++x) {
-				const auto c = QColor(small.pixel(x, y));
-				if (c.valueF() < 0.12) {
-					continue;
-				}
-				const auto bin = std::clamp(int(std::max(c.hsvHueF(), 0.f) * kBins), 0, kBins - 1);
-				const auto s = c.hsvSaturationF();
-				const auto w = (0.05 + s * s) * (0.3 + c.valueF());
-				weight[bin] += w;
-				sumR[bin] += w * c.redF();
-				sumG[bin] += w * c.greenF();
-				sumB[bin] += w * c.blueF();
-			}
-		}
-	}
-	const auto fixup = [](QColor color, double v) {
-		auto h = 0.f, s = 0.f, b = 0.f;
-		color.getHsvF(&h, &s, &b);
-		return QColor::fromHsvF(
-			h < 0 ? 0.f : h,
-			s < 0.08f ? s : std::clamp(s, 0.45f, 0.9f),
-			float(v));
-	};
-	const auto binColor = [&](int i) {
-		return QColor::fromRgbF(
-			sumR[i] / weight[i],
-			sumG[i] / weight[i],
-			sumB[i] / weight[i]);
-	};
-	auto best = 0;
-	for (auto i = 1; i != kBins; ++i) {
-		if (weight[i] > weight[best]) {
-			best = i;
-		}
-	}
-	if (weight[best] <= 0.) {
-		const auto base = accent.isValid() ? accent : QColor(0x0a, 0x84, 0xff);
-		return {
-			fixup(base, 0.42),
-			fixup(base, 0.62),
-			fixup(base, 0.3),
-		};
-	}
-	auto second = -1;
-	for (auto i = 0; i != kBins; ++i) {
-		const auto distance = std::min((i - best + kBins) % kBins, (best - i + kBins) % kBins);
-		if (distance >= 2
-			&& weight[i] > weight[best] * 0.12
-			&& (second < 0 || weight[i] > weight[second])) {
-			second = i;
-		}
-	}
-	const auto first = fixup(binColor(best), 0.55);
-	auto other = QColor();
-	if (second >= 0) {
-		other = fixup(binColor(second), 0.62);
-	} else {
-		auto h = 0.f, s = 0.f, v = 0.f;
-		first.getHsvF(&h, &s, &v);
-		other = QColor::fromHsvF(std::fmod(h + 0.08f, 1.f), s, 0.68f);
-	}
-	return { first, other, fixup(first, 0.28) };
-}
-
-// Обложка, уменьшенная и сильно размытая: фон полноэкранного плеера.
-[[nodiscard]] QImage CoverBackdrop(const QImage &cover) {
-	if (cover.isNull()) {
-		return QImage();
-	}
-	return Images::BlurLargeImage(
-		cover.scaled(
-			96,
-			96,
-			Qt::KeepAspectRatioByExpanding,
-			Qt::SmoothTransformation).convertToFormat(
-				QImage::Format_ARGB32_Premultiplied),
-		16);
-}
-
 constexpr auto kFullscreenSide = 56;
 
-// Полноэкранный плеер: размытый цветной фон, крупный текст песни, тонкая полоса времени.
+// Полноэкранный плеер с общей подложкой для обложки и текста песни.
 class FullscreenPlayer final : public Ui::RpWidget {
 public:
 	FullscreenPlayer(
@@ -3243,12 +3157,15 @@ public:
 	, _previous(Ui::CreateChild<RoundGlyph>(this, Glyph::Previous, 52))
 	, _play(Ui::CreateChild<RoundGlyph>(this, Glyph::Play, 68))
 	, _next(Ui::CreateChild<RoundGlyph>(this, Glyph::Next, 52))
-	, _repeat(Ui::CreateChild<RoundGlyph>(this, Glyph::Repeat, 44)) {
+	, _repeat(Ui::CreateChild<RoundGlyph>(this, Glyph::Repeat, 44))
+	, _canvas(this, [=] {
+		update(computeLayout().cover);
+	}) {
 		setFocusPolicy(Qt::StrongFocus);
 		setMouseTracking(true);
 		_view->setBig(true);
 		_view->setBackground([=](QPainter &p, QRect area) {
-			paintBackgroundPart(p, area, _view->pos() + area.topLeft());
+			paintBackgroundPart(p, area, _view->pos());
 		});
 		_seek->setThin(true);
 		_volume->setThin(true);
@@ -3357,6 +3274,12 @@ public:
 		CoversChanged() | rpl::on_next([=] { refresh(); }, lifetime());
 		LikesChanged() | rpl::on_next([=] { refresh(); }, lifetime());
 
+		PowerSaving::Changes(
+		) | rpl::on_next([=] {
+			update();
+			_view->update();
+		}, lifetime());
+
 		setGeometry(parent->rect());
 		refresh();
 		show();
@@ -3387,6 +3310,7 @@ public:
 			return;
 		}
 		_closing = true;
+		_canvas.refresh({}, {}, {}, false);
 		auto effect = new QGraphicsOpacityEffect(this);
 		setGraphicsEffect(effect);
 		_fade.start([=] {
@@ -3438,7 +3362,7 @@ protected:
 	[[nodiscard]] QFont titleFont() const {
 		auto result = st::semiboldFont->f;
 		result.setPixelSize(style::ConvertScale(26));
-		result.setWeight(QFont::Bold);
+		result.setWeight(QFont::DemiBold);
 		return result;
 	}
 	[[nodiscard]] QFont artistFont() const {
@@ -3474,11 +3398,14 @@ protected:
 		const auto cardTop = margin;
 		const auto cardHeight = std::max(height() - 2 * margin, 0);
 		result.wide = width() >= s(1280);
-		const auto leftWidth = std::clamp(int(width() * (result.wide ? 0.32 : 0.42)), s(360), s(780));
+		const auto leftWidth = std::clamp(
+			int(width() * (result.wide ? 0.32 : 0.42)),
+			s(320),
+			s(520));
 		result.left = QRect(margin, cardTop, std::min(leftWidth, width() - 2 * margin), cardHeight);
 		auto rightEdge = width() - margin;
 		if (result.wide) {
-			const auto queueWidth = std::clamp(int(width() * 0.24), s(300), s(400));
+			const auto queueWidth = std::clamp(int(width() * 0.22), s(280), s(360));
 			result.queue = QRect(rightEdge - queueWidth, cardTop, queueWidth, cardHeight);
 			rightEdge = result.queue.x() - gap;
 		}
@@ -3488,18 +3415,24 @@ protected:
 			std::max(rightEdge - result.left.right() - 1 - gap, 0),
 			cardHeight);
 		const auto pad = s(24);
-		const auto below = s(24) + s(64) + s(14) + _seek->height() + s(18) + s(4) + _play->height() + s(14) + _volume->height();
-		const auto side = std::max(
-			std::min(result.left.width() - 2 * pad, cardHeight - 2 * pad - below),
-			s(120));
-		const auto total = side + below;
+		const auto below = s(16) + _seek->height()
+			+ s(24) + _play->height() + s(16) + _volume->height();
+		const auto coverHeight = std::max(std::min(
+			(result.left.width() - 2 * pad) * 5 / 4,
+			cardHeight - 2 * pad - below), s(160));
+		const auto coverWidth = coverHeight * 4 / 5;
+		const auto total = coverHeight + below;
 		const auto top = result.left.y() + std::max((cardHeight - total) / 2, pad / 2);
-		const auto x = result.left.x() + (result.left.width() - side) / 2;
-		result.cover = QRect(x, top, side, side);
-		result.info = QRect(x, top + side + s(24), side, s(64));
-		result.seekTop = result.info.bottom() + 1 + s(14);
-		result.controlsTop = result.seekTop + _seek->height() + s(18) + s(4);
-		result.volumeTop = result.controlsTop + _play->height() + s(14);
+		const auto x = result.left.x() + (result.left.width() - coverWidth) / 2;
+		result.cover = QRect(x, top, coverWidth, coverHeight);
+		result.info = QRect(
+			x + pad,
+			result.cover.bottom() + 1 - pad - s(64),
+			std::max(coverWidth - 2 * pad, 0),
+			s(64));
+		result.seekTop = result.cover.bottom() + 1 + s(16);
+		result.controlsTop = result.seekTop + _seek->height() + s(24);
+		result.volumeTop = result.controlsTop + _play->height() + s(16);
 		return result;
 	}
 	[[nodiscard]] int infoAvailable(const Layout &layout) const {
@@ -3529,13 +3462,6 @@ protected:
 			: (artist.contains(point) && !_artist.trimmed().isEmpty())
 			? InfoHover::Artist
 			: InfoHover::None;
-	}
-	[[nodiscard]] QColor accentColor() const {
-		const auto mix = _colorAnim.value(1.);
-		const auto c = anim::color(_from[1], _to[1], mix);
-		auto h = 0.f, sat = 0.f, v = 0.f;
-		c.getHsvF(&h, &sat, &v);
-		return QColor::fromHsvF(h < 0 ? 0.f : h, std::min(sat, 0.75f), std::max(v, 0.9f));
 	}
 
 	void resizeEvent(QResizeEvent *e) override {
@@ -3650,15 +3576,15 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		paintBackgroundPart(p, e->rect(), e->rect().topLeft());
+		paintBackgroundPart(p, e->rect());
 		const auto layout = computeLayout();
 		// Обложка и текст лежат прямо на фоне, очередь на полупрозрачной подложке.
 		p.setPen(Qt::NoPen);
 		p.setBrush(QColor(255, 255, 255, 16));
 		if (layout.wide) {
-			p.drawRoundedRect(layout.queue, s(26), s(26));
+			p.drawRoundedRect(layout.queue, s(16), s(16));
 		} else if (_queueShown) {
-			p.drawRoundedRect(layout.right, s(26), s(26));
+			p.drawRoundedRect(layout.right, s(16), s(16));
 		}
 		if (layout.wide || _queueShown) {
 			auto headerFont = st::semiboldFont->f;
@@ -3684,42 +3610,53 @@ protected:
 			icon.paintInCenter(p, box, QColor(255, 255, 255, 170));
 		}
 
-		// Обложка: сжимается на паузе, при смене трека плавно перетекает в новую.
-		const auto playing = _playAnim.value(_isPlaying ? 1. : 0.);
-		const auto scale = 0.94 + 0.06 * playing;
 		const auto fade = _infoFade.value(1.);
 		const auto coverRect = QRectF(layout.cover);
-		const auto drawCover = [&](const QPixmap &pixmap, double opacity) {
+		const auto drawCover = [&](const QPixmap &pixmap, double opacity, bool current) {
 			if (opacity <= 0.) {
 				return;
 			}
 			p.save();
 			p.setOpacity(opacity);
-			p.translate(coverRect.center());
-			p.scale(scale, scale);
-			p.translate(-coverRect.center());
-			// Мягкая тень под обложкой: стопка полупрозрачных скруглений.
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(0, 0, 0, 12));
-			for (auto i = 1; i <= 8; ++i) {
-				const auto grow = s(3) * i;
-				p.drawRoundedRect(
-					coverRect.adjusted(-grow, -grow + s(14), grow, grow + s(14)),
-					s(20) + grow,
-					s(20) + grow);
-			}
 			auto path = QPainterPath();
-			path.addRoundedRect(coverRect, s(20), s(20));
+			path.addRoundedRect(coverRect, s(16), s(16));
 			p.setClipPath(path);
+			const auto canvas = current && _canvas.paint(p, layout.cover);
+			if (canvas) {
+				p.restore();
+				return;
+			}
 			if (pixmap.isNull()) {
-				p.fillRect(coverRect, QColor(0x32, 0x32, 0x32));
+				p.fillRect(coverRect, QColor(0x23, 0x23, 0x25));
+				st::menuIconSoundOn.paintInCenter(p, layout.cover, QColor(0xa1, 0xa1, 0xa6));
 			} else {
-				p.drawPixmap(layout.cover, pixmap);
+				const auto scaled = pixmap.size().scaled(
+					layout.cover.size(),
+					Qt::KeepAspectRatioByExpanding);
+				p.drawPixmap(QRect(
+					layout.cover.center() - QPoint(scaled.width(), scaled.height()) / 2,
+					scaled), pixmap);
 			}
 			p.restore();
 		};
-		drawCover(_coverWas, 1. - fade);
-		drawCover(_cover, fade);
+		drawCover(_coverWas, 1. - fade, false);
+		drawCover(_cover, fade, true);
+		p.save();
+		auto cardPath = QPainterPath();
+		cardPath.addRoundedRect(coverRect, s(16), s(16));
+		p.setClipPath(cardPath);
+		auto shade = QLinearGradient(coverRect.topLeft(), coverRect.bottomLeft());
+		shade.setColorAt(0., QColor(0, 0, 0, 20));
+		shade.setColorAt(0.5, QColor(0, 0, 0, 0));
+		shade.setColorAt(0.72, QColor(0, 0, 0, 80));
+		shade.setColorAt(1., QColor(0, 0, 0, 230));
+		p.fillRect(coverRect, shade);
+		_canvas.paintLoading(p, QRect(
+			layout.cover.x() + s(24),
+			layout.cover.y() + s(16),
+			std::max(layout.cover.width() - s(48), 0),
+			s(4)), st::windowActiveTextFg->c);
+		p.restore();
 
 		// Название и исполнитель; под курсором подчёркнуты: по ним открываются альбомы и поиск исполнителя.
 		const auto available = infoAvailable(layout);
@@ -3743,7 +3680,7 @@ protected:
 			font = artistFont();
 			font.setUnderline(artistHover);
 			p.setFont(font);
-			p.setPen(QColor(255, 255, 255, int((artistHover ? 235 : 170) * opacity)));
+			p.setPen(QColor(255, 255, 255, int((artistHover ? 255 : 210) * opacity)));
 			p.drawText(
 				QRect(layout.info.x(), layout.info.y() + s(38), available, s(24)),
 				Qt::AlignLeft | Qt::AlignVCenter,
@@ -3769,85 +3706,26 @@ protected:
 	}
 
 private:
-	// Фон собирается раз на трек в маленькую картинку и растягивается: он всё равно размыт.
-	void ensureBackground() {
-		const auto ratio = style::DevicePixelRatio();
-		if (!_backgroundDirty && _background.size() == size() * ratio) {
-			return;
-		}
-		_backgroundDirty = false;
-		constexpr auto kDown = 4;
-		auto small = QImage(
-			QSize(width() / kDown + 1, height() / kDown + 1),
-			QImage::Format_ARGB32_Premultiplied);
-		small.fill(Qt::black);
-		{
-			auto q = QPainter(&small);
-			auto hq = PainterHighQualityEnabler(q);
-			q.scale(1. / kDown, 1. / kDown);
-			composeBackground(q);
-		}
-		_background = QPixmap::fromImage(small.scaled(
-			size() * ratio,
-			Qt::IgnoreAspectRatio,
-			Qt::SmoothTransformation));
-		_background.setDevicePixelRatio(ratio);
-	}
-	// Кусок фона (area у painter, from у плеера); при смене трека старый кадр перетекает в новый.
-	void paintBackgroundPart(QPainter &p, QRect area, QPoint from) {
-		ensureBackground();
-		const auto ratio = style::DevicePixelRatio();
-		const auto source = QRect(from * ratio, area.size() * ratio);
-		const auto mix = _colorAnim.value(1.);
-		if (mix < 1. && _backgroundWas.size() == _background.size()) {
-			p.drawPixmap(area, _backgroundWas, source);
-			p.setOpacity(mix);
-			p.drawPixmap(area, _background, source);
-			p.setOpacity(1.);
+	void paintBackgroundPart(QPainter &p, QRect area, QPoint origin = {}) {
+		if (Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
+			_backdrop.paint(p, area, QRect(-origin, size()));
+			p.fillRect(area, QColor(0x10, 0x10, 0x12, 100));
 		} else {
-			p.drawPixmap(area, _background, source);
+			p.fillRect(area, QColor(0x14, 0x14, 0x15));
 		}
-	}
-	void composeBackground(QPainter &q) {
-		if (!_ready || !Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
-			q.fillRect(rect(), QColor(0x14, 0x14, 0x14));
-			return;
-		}
-		const auto color = [&](int i) {
-			return _to[i];
-		};
-		q.fillRect(rect(), color(2));
-		// Размытая обложка с запасом по краям: у размытия края темнее.
-		const auto side = std::max(width(), height()) * 1.3;
-		const auto target = QRectF(
-			(width() - side) / 2.,
-			(height() - side) / 2.,
-			side,
-			side);
-		if (!_backdrop.isNull()) {
-			q.drawImage(target, _backdrop);
-		}
-		const auto glow = [&](QColor c, QPointF center, double radius, int alpha) {
-			auto gradient = QRadialGradient(center, radius);
-			c.setAlpha(alpha);
-			gradient.setColorAt(0., c);
-			c.setAlpha(0);
-			gradient.setColorAt(1., c);
-			q.fillRect(rect(), gradient);
-		};
-		glow(color(0), QPointF(width() * 0.12, height() * 0.08), width() * 0.7, 110);
-		glow(color(1), QPointF(width() * 0.92, height() * 0.96), width() * 0.6, 80);
-		// Затемнение, чтобы белый текст читался на любой обложке.
-		q.fillRect(rect(), QColor(0, 0, 0, 105));
-		auto shade = QLinearGradient(0., 0., 0., height());
-		shade.setColorAt(0., QColor(0, 0, 0, 0));
-		shade.setColorAt(1., QColor(0, 0, 0, 90));
-		q.fillRect(rect(), shade);
 	}
 
 	void refresh() {
+		_backdrop.refresh([=] {
+			update();
+			_view->update();
+		}, isVisible());
 		const auto track = PlayingTrack();
+		if (_closing) {
+			return;
+		}
 		if (track.id.isEmpty()) {
+			_canvas.refresh({}, {}, {}, false);
 			// Между треками плеер на миг пуст: экран остаётся, закрывает его пользователь.
 			return;
 		}
@@ -3881,34 +3759,17 @@ private:
 					size,
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
-			_backdrop = CoverBackdrop(cover);
-			if (_ready) {
-				_backgroundWas = _background;
-			}
-			const auto palette = CoverPalette(cover, CurrentCoverAccent());
-			const auto mix = _colorAnim.value(1.);
-			for (auto i = 0; i != 3; ++i) {
-				_from[i] = _ready ? anim::color(_from[i], _to[i], mix) : palette[i];
-				_to[i] = palette[i];
-			}
-			_ready = true;
-			_backgroundDirty = true;
-			_colorAnim.start([=] {
-				_seek->setFillColor(accentColor());
-				if (!_colorAnim.animating()) {
-					_backgroundWas = QPixmap();
-				}
-				update();
-			}, 0., 1., 900, anim::easeOutCubic);
-			_seek->setFillColor(accentColor());
+			_seek->setFillColor(st::windowActiveTextFg->c);
+			_view->update();
 			update();
 		}
 		const auto playing = state.state == Media::Player::State::Playing
 			|| state.state == Media::Player::State::Starting
 			|| state.state == Media::Player::State::Resuming;
+		_canvas.refresh(track.id, track.title, track.artist, playing);
 		if (_isPlaying != playing) {
 			_isPlaying = playing;
-			_playAnim.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 180, anim::easeOutCubic);
+			update();
 		}
 		_play->setPlaying(playing);
 		const auto own = OwnsTrack(current);
@@ -3968,18 +3829,12 @@ private:
 	const not_null<RoundGlyph*> _next;
 	const not_null<RoundGlyph*> _repeat;
 
+	CoverBackground _backdrop;
+	CanvasPlayer _canvas;
 	Ui::Animations::Simple _fade;
-	Ui::Animations::Simple _colorAnim;
 	Ui::Animations::Simple _infoFade;
-	Ui::Animations::Simple _playAnim;
-	std::array<QColor, 3> _from;
-	std::array<QColor, 3> _to;
 	QPixmap _cover;
 	QPixmap _coverWas;
-	QImage _backdrop;
-	QPixmap _background;
-	QPixmap _backgroundWas;
-	bool _backgroundDirty = true;
 	qint64 _coverKey = 0;
 	QString _title;
 	QString _artist;
@@ -3990,10 +3845,69 @@ private:
 	QString _lyricsFor;
 	bool _isPlaying = true;
 	bool _closing = false;
-	bool _ready = false;
 	InfoHover _hover = InfoHover::None;
 
 };
+
+void CoverBackground::refresh(Fn<void()> repaint, bool visible) {
+	const auto next = CoverBackgroundForPlayback();
+	if (_to.cacheKey() == next.cacheKey()) {
+		return;
+	}
+	const auto animate = visible
+		&& !_to.isNull()
+		&& !anim::Disabled()
+		&& QGuiApplication::applicationState() == Qt::ApplicationActive
+		&& !PowerSaving::On(PowerSaving::kAnimations);
+	_from = animate ? frame() : QImage();
+	_to = next;
+	_animation.stop();
+	if (animate) {
+		_animation.start(
+			std::move(repaint),
+			0.,
+			1.,
+			kSwitchDuration,
+			anim::easeOutCubic);
+	} else {
+		repaint();
+	}
+}
+
+QImage CoverBackground::frame() const {
+	const auto progress = (anim::Disabled()
+		|| PowerSaving::On(PowerSaving::kAnimations))
+		? 1.
+		: _animation.value(1.);
+	if (progress >= 1.) {
+		return _to;
+	}
+	auto result = QImage(QSize(32, 32), QImage::Format_ARGB32_Premultiplied);
+	result.fill(QColor(0x14, 0x14, 0x15));
+	auto p = QPainter(&result);
+	if (!_from.isNull()) {
+		p.drawImage(result.rect(), _from);
+	}
+	p.setOpacity(progress);
+	if (_to.isNull()) {
+		p.fillRect(result.rect(), QColor(0x14, 0x14, 0x15));
+	} else {
+		p.drawImage(result.rect(), _to);
+	}
+	return result;
+}
+
+void CoverBackground::paint(QPainter &p, QRect area, QRect canvas) const {
+	p.fillRect(area, QColor(0x14, 0x14, 0x15));
+	const auto background = frame();
+	if (background.isNull()) {
+		return;
+	}
+	p.save();
+	p.setClipRect(area, Qt::IntersectClip);
+	p.drawImage(canvas, background);
+	p.restore();
+}
 
 [[nodiscard]] QPointer<FullscreenPlayer> &FullscreenInstance() {
 	static auto result = QPointer<FullscreenPlayer>();
@@ -4391,47 +4305,12 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			Ui::Animations::Simple animation;
 			QPixmap was;
 			QPixmap last;
-			QColor tintFrom;
-			QColor tintTo;
-			Ui::Animations::Simple tintAnimation;
 		};
 		const auto fade = box->lifetime().make_state<InfoFade>();
 
-		// Цвет обложки: мягкий градиент сверху, под всем содержимым.
-		const auto tint = Ui::CreateChild<Ui::RpWidget>(box.get());
-		tint->setAttribute(Qt::WA_TransparentForMouseEvents);
-		tint->lower();
-		box->sizeValue(
-		) | rpl::on_next([=](QSize size) {
-			tint->setGeometry(0, 0, size.width(), size.height());
-		}, tint->lifetime());
-		tint->paintOn([=](QPainter &p) {
-			const auto accent = CurrentCoverAccent();
-			if (!accent.isValid()) {
-				return;
-			}
-			auto hq = PainterHighQualityEnabler(p);
-			auto path = QPainterPath();
-			path.addRoundedRect(QRectF(tint->rect()), 26, 26);
-			p.setClipPath(path);
-			auto top = fade->tintAnimation.animating()
-				? anim::color(
-					fade->tintFrom,
-					fade->tintTo,
-					fade->tintAnimation.value(1.))
-				: accent;
-			top.setAlpha(80);
-			auto bottom = accent;
-			bottom.setAlpha(0);
-			auto gradient = QLinearGradient(0, 0, 0, tint->height() * 0.7);
-			gradient.setColorAt(0., top);
-			gradient.setColorAt(1., bottom);
-			p.fillRect(tint->rect(), gradient);
-		});
-
 		const auto header = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(10, 10, 10, 0));
+			QMargins(16, 16, 16, 0));
 		header->resize(header->width(), 40);
 		const auto close = Mokagram::Plugins::MakeHeaderButton(
 			header,
@@ -4464,7 +4343,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(0, 8, 0, 0));
 		const auto coverRect = [=] {
-			const auto side = std::min(info->width() - 48, 300);
+			const auto side = std::min(info->width() - 48, 240);
 			return QRect((info->width() - side) / 2, 8, side, side);
 		};
 		info->widthValue(
@@ -4735,7 +4614,6 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 					document->session().downloaderTaskFinished(
 					) | rpl::on_next([=] {
 						info->update();
-						tint->update();
 					}, playback->downloadLifetime);
 					playback->media->thumbnailWanted(current.contextId());
 				}
@@ -4767,24 +4645,9 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 						1.,
 						kCoverFadeDuration,
 						anim::easeOutCubic);
-					const auto accent = CurrentCoverAccent();
-					if (accent.isValid() && fade->tintTo.isValid()) {
-						fade->tintFrom = fade->tintTo;
-						fade->tintTo = accent;
-						fade->tintAnimation.start(
-							[=] { tint->update(); },
-							0.,
-							1.,
-							kCoverFadeDuration,
-							anim::easeOutCubic);
-					}
-				}
-				if (CurrentCoverAccent().isValid()) {
-					fade->tintTo = CurrentCoverAccent();
 				}
 				fade->last = renderInfo();
 				info->update();
-				tint->update();
 			}
 			const auto own = OwnsTrack(current);
 			updateArtistButton();
@@ -4808,7 +4671,12 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		refresh();
 
 		// Очередь: живой список, меняется при добавлении, перемещении и смене трека.
-		Ui::AddSubsectionTitle(content, rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Очередь"))));
+		content->add(
+			object_ptr<Ui::FlatLabel>(
+				content,
+				QString::fromUtf8(Mokagram::Lang::Tr("Очередь")),
+				st::defaultSubsectionTitle),
+			QMargins(24, 24, 24, 8));
 		const auto queueList = content->add(object_ptr<Ui::VerticalLayout>(content));
 		const auto empty = content->add(
 			object_ptr<Ui::FlatLabel>(

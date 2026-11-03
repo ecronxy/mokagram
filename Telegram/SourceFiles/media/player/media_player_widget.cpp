@@ -182,7 +182,7 @@ Widget::Widget(
 		const auto on = Mokagram::Settings::Bool(u"lyrics.enabled"_q);
 		const auto usable = on || Mokagram::Music::LyricsAvailable();
 		auto hq = PainterHighQualityEnabler(p);
-		auto color = st::mediaPlayerActiveFg->c;
+		auto color = (on ? st::mediaPlayerActiveFg : st::windowSubTextFg)->c;
 		color.setAlphaF(!usable
 			? 0.22
 			: (on || _lyricsToggle->isOver())
@@ -203,8 +203,9 @@ Widget::Widget(
 	_fullscreenToggle->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Во весь экран")));
 	_fullscreenToggle->paintOn([=](QPainter &p) {
 		auto hq = PainterHighQualityEnabler(p);
-		auto color = st::mediaPlayerActiveFg->c;
-		color.setAlphaF(_fullscreenToggle->isOver() ? 1. : 0.55);
+		auto color = (_fullscreenToggle->isOver()
+			? st::windowFg
+			: st::windowSubTextFg)->c;
 		auto pen = QPen(color, 1.7);
 		pen.setCapStyle(Qt::RoundCap);
 		pen.setJoinStyle(Qt::RoundJoin);
@@ -404,21 +405,6 @@ void Widget::hideDropdowns(not_null<Ui::RpWidget*> except) {
 }
 
 void Widget::setupRightControls() {
-	const auto raw = rightControls();
-	raw->paintRequest(
-	) | rpl::on_next([=](QRect clip) {
-		auto p = QPainter(raw);
-		const auto &icon = st::mediaPlayerControlsFade;
-		const auto fade = QRect(0, 0, icon.width(), raw->height());
-		if (fade.intersects(clip)) {
-			icon.fill(p, fade);
-		}
-		const auto fill = clip.intersected(
-			{ icon.width(), 0, raw->width() - icon.width(), raw->height() });
-		if (!fill.isEmpty()) {
-			p.fillRect(fill, st::mediaPlayerBg);
-		}
-	}, raw->lifetime());
 	_rightControls->show(anim::type::instant);
 }
 
@@ -589,20 +575,11 @@ void Widget::paintEvent(QPaintEvent *e) {
 	if (!fill.isEmpty()) {
 		p.fillRect(fill, st::mediaPlayerBg);
 	}
-	// Mokagram: цвет обложки как мягкая подсветка панели.
 	if (_type == AudioMsgId::Type::Song) {
-		const auto accent = Mokagram::Music::CurrentCoverAccent();
-		if (accent.isValid()) {
-			auto from = accent;
-			from.setAlpha(70);
-			auto to = accent;
-			to.setAlpha(0);
-			auto gradient = QLinearGradient(0, 0, width() * 0.8, 0);
-			gradient.setColorAt(0., from);
-			gradient.setColorAt(1., to);
-			p.fillRect(
-				QRect(0, 0, width(), st::mediaPlayerHeight),
-				gradient);
+		auto tint = Mokagram::Music::CurrentCoverAccent();
+		if (tint.isValid()) {
+			tint.setAlpha(6);
+			p.fillRect(fill, tint);
 		}
 	}
 	// Mokagram: обложка слева.
