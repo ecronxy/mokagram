@@ -107,6 +107,20 @@ class BasePlugin:
         api = sys.modules['mokagram_sdk.api']
         return api.secrets.get(key)
 
+    def get_setting(self, key: str, default=None):
+        """Значение настройки плагина (ключ из create_settings) или default."""
+        import sys
+        return sys.modules['mokagram_sdk.api'].get_setting(key, default)
+
+    def set_setting(self, key: str, value) -> bool:
+        import sys
+        return sys.modules['mokagram_sdk.api'].set_setting(key, value)
+
+    def show_toast(self, text: str, icon=None, duration: float = 2.5):
+        """Короткое уведомление внизу окна (право ui есть всегда)."""
+        import sys
+        return sys.modules['mokagram_sdk.api'].show_toast(text, icon, duration)
+
     def set_secret(self, key: str, value) -> bool:
         import sys
         return sys.modules['mokagram_sdk.api'].secrets.set(key, value)
@@ -156,6 +170,11 @@ class BasePlugin:
     def on_album(self, info: dict) -> None: ...              # {peer, grouped_id, messages: [...], text, out}      # {id, old_id, peer, text}: ваше сообщение ушло, id настоящий   # на ваше сообщение поставили реакцию (поля как у on_new_message)
 
     # люди и чаты (нужно право messages.read)
+    def on_scroll(self, info: dict) -> None: ...             # {dy, top}: прокрутка ленты сообщений, пиксели (право ui)
+    def on_theme_changed(self, theme: dict) -> None: ...     # как api.theme.get(): сменилась тема или палитра
+    def on_pointer_move(self, pos: dict) -> None: ...        # {x, y}: курсор в координатах окна клиента (~30 раз в секунду)
+    def on_window_shake(self, info: dict) -> None: ...       # {source: cursor|window}: резкая тряска курсора или окна
+    def on_media_state(self, state: dict) -> None: ...       # {playing, title, kind: music|voice, position_ms, length_ms}
     def on_chat_opened(self, peer: dict) -> None: ...        # {peer, title, username, kind}
     def on_peer_updated(self, peer: dict) -> None: ...       # + changed: name|username|photo|about|blocked|emoji_status
     def on_user_status(self, peer: dict) -> None: ...        # + online: bool

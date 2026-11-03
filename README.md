@@ -1,112 +1,245 @@
-# mokaGram
+<p align="center">
+  <img src="docs/readme/banner.svg" alt="mokaGram" width="100%">
+</p>
 
-> **Основано на Telegram Desktop. Доработки © 2026 [@ecronx](https://t.me/ecronx).**
-> Все, кто берёт исходники mokaGram, **обязаны указать авторство** ([@ecronx](https://t.me/ecronx), https://github.com/ecronxy/mokagram) в README и в окне «О программе» и сохранить [уведомление](MOKAGRAM_NOTICE.md).
-> При нарушении лицензия прекращается, автор направит требование и оставляет право защищать авторские права.
-> Подробности: [MOKAGRAM_NOTICE.md](MOKAGRAM_NOTICE.md).
->
-> *Anyone using mokaGram source code **must credit the author** ([@ecronx](https://t.me/ecronx), https://github.com/ecronxy/mokagram) in the README and the About window and keep the [notice](MOKAGRAM_NOTICE.md).*
+<p align="center">
+  <a href="https://moka.wtf"><img src="https://img.shields.io/badge/сайт-moka.wtf-0a84ff?style=for-the-badge&labelColor=282828" alt="moka.wtf"></a>
+  <a href="https://github.com/ecronxy/mokagram/releases/latest"><img src="https://img.shields.io/github/v/release/ecronxy/mokagram?style=for-the-badge&label=релиз&color=0a84ff&labelColor=282828" alt="Релиз"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/лицензия-GPLv3-8e8e93?style=for-the-badge&labelColor=282828" alt="GPLv3"></a>
+  <a href="https://t.me/ecronx"><img src="https://img.shields.io/badge/автор-@ecronx-8e8e93?style=for-the-badge&labelColor=282828&logo=telegram&logoColor=white" alt="@ecronx"></a>
+</p>
 
----
+<p align="center">
+  <img src="docs/readme/chat-full.webp" alt="mokaGram: окно чата" width="86%">
+</p>
 
-# [Telegram Desktop][telegram_desktop] – Official Messenger
+## Что это
 
-This is the complete source code and the build instructions for the official [Telegram][telegram] messenger desktop client, based on the [Telegram API][telegram_api] and the [MTProto][telegram_proto] secure protocol.
+**mokaGram** — кастомный форк Telegram Desktop с полностью переработанным визуалом в md3-стиле и кучей новых полезных функций. Все секции в настройках лежат отдельными скруглёнными карточками, каждая функция включается отдельно, и включать нужно только то, что нужно.
 
-[![Version](https://badge.fury.io/gh/telegramdesktop%2Ftdesktop.svg)](https://github.com/telegramdesktop/tdesktop/releases)
-[![Build Status](https://github.com/telegramdesktop/tdesktop/workflows/Windows./badge.svg)](https://github.com/telegramdesktop/tdesktop/actions)
-[![Build Status](https://github.com/telegramdesktop/tdesktop/workflows/MacOS./badge.svg)](https://github.com/telegramdesktop/tdesktop/actions)
-[![Build Status](https://github.com/telegramdesktop/tdesktop/workflows/Linux./badge.svg)](https://github.com/telegramdesktop/tdesktop/actions)
-[![Built with Depot](https://img.shields.io/badge/Built%20with-Depot.dev-46A75A)](https://depot.dev)
+Клиент работает с обычным аккаунтом Telegram и обычными серверами. Плагины из экстеры, но на ПК: свой API на Python и магазин прямо в клиенте.
 
-[![Preview of Telegram Desktop][preview_image]][preview_image_url]
+## Скачать
 
-The source code is published under GPLv3 with OpenSSL exception, the license is available [here][license].
+Последняя сборка: **[v0.1.1](https://github.com/ecronxy/mokagram/releases/latest)**
 
-## Supported systems
+| Система | Файл |
+|---|---|
+| **Windows** | [mokagram-win-x64.zip](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-win-x64.zip) |
+| **Linux** | [AppImage](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-x86_64.AppImage) · [.deb](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram_0.1.1_amd64.deb) · [.rpm](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-0.1.1-1.x86_64.rpm) · [pacman](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-0.1.1-1-x86_64.pkg.tar.zst) · [tar.xz](https://github.com/ecronxy/mokagram/releases/download/v0.1.1/mokagram-linux-x64.tar.xz) |
 
-The latest version is available for
+Сборка для Windows без подписи разработчика, система может предупредить при первом запуске.
 
-* [Windows 7 and above (64 bit)](https://telegram.org/dl/desktop/win64) ([portable](https://telegram.org/dl/desktop/win64_portable))
-* [Windows 7 and above (32 bit)](https://telegram.org/dl/desktop/win) ([portable](https://telegram.org/dl/desktop/win_portable))
-* [macOS 10.13 and above](https://telegram.org/dl/desktop/mac)
-* [Linux static build for 64 bit](https://telegram.org/dl/desktop/linux)
-* [Snap](https://snapcraft.io/telegram-desktop)
-* [Flatpak](https://flathub.org/apps/details/org.telegram.desktop)
+## Настройки mokaGram
 
-## Old system versions
+Всё своё лежит в одном месте: **Настройки → Настройки mokaGram**.
 
-Version **4.9.9** was the last that supports older systems
+<table>
+<tr>
+<td width="38%" valign="middle">
 
-* [macOS 10.12](https://updates.tdesktop.com/tmac/tsetup.4.9.9.dmg)
-* [Linux with glibc < 2.28 static build](https://updates.tdesktop.com/tlinux/tsetup.4.9.9.tar.xz)
+Десять разделов: плагины, кастомизация, приватность, безопасность, удалённые, чаты, музыка, система, инструменты и быстрые команды. Внутри каждой функции свой переключатель, а у ползунков и выбора есть кнопка «Сбросить».
 
-Version **2.4.4** was the last that supports older systems
+</td>
+<td width="62%" align="center">
+<img src="docs/readme/settings.webp" alt="Настройки mokaGram" width="100%">
+</td>
+</tr>
+</table>
 
-* [OS X 10.10 and 10.11](https://updates.tdesktop.com/tosx/tsetup-osx.2.4.4.dmg)
-* [Linux static build for 32 bit](https://updates.tdesktop.com/tlinux32/tsetup32.2.4.4.tar.xz)
+## Что внутри
 
-Version **1.8.15** was the last that supports older systems
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/readme/privacy.webp" alt="Приватность"></td>
+<td align="center" width="33%"><img src="docs/readme/history.webp" alt="Удалённые"></td>
+<td align="center" width="33%"><img src="docs/readme/security.webp" alt="Безопасность"></td>
+</tr>
+<tr>
+<td valign="top">
 
-* [Windows XP and Vista](https://updates.tdesktop.com/tsetup/tsetup.1.8.15.exe) ([portable](https://updates.tdesktop.com/tsetup/tportable.1.8.15.zip))
-* [OS X 10.8 and 10.9](https://updates.tdesktop.com/tmac/tsetup.1.8.15.dmg)
-* [OS X 10.6 and 10.7](https://updates.tdesktop.com/tmac32/tsetup32.1.8.15.dmg)
+### Приватность
 
-## Third-party
+- **Режим стримера** прячет номер телефона, юзернейм и числовой ID на экране
+- **Призрак**: не отмечать прочитанным и скрывать, что ты в сети
+- Что копируется со скрытым, настраивается отдельно
 
-* Qt 6 ([LGPL](http://doc.qt.io/qt-6/lgpl.html)) and Qt 5.15 ([LGPL](http://doc.qt.io/qt-5/lgpl.html)) slightly patched
-* OpenSSL 3.2.1 ([Apache License 2.0](https://openssl-library.org/source/license/apache-license-2.0.txt))
-* WebRTC ([New BSD License](https://github.com/desktop-app/tg_owt/blob/master/LICENSE))
-* zlib ([zlib License](http://www.zlib.net/zlib_license.html))
-* LZMA SDK 9.20 ([public domain](http://www.7-zip.org/sdk.html))
-* liblzma ([public domain](http://tukaani.org/xz/))
-* Google Breakpad ([License](https://chromium.googlesource.com/breakpad/breakpad/+/master/LICENSE))
-* Google Crashpad ([Apache License 2.0](https://chromium.googlesource.com/crashpad/crashpad/+/master/LICENSE))
-* GYP ([BSD License](https://github.com/bnoordhuis/gyp/blob/master/LICENSE))
-* Ninja ([Apache License 2.0](https://github.com/ninja-build/ninja/blob/master/COPYING))
-* OpenAL Soft ([LGPL](https://github.com/kcat/openal-soft/blob/master/COPYING))
-* Opus codec ([BSD License](http://www.opus-codec.org/license/))
-* FFmpeg ([LGPL](https://www.ffmpeg.org/legal.html))
-* Guideline Support Library ([MIT License](https://github.com/Microsoft/GSL/blob/master/LICENSE))
-* Range-v3 ([Boost License](https://github.com/ericniebler/range-v3/blob/master/LICENSE.txt))
-* Open Sans font ([Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0.html))
-* Vazirmatn font ([SIL Open Font License 1.1](https://github.com/rastikerdar/vazirmatn/blob/master/OFL.txt))
-* Emoji alpha codes ([MIT License](https://github.com/emojione/emojione/blob/master/extras/alpha-codes/LICENSE.md))
-* xxHash ([BSD License](https://github.com/Cyan4973/xxHash/blob/dev/LICENSE))
-* QR Code generator ([MIT License](https://github.com/nayuki/QR-Code-generator#license))
-* CMake ([New BSD License](https://github.com/Kitware/CMake/blob/master/Copyright.txt))
-* Hunspell ([LGPL](https://github.com/hunspell/hunspell/blob/master/COPYING.LESSER))
-* Ada ([Apache License 2.0](https://github.com/ada-url/ada/blob/main/LICENSE-APACHE))
-* zxcvbn-c ([MIT License](https://github.com/tsyrogit/zxcvbn-c/blob/master/LICENSE.txt))
-* FrequencyWords by Hermit Dave ([Creative Commons Attribution-ShareAlike 4.0](https://creativecommons.org/licenses/by-sa/4.0/))
+</td>
+<td valign="top">
 
-## Build instructions
+### Удалённые и правки
 
-* [Windows (32-bit and 64-bit)][win]
-* [macOS][mac]
-* [GNU/Linux using Docker][linux]
+- Сохраняются удалённые сообщения и **прошлые версии правок**
+- Работает и в чатах с ботами
+- Фильтры сообщений, срок хранения копий в днях
+- Заблокированных можно прятать везде
 
-[//]: # (LINKS)
-[telegram]: https://telegram.org
-[telegram_desktop]: https://desktop.telegram.org
-[telegram_api]: https://core.telegram.org
-[telegram_proto]: https://core.telegram.org/mtproto
-[license]: LICENSE
-[win]: docs/building-win.md
-[mac]: docs/building-mac.md
-[linux]: docs/building-linux.md
-[preview_image]: https://github.com/telegramdesktop/tdesktop/blob/dev/docs/assets/preview.png "Preview of Telegram Desktop"
-[preview_image_url]: https://raw.githubusercontent.com/telegramdesktop/tdesktop/dev/docs/assets/preview.png
+</td>
+<td valign="top">
 
-## Thanks to
+### Безопасность
 
-<a href="https://depot.dev">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-light.svg">
-    <img alt="Depot" src="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-light.svg" width="150">
-  </picture>
-</a>
+- Писать могут только те, кто есть в контактах
+- Блокировка за спам стикерами со своими порогами
+- Защита от массового добавления в чаты
+- Предупреждение о скаме
 
-CI infrastructure sponsored by [Depot](https://depot.dev) — fast GitHub Actions runners.
+</td>
+</tr>
+</table>
 
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/readme/music.webp" alt="Плеер"></td>
+<td align="center" width="33%"><img src="docs/readme/cmds.webp" alt="Быстрые команды"></td>
+<td align="center" width="33%"><img src="docs/readme/system.webp" alt="Система"></td>
+</tr>
+<tr>
+<td valign="top">
+
+### Музыка
+
+- Цвета плеера берутся из обложки
+- **Текст песни** с подсветкой строки
+- Плазма за текстом
+- Автовоспроизведение следующего
+
+</td>
+<td valign="top">
+
+### Быстрые команды
+
+Пишешь команду прямо в чате:
+
+`.mute` `.unmute` `.ban` `.unban` `.kick` `.pin` `.unpin` `.id` `.del` `.del N` `.del all`
+
+Включаются одним переключателем.
+
+</td>
+<td valign="top">
+
+### Система
+
+- Лимит одновременно играющих эмодзи и стикеров
+- **Анти-лаг** и экономия в фоне
+- Режим тостера для слабых машин
+- Крестик убирает окно в фон
+- Больше аккаунтов, траты звёзд
+
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/readme/custom.webp" alt="Кастомизация"></td>
+<td align="center" width="33%"><img src="docs/readme/tools.webp" alt="Инструменты"></td>
+<td align="center" width="33%"><img src="docs/readme/store.webp" alt="Магазин плагинов"></td>
+</tr>
+<tr>
+<td valign="top">
+
+### Кастомизация
+
+- Скачивание видео и музыки по ссылкам
+- Размеры стикеров, GIF и кружков
+- Свои цвета пузырьков
+- Форма аватарок для людей, ботов, групп и каналов
+
+</td>
+<td valign="top">
+
+### Инструменты
+
+- **Скриншот сообщений** карточкой (см. ниже)
+- Траты звёзд по категориям и получателям
+- Качество картинки, отступы, ширина цитаты
+
+</td>
+<td valign="top">
+
+### Плагины
+
+- Магазин прямо в клиенте, установка одной кнопкой
+- Права выдаются при установке
+- Свои плагины на Python (см. [API](docs-plugins-api.md))
+
+</td>
+</tr>
+</table>
+
+### Скриншот сообщений
+
+Выделяешь сообщения и получаешь аккуратную карточку: фон, светлая или тёмная карточка, имя и аватарку можно скрыть мышкой (размытием, пикселями или заливкой), внизу по желанию подпись mokaGram.
+
+<p align="center">
+  <img src="docs/readme/shot.webp" alt="Скриншот сообщений" width="46%">
+</p>
+
+## Плагины
+
+Плагин — один файл `.plugin` с классом, наследующим `BasePlugin`. Метаданные (`__id__`, `__name__`, `__version__`, `__permissions__`) лежат в самом файле.
+
+```python
+__id__ = "showcase"
+__name__ = "Showcase"
+__description__ = "Пример: кнопки, меню, окно с формой, команда, события, фильтр"
+__author__ = "mokagram"
+__version__ = "1.0"
+__permissions__ = ["messages.read", "messages.send", "messages.edit"]
+
+from base_plugin import BasePlugin, command
+
+
+class Showcase(BasePlugin):
+    # Команда: .hello мир. Возвращённая строка заменяет текст в поле ввода.
+    @command("hello", "приветствие, .hello имя")
+    def hello(self, ctx):
+        name = ctx.args or "мир"
+        return "Привет, %s!" % name
+```
+
+- Права: `messages.read`, `messages.send`, `messages.edit`, `messages.delete`, `tl.read`, `tl.write`, `clipboard`, `network`, `files`. Без права вызов возвращает `None`, плагин не падает.
+- У плагина лимит 300 действий в минуту, каждое действие пишется в журнал.
+- Пункты в контекстном меню сообщения, меню чата, профиле, скрепке, боковом меню, кнопки в шапке чата и рядом с полем ввода.
+
+Полное описание: **[docs-plugins-api.md](docs-plugins-api.md)**, пример: [examples/showcase.plugin](examples/showcase.plugin).
+
+## Где что лежит
+
+```text
+Telegram/SourceFiles/mokagram/
+├── plugins/    движок плагинов, магазин, права
+├── msginfo/    окно «Информация о сообщении»
+├── music/      плеер
+├── streamer/   режим стримера
+├── ghost/      призрак
+├── commands/   быстрые команды
+└── settings/   настройки mokaGram
+patches/        правки поверх upstream
+```
+
+Всё добавленное лежит в `Telegram/SourceFiles/mokagram/`, остальные правки помечены `Mokagram:`. Так форк проще подтягивать к свежему Telegram Desktop.
+
+## Сборка
+
+mokaGram собирается так же, как Telegram Desktop:
+
+- [Windows](docs/building-win.md)
+- [GNU/Linux (Docker)](docs/building-linux.md)
+
+Исходники Telegram Desktop и список сторонних библиотек: [telegramdesktop/tdesktop](https://github.com/telegramdesktop/tdesktop).
+
+## Авторство и лицензия
+
+> **Основано на mokaGram, автор [@ecronx](https://t.me/ecronx) (https://t.me/ecronx). https://github.com/ecronxy/mokagram**
+
+mokaGram основан на [Telegram Desktop](https://github.com/telegramdesktop/tdesktop) (© The Telegram Desktop Authors, GPLv3 с исключением OpenSSL). Доработки © 2026 [@ecronx](https://t.me/ecronx), лицензия та же, GPLv3, плюс условие об сохранении авторства.
+
+Кто берёт исходники или сборки mokaGram, обязан сохранить [уведомление](MOKAGRAM_NOTICE.md) и указать авторство в README и в окне «О программе». При нарушении лицензия прекращается.
+
+*Anyone using mokaGram source code **must credit the author** ([@ecronx](https://t.me/ecronx), https://github.com/ecronxy/mokagram) in the README and the About window and keep the [notice](MOKAGRAM_NOTICE.md).*
+
+<p align="center">
+  <a href="https://moka.wtf">moka.wtf</a> · <a href="https://t.me/ecronx">@ecronx</a> · <a href="https://github.com/ecronxy/mokagram/releases">релизы</a>
+</p>

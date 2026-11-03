@@ -51,6 +51,24 @@
 #include "history/history_item.h"
 #include "ui/text/text_utilities.h"
 #include "apiwrap.h"
+#include <typeinfo>
+#ifdef __GNUC__
+#include <cxxabi.h>
+#endif
+#include "history/history_widget.h"
+#include "history/history_inner_widget.h"
+#include "history/view/history_view_top_bar_widget.h"
+#include "ui/widgets/scroll_area.h"
+#include "ui/widgets/buttons.h"
+#include "ui/style/style_core.h"
+#include "media/player/media_player_instance.h"
+#include "media/audio/media_audio.h"
+#include <QtWidgets/QGraphicsOpacityEffect>
+#include "base/unique_qptr.h"
+#include "window/main_window.h"
+#include "window/themes/window_theme.h"
+#include <QtGui/QPainter>
+#include <QtGui/QGuiApplication>
 #include "core/application.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
@@ -918,6 +936,11 @@ rpl::lifetime SessionLifetime;
 		"new_message", "message_edited", "message_deleted",
 		"peer_updated", "user_status", "new_reaction", "chat_opened", "typing",
 		"message_sent",
+		"scroll",
+		"theme_changed",
+		"pointer_move",
+		"window_shake",
+		"media_state",
 	};
 	return result;
 }
@@ -1687,6 +1710,716 @@ std::string FilterSubscribe(const QJsonObject &args) {
 	});
 }
 
+
+// ---- оверлеи плагинов: прозрачный виджет поверх окна (питомец, подсказки) ----
+
+class PluginBubble final : public Ui::RpWidget {
+public:
+	PluginBubble(QWidget *parent, const QString &text)
+	: RpWidget(parent)
+	, _text(text) {
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+		auto font = QFont(QGuiApplication::font());
+		font.setPixelSize(13);
+		const auto metrics = QFontMetrics(font);
+		const auto rect = metrics.boundingRect(
+			QRect(0, 0, 220, 400),
+			Qt::TextWordWrap,
+			text);
+		resize(rect.width() + 20, rect.height() + 14);
+		show();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setPen(Qt::NoPen);
+		p.setBrush(QColor(255, 255, 255, 235));
+		p.drawRoundedRect(rect(), 10, 10);
+		auto font = QFont(QGuiApplication::font());
+		font.setPixelSize(13);
+		p.setFont(font);
+		p.setPen(QColor(20, 20, 20));
+		p.drawText(
+			rect().marginsRemoved(QMargins(10, 7, 10, 7)),
+			Qt::TextWordWrap,
+			_text);
+	}
+
+private:
+	QString _text;
+
+};
+
+class PluginOverlay final : public Ui::RpWidget {
+public:
+	PluginOverlay(
+		QWidget *parent,
+		std::string pid,
+		int width,
+		int height,
+		bool clickThrough)
+	: RpWidget(parent)
+	, _pid(std::move(pid)) {
+		setAttribute(Qt::WA_NoSystemBackground);
+		setAttribute(Qt::WA_TranslucentBackground);
+		setAttribute(Qt::WA_TransparentForMouseEvents, clickThrough);
+		setMouseTracking(true);
+		resize(width, height);
+		_tick.setTimerType(Qt::PreciseTimer);
+		QObject::connect(&_tick, &QTimer::timeout, this, [=] {
+			if (_tickCb.empty()) {
+				return;
+			}
+			const auto now = crl::now();
+			const auto dt = int(now - _lastTick);
+			_lastTick = now;
+			Invoke(_pid, _tickCb, "{\"dt\":" + std::to_string(dt) + "}", PluginLog);
+			if (++_raiseCounter >= 120) {
+				_raiseCounter = 0;
+				raise();
+			}
+		});
+		show();
+		raise();
+	}
+
+	void setSprite(QImage image, int scale) {
+		_sprite = std::move(image);
+		_scale = std::max(1, scale);
+		update();
+	}
+	void setTick(std::string cb, int fps) {
+		_tickCb = std::move(cb);
+		_tick.stop();
+		if (!_tickCb.empty()) {
+			_lastTick = crl::now();
+			_tick.start(1000 / std::clamp(fps, 5, 60));
+		}
+	}
+	void setPointer(std::string cb) {
+		_pointerCb = std::move(cb);
+	}
+	void say(const QString &text, int ms) {
+		_bubble.reset();
+		if (text.isEmpty() || !parentWidget()) {
+			return;
+		}
+		_bubble.reset(new PluginBubble(parentWidget(), text));
+		placeBubble();
+		_bubble->raise();
+		QTimer::singleShot(std::clamp(ms, 500, 15000), this, [bubble = QPointer<PluginBubble>(_bubble.get())] {
+			if (bubble) {
+				bubble->deleteLater();
+			}
+		});
+	}
+	void moveClamped(int x, int y) {
+		if (const auto parent = parentWidget()) {
+			x = std::clamp(x, -width() / 2, std::max(parent->width() - width() / 2, 0));
+			y = std::clamp(y, -height() / 2, std::max(parent->height() - height() / 2, 0));
+		}
+		move(x, y);
+		placeBubble();
+	}
+	[[nodiscard]] const std::string &pid() const {
+		return _pid;
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		if (_sprite.isNull()) {
+			return;
+		}
+		auto p = QPainter(this);
+		p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+		const auto size = QSize(_sprite.width() * _scale, _sprite.height() * _scale);
+		p.drawImage(
+			QRect(QPoint((width() - size.width()) / 2, height() - size.height()), size),
+			_sprite);
+	}
+	void mousePressEvent(QMouseEvent *e) override {
+		_trail.clear();
+		emitPointer("down", e);
+	}
+	void mouseMoveEvent(QMouseEvent *e) override {
+		if (e->buttons() != Qt::NoButton) {
+			emitPointer("move", e);
+		}
+	}
+	void mouseReleaseEvent(QMouseEvent *e) override {
+		emitPointer("up", e);
+	}
+	void mouseDoubleClickEvent(QMouseEvent *e) override {
+		emitPointer("double", e);
+	}
+
+private:
+	void placeBubble() {
+		if (!_bubble) {
+			return;
+		}
+		auto x = x_() + (width() - _bubble->width()) / 2;
+		auto y = y_() - _bubble->height() - 4;
+		if (const auto parent = parentWidget()) {
+			x = std::clamp(x, 4, std::max(parent->width() - _bubble->width() - 4, 4));
+		}
+		y = std::max(y, 4);
+		_bubble->move(x, y);
+	}
+	[[nodiscard]] int x_() const {
+		return pos().x();
+	}
+	[[nodiscard]] int y_() const {
+		return pos().y();
+	}
+	void emitPointer(const char *kind, QMouseEvent *e) {
+		if (_pointerCb.empty()) {
+			return;
+		}
+		const auto now = crl::now();
+		const auto global = mapToParent(e->pos());
+		_trail.push_back({ now, global });
+		while (_trail.size() > 1 && now - _trail.front().first > 120) {
+			_trail.erase(_trail.begin());
+		}
+		auto vx = 0., vy = 0.;
+		if (_trail.size() > 1) {
+			const auto &a = _trail.front();
+			const auto dt = std::max<crl::time>(now - a.first, 1);
+			vx = (global.x() - a.second.x()) * 1000. / dt;
+			vy = (global.y() - a.second.y()) * 1000. / dt;
+		}
+		auto payload = QJsonObject();
+		payload.insert("kind", QString::fromLatin1(kind));
+		payload.insert("x", global.x());
+		payload.insert("y", global.y());
+		payload.insert("local_x", e->pos().x());
+		payload.insert("local_y", e->pos().y());
+		payload.insert("vx", vx);
+		payload.insert("vy", vy);
+		payload.insert("button", (e->button() == Qt::RightButton) ? "right" : "left");
+		Invoke(_pid, _pointerCb, Json(payload), PluginLog);
+	}
+
+	std::string _pid;
+	QImage _sprite;
+	int _scale = 1;
+	QTimer _tick;
+	std::string _tickCb;
+	std::string _pointerCb;
+	crl::time _lastTick = 0;
+	int _raiseCounter = 0;
+	base::unique_qptr<PluginBubble> _bubble;
+	std::vector<std::pair<crl::time, QPoint>> _trail;
+
+};
+
+std::map<std::pair<std::string, std::string>, QPointer<PluginOverlay>> Overlays;
+
+[[nodiscard]] QWidget *OverlayParent() {
+	const auto window = Core::App().activeWindow();
+	return window ? window->widget()->bodyWidget() : nullptr;
+}
+
+[[nodiscard]] PluginOverlay *FindOverlay(const QJsonObject &args) {
+	const auto key = std::make_pair(
+		args.value("pid").toString().toStdString(),
+		args.value("id").toString().toStdString());
+	const auto i = Overlays.find(key);
+	return (i != Overlays.end()) ? i->second.data() : nullptr;
+}
+
+std::string OverlayCreate(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto parent = OverlayParent();
+		if (!parent) {
+			return Reply(false, u"нет окна"_q);
+		}
+		const auto pid = args.value("pid").toString().toStdString();
+		const auto id = args.value("id").toString().toStdString();
+		auto count = 0;
+		for (const auto &[key, overlay] : Overlays) {
+			if (key.first == pid && overlay) {
+				++count;
+			}
+		}
+		const auto key = std::make_pair(pid, id);
+		if (const auto old = Overlays[key]) {
+			delete old.data();
+			--count;
+		}
+		if (count >= 4) {
+			return Reply(false, u"не больше 4 оверлеев на плагин"_q);
+		}
+		const auto width = std::clamp(args.value("w").toInt(64), 8, 600);
+		const auto height = std::clamp(args.value("h").toInt(64), 8, 600);
+		Overlays[key] = new PluginOverlay(
+			parent,
+			pid,
+			width,
+			height,
+			args.value("click_through").toBool(true));
+		return Reply(true);
+	});
+}
+
+std::string OverlayDestroy(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		if (const auto overlay = FindOverlay(args)) {
+			delete overlay;
+		}
+		return Reply(true);
+	});
+}
+
+std::string OverlaySetSprite(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto overlay = FindOverlay(args);
+		if (!overlay) {
+			return Reply(false, u"нет оверлея"_q);
+		}
+		const auto w = std::clamp(args.value("sw").toInt(), 1, 256);
+		const auto h = std::clamp(args.value("sh").toInt(), 1, 256);
+		const auto data = args.value("data").toArray();
+		if (data.size() != w * h) {
+			return Reply(false, u"размер спрайта не совпал с данными"_q);
+		}
+		auto image = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
+		image.fill(Qt::transparent);
+		for (auto i = 0; i != w * h; ++i) {
+			const auto argb = uint32(data[i].toDouble());
+			image.setPixel(i % w, i / w, qPremultiply(argb));
+		}
+		overlay->setSprite(std::move(image), args.value("scale").toInt(1));
+		return Reply(true);
+	});
+}
+
+std::string OverlayMove(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto overlay = FindOverlay(args);
+		if (!overlay) {
+			return Reply(false, u"нет оверлея"_q);
+		}
+		overlay->moveClamped(args.value("x").toInt(), args.value("y").toInt());
+		return Reply(true);
+	});
+}
+
+std::string OverlaySay(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto overlay = FindOverlay(args);
+		if (!overlay) {
+			return Reply(false, u"нет оверлея"_q);
+		}
+		overlay->say(
+			args.value("text").toString().left(300),
+			args.value("ms").toInt(3000));
+		return Reply(true);
+	});
+}
+
+std::string OverlayCallbacks(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto overlay = FindOverlay(args);
+		if (!overlay) {
+			return Reply(false, u"нет оверлея"_q);
+		}
+		const auto kind = args.value("kind").toString();
+		const auto cb = args.value("cb").toString().toStdString();
+		if (kind == u"tick"_q) {
+			overlay->setTick(cb, args.value("fps").toInt(30));
+		} else {
+			overlay->setPointer(cb);
+		}
+		return Reply(true);
+	});
+}
+
+void OverlaysDropPlugin(const std::string &pid) {
+	for (auto i = Overlays.begin(); i != Overlays.end();) {
+		if (i->first.first == pid) {
+			if (i->second) {
+				delete i->second.data();
+			}
+			i = Overlays.erase(i);
+		} else {
+			++i;
+		}
+	}
+}
+
+std::string WindowBounds() {
+	return OnMain([=]() -> std::string {
+		const auto parent = OverlayParent();
+		if (!parent) {
+			return Reply(false, u"нет окна"_q);
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("w", parent->width());
+		result.insert("h", parent->height());
+		return Json(result);
+	});
+}
+
+[[nodiscard]] QString ColorHex(const style::color &c) {
+	return c->c.name(QColor::HexArgb);
+}
+
+std::string ThemeGet() {
+	return OnMain([=]() -> std::string {
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("dark", Window::Theme::IsNightMode());
+		result.insert("window_bg", ColorHex(st::windowBg));
+		result.insert("window_fg", ColorHex(st::windowFg));
+		result.insert("window_sub_fg", ColorHex(st::windowSubTextFg));
+		result.insert("accent", ColorHex(st::windowBgActive));
+		return Json(result);
+	});
+}
+
+
+// ---- геометрия интерфейса для плагинов (координаты в области окна клиента) ----
+
+[[nodiscard]] QJsonObject RectJson(const QRect &r) {
+	return QJsonObject{
+		{ "x", r.x() }, { "y", r.y() }, { "w", r.width() }, { "h", r.height() } };
+}
+
+[[nodiscard]] QRect RectInBody(QWidget *w, QWidget *body, const QRect &local) {
+	return QRect(w->mapTo(body, local.topLeft()), local.size());
+}
+
+// findChild у Qt требует Q_OBJECT, а у виджетов клиента его нет: ищем через dynamic_cast.
+template <typename T>
+[[nodiscard]] std::vector<T*> FindAll(QWidget *root) {
+	auto result = std::vector<T*>();
+	if (!root) {
+		return result;
+	}
+	for (const auto child : root->findChildren<QWidget*>()) {
+		if (const auto cast = dynamic_cast<T*>(child)) {
+			result.push_back(cast);
+		}
+	}
+	return result;
+}
+
+template <typename T>
+[[nodiscard]] T *FindFirst(QWidget *root) {
+	const auto list = FindAll<T>(root);
+	return list.empty() ? nullptr : list.front();
+}
+
+[[nodiscard]] HistoryWidget *FindHistory(QWidget *body) {
+	return FindFirst<HistoryWidget>(body);
+}
+
+std::string UiRects(const QJsonObject &args) {
+	return OnMain([=]() -> std::string {
+		const auto body = OverlayParent();
+		if (!body) {
+			return Reply(false, u"нет окна"_q);
+		}
+		const auto what = args.value("what").toString();
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		const auto history = FindHistory(body);
+		if (what == u"messages"_q) {
+			auto list = QJsonArray();
+			if (history && history->isVisible()) {
+				if (const auto inner = FindFirst<HistoryInner>(history)) {
+					const auto viewport = RectInBody(
+						history,
+						body,
+						history->rect());
+					for (const auto &item : inner->mokagramVisibleItems()) {
+						const auto rect = RectInBody(inner, body, item.rect);
+						if (!rect.intersects(viewport)) {
+							continue;
+						}
+						auto row = RectJson(rect);
+						row.insert("id", QString::number(item.id.msg.bare));
+						row.insert("peer", QString::number(item.id.peer.value));
+						row.insert("out", item.out);
+						list.push_back(row);
+					}
+				}
+			}
+			result.insert("items", list);
+		} else if (what == u"composer"_q) {
+			auto found = false;
+			if (history && history->isVisible()) {
+				auto best = (Ui::InputField*)nullptr;
+				for (const auto field : FindAll<Ui::InputField>(history)) {
+					if (field->isVisible() && (!best || field->y() > best->y())) {
+						best = field;
+					}
+				}
+				if (best) {
+					result.insert("rect", RectJson(RectInBody(best, body, best->rect())));
+					found = true;
+				}
+			}
+			result.insert("visible", found);
+		} else if (what == u"header"_q) {
+			auto found = false;
+			if (history && history->isVisible()) {
+				if (const auto bar = FindFirst<HistoryView::TopBarWidget>(history)) {
+					if (bar->isVisible()) {
+						result.insert("rect", RectJson(RectInBody(bar, body, bar->rect())));
+						found = true;
+					}
+				}
+			}
+			result.insert("visible", found);
+		} else if (what == u"history"_q) {
+			auto found = false;
+			if (history && history->isVisible()) {
+				result.insert("rect", RectJson(RectInBody(history, body, history->rect())));
+				found = true;
+			}
+			result.insert("visible", found);
+		}
+		return Json(result);
+	});
+}
+
+[[nodiscard]] QString ClassName(const QObject &object) {
+#ifdef __GNUC__
+	auto status = 0;
+	const auto name = abi::__cxa_demangle(typeid(object).name(), nullptr, nullptr, &status);
+	auto result = (status == 0 && name) ? QString::fromLatin1(name) : QString::fromLatin1(typeid(object).name());
+	std::free(name);
+	return result;
+#else
+	return QString::fromLatin1(typeid(object).name()).remove(u"class "_q);
+#endif
+}
+
+std::vector<QPointer<QWidget>> UiElementList;
+
+std::string UiElements() {
+	return OnMain([=]() -> std::string {
+		const auto body = OverlayParent();
+		if (!body) {
+			return Reply(false, u"нет окна"_q);
+		}
+		UiElementList.clear();
+		auto list = QJsonArray();
+		for (const auto button : FindAll<Ui::AbstractButton>(body)) {
+			if (!button->isVisible()
+				|| button->width() < 12
+				|| button->height() < 12
+				|| button->width() > 160
+				|| button->height() > 120) {
+				continue;
+			}
+			const auto rect = RectInBody(button, body, button->rect());
+			if (!body->rect().intersects(rect)) {
+				continue;
+			}
+			auto row = RectJson(rect);
+			row.insert("id", int(UiElementList.size()));
+			row.insert("kind", ClassName(*button));
+			row.insert("hidden", button->graphicsEffect() != nullptr);
+			list.push_back(row);
+			UiElementList.push_back(button);
+			if (UiElementList.size() >= 200) {
+				break;
+			}
+		}
+		auto result = QJsonObject();
+		result.insert("ok", true);
+		result.insert("items", list);
+		return Json(result);
+	});
+}
+
+std::string UiSetHidden(const QJsonObject &args, bool hidden) {
+	return OnMain([=]() -> std::string {
+		const auto index = args.value("element").toInt(-1);
+		if (index < 0 || index >= int(UiElementList.size()) || !UiElementList[index]) {
+			return Reply(false, u"нет такого элемента, обнови список elements()"_q);
+		}
+		const auto widget = UiElementList[index].data();
+		if (hidden) {
+			if (!widget->graphicsEffect()) {
+				const auto effect = new QGraphicsOpacityEffect(widget);
+				effect->setOpacity(0.);
+				widget->setGraphicsEffect(effect);
+				widget->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+			}
+		} else {
+			widget->setGraphicsEffect(nullptr);
+			widget->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+		}
+		return Reply(true);
+	});
+}
+
+// ---- события интерфейса: прокрутка, курсор, тряска, медиаплеер, тема ----
+
+struct UiPoll {
+	QTimer timer;
+	int scroll = INT_MIN;
+	QPoint cursor = QPoint(INT_MIN, INT_MIN);
+	std::vector<std::pair<crl::time, int>> reversals;
+	int lastDx = 0;
+	crl::time lastShake = 0;
+	QPoint windowPos = QPoint(INT_MIN, INT_MIN);
+	int windowLastDx = 0;
+	std::vector<std::pair<crl::time, int>> windowReversals;
+	rpl::lifetime lifetime;
+	bool wired = false;
+};
+
+UiPoll &Poll() {
+	static auto poll = UiPoll();
+	return poll;
+}
+
+[[nodiscard]] bool ShakeDetected(
+		std::vector<std::pair<crl::time, int>> &marks,
+		int &lastDx,
+		int dx,
+		crl::time now) {
+	if (std::abs(dx) < 6) {
+		return false;
+	}
+	const auto sign = (dx > 0) ? 1 : -1;
+	if (lastDx != 0 && sign != lastDx) {
+		marks.emplace_back(now, sign);
+	}
+	lastDx = sign;
+	while (!marks.empty() && now - marks.front().first > 800) {
+		marks.erase(marks.begin());
+	}
+	return marks.size() >= 6;
+}
+
+void PollTick() {
+	auto &poll = Poll();
+	const auto body = OverlayParent();
+	if (!body) {
+		return;
+	}
+	const auto now = crl::now();
+	if (WantEvent("scroll")) {
+		if (const auto history = FindHistory(body)) {
+			if (history->isVisible()) {
+				if (const auto scroll = FindFirst<Ui::ScrollArea>(history)) {
+					const auto top = scroll->scrollTop();
+					if (poll.scroll != INT_MIN && top != poll.scroll) {
+						QueueEvent("scroll", Json(QJsonObject{
+							{ "dy", top - poll.scroll },
+							{ "top", top } }));
+					}
+					poll.scroll = top;
+				}
+			}
+		}
+	}
+	if (WantEvent("pointer_move") || WantEvent("window_shake")) {
+		const auto global = QCursor::pos();
+		if (global != poll.cursor) {
+			const auto dx = (poll.cursor.x() == INT_MIN) ? 0 : (global.x() - poll.cursor.x());
+			poll.cursor = global;
+			const auto local = body->mapFromGlobal(global);
+			if (WantEvent("pointer_move")) {
+				QueueEvent("pointer_move", Json(QJsonObject{
+					{ "x", local.x() }, { "y", local.y() } }));
+			}
+			if (WantEvent("window_shake")
+				&& ShakeDetected(poll.reversals, poll.lastDx, dx, now)
+				&& now - poll.lastShake > 1500) {
+				poll.lastShake = now;
+				poll.reversals.clear();
+				QueueEvent("window_shake", Json(QJsonObject{
+					{ "source", "cursor" } }));
+			}
+		}
+	}
+	if (WantEvent("window_shake")) {
+		const auto pos = body->window()->pos();
+		if (poll.windowPos.x() != INT_MIN && pos != poll.windowPos) {
+			if (ShakeDetected(poll.windowReversals, poll.windowLastDx, pos.x() - poll.windowPos.x(), now)
+				&& now - poll.lastShake > 1500) {
+				poll.lastShake = now;
+				poll.windowReversals.clear();
+				QueueEvent("window_shake", Json(QJsonObject{
+					{ "source", "window" } }));
+			}
+		}
+		poll.windowPos = pos;
+	}
+}
+
+void UpdateUiEvents() {
+	crl::on_main([] {
+		auto &poll = Poll();
+		const auto polled = WantEvent("scroll")
+			|| WantEvent("pointer_move")
+			|| WantEvent("window_shake");
+		if (!poll.wired) {
+			poll.wired = true;
+			poll.timer.setTimerType(Qt::CoarseTimer);
+			QObject::connect(&poll.timer, &QTimer::timeout, [] { PollTick(); });
+			style::PaletteChanged() | rpl::on_next([] {
+				if (WantEvent("theme_changed")) {
+					auto theme = QJsonDocument::fromJson(
+						QByteArray::fromStdString(ThemeGet())).object();
+					theme.remove("ok");
+					const auto json = Json(theme);
+					static auto last = std::string();
+					if (json != last) {
+						last = json;
+						QueueEvent("theme_changed", json);
+					}
+				}
+			}, poll.lifetime);
+			Media::Player::instance()->updatedNotifier(
+			) | rpl::on_next([](const Media::Player::TrackState &state) {
+				if (!WantEvent("media_state")) {
+					return;
+				}
+				const auto song = (state.id.type() == AudioMsgId::Type::Song);
+				auto title = QString();
+				if (const auto document = state.id.audio()) {
+					if (const auto data = document->song()) {
+						title = data->performer.isEmpty()
+							? data->title
+							: (data->performer + u" - "_q + data->title);
+					}
+					if (title.isEmpty()) {
+						title = document->filename();
+					}
+				}
+				const auto playing = (state.state == Media::Player::State::Playing)
+					|| (state.state == Media::Player::State::Starting)
+					|| (state.state == Media::Player::State::Resuming);
+				QueueEvent("media_state", Json(QJsonObject{
+					{ "playing", playing },
+					{ "title", title },
+					{ "kind", song ? "music" : "voice" },
+					{ "position_ms", double(state.position) * 1000. / std::max(state.frequency, 1) },
+					{ "length_ms", double(state.length) * 1000. / std::max(state.frequency, 1) } }));
+			}, poll.lifetime);
+		}
+		poll.scroll = INT_MIN;
+		poll.cursor = QPoint(INT_MIN, INT_MIN);
+		if (polled && !poll.timer.isActive()) {
+			poll.timer.start(33);
+		} else if (!polled) {
+			poll.timer.stop();
+		}
+	});
+}
+
 std::string Bridge(const std::string &op, const std::string &argsJson) {
 	const auto args = QJsonDocument::fromJson(
 		QByteArray::fromStdString(argsJson)).object();
@@ -1700,7 +2433,35 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return DialogUpdate(args);
 	} else if (op == "dialog_close") {
 		return DialogClose(args);
+	} else if (op == "overlay_create") {
+		return OverlayCreate(args);
+	} else if (op == "overlay_destroy") {
+		return OverlayDestroy(args);
+	} else if (op == "overlay_sprite") {
+		return OverlaySetSprite(args);
+	} else if (op == "overlay_move") {
+		return OverlayMove(args);
+	} else if (op == "overlay_say") {
+		return OverlaySay(args);
+	} else if (op == "overlay_cb") {
+		return OverlayCallbacks(args);
+	} else if (op == "window_bounds") {
+		return WindowBounds();
+	} else if (op == "ui_rects") {
+		return UiRects(args);
+	} else if (op == "ui_elements") {
+		return UiElements();
+	} else if (op == "ui_hide") {
+		return UiSetHidden(args, true);
+	} else if (op == "ui_show") {
+		return UiSetHidden(args, false);
+	} else if (op == "theme_get") {
+		return ThemeGet();
 	} else if (op == "plugin_unloaded") {
+		const auto overlays = OnMain([pid = args.value("pid").toString().toStdString()] {
+			OverlaysDropPlugin(pid);
+			return std::string();
+		});
 		EventsSubscribe(QJsonObject{
 			{ "pid", args.value("pid") },
 			{ "events", QJsonArray() } });
@@ -1715,7 +2476,8 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 			{ "pid", args.value("pid") },
 			{ "kind", "badge" },
 			{ "on", false } });
-		return PluginUnloaded(args);
+		const auto result = PluginUnloaded(args);
+		return overlays.empty() ? result : overlays;
 	} else if (op == "filter_subscribe") {
 		return FilterSubscribe(args);
 	} else if (op == "get_dialogs") {
@@ -1763,7 +2525,9 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		});
 		return Reply(true);
 	} else if (op == "events_subscribe") {
-		return EventsSubscribe(args);
+		const auto reply = EventsSubscribe(args);
+		UpdateUiEvents();
+		return reply;
 	} else if (op == "bulletin") {
 		return ShowBulletin(args);
 	} else if (op == "get_message") {

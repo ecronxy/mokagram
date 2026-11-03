@@ -285,6 +285,11 @@ jobs:
         shell: cmd
 
     steps:
+      - name: Python 3.12 (тот же для cmake и для упаковки, иначе exe требует чужой pythonNNN.dll).
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+
       - name: Prepare directories.
         run: |
           mkdir %userprofile%\TBuild\Libraries
@@ -462,7 +467,9 @@ jobs:
           -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON ^
           -D DESKTOP_APP_ENABLE_LTO=OFF ^
-          -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
+          -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= ^
+          -D Python3_ROOT_DIR="%pythonLocation%" ^
+          -D Python3_FIND_REGISTRY=NEVER
 
           cmake --build ..\out --config Release --parallel -- -k 0
 
@@ -479,6 +486,8 @@ jobs:
           Expand-Archive py-embed.zip -DestinationPath stage -Force
           Remove-Item stage\python.exe, stage\pythonw.exe -ErrorAction SilentlyContinue
           if (-not (Get-ChildItem stage -Filter "python3*.dll" | Where-Object Name -match '^python3\d+\.dll$')) { throw "нет pythonNNN.dll в пакете" }
+          $need = [regex]::Matches([Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("stage\Telegram.exe")), 'python3\d+\.dll') | ForEach-Object Value | Sort-Object -Unique | Where-Object { $_ -ne 'python3.dll' }
+          foreach ($n in $need) { if (-not (Test-Path "stage\$n")) { throw "exe требует $n, в пакете её нет" } }
           # Архив с одной папкой mokaGram\: в проводнике виден только mokaGram.exe,
           # остальное (Updater, рантайм Python) помечено скрытым; exe называется mokaGram.exe.
           @'

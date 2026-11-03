@@ -58,13 +58,24 @@ void SetupSavedMusic(
 	) | rpl::on_next([=](
 			HistoryItem *item,
 			std::optional<QColor> color) {
+		const auto document = (item && item->media())
+			? item->media()->document()
+			: nullptr;
+		// Mokagram: плашку не пересоздаём при смене цвета шапки: на кадр
+		// счётчик музыки падал в 0, и заливки уголков шапки пропадали.
+		if (document && divider->entity()->count() == 1) {
+			const auto existing = static_cast<Profile::MusicButton*>(
+				divider->entity()->widgetAt(0).get());
+			existing->updateData(DocumentMusicButtonData(document));
+			existing->setOverrideBg(color);
+			divider->toggle(true, anim::type::normal);
+			return;
+		}
 		while (divider->entity()->count()) {
 			delete divider->entity()->widgetAt(0);
 		}
 		if (item) {
-			if (const auto document = item->media()
-					? item->media()->document()
-					: nullptr) {
+			if (document) {
 				const auto music = divider->entity()->add(
 					object_ptr<Profile::MusicButton>(
 						divider->entity(),

@@ -6738,6 +6738,29 @@ HistoryItem *HistoryInner::accessibilityItemAtIndex(
 		: nullptr;
 }
 
+std::vector<HistoryInner::MokaItemRect> HistoryInner::mokagramVisibleItems() const {
+	auto result = std::vector<MokaItemRect>();
+	const_cast<HistoryInner*>(this)->enumerateItems<EnumItemsDirection::TopToBottom>([&](
+			not_null<Element*> view,
+			int itemtop,
+			int itembottom) {
+		if (itembottom < _visibleAreaTop) {
+			return true;
+		}
+		if (itemtop > _visibleAreaBottom) {
+			return false;
+		}
+		const auto item = view->data();
+		result.push_back({
+			item->fullId(),
+			QRect(0, itemtop, width(), itembottom - itemtop),
+			item->out(),
+		});
+		return result.size() < 200;
+	});
+	return result;
+}
+
 int HistoryInner::accessibilityChildCount() const {
 	const auto barIndex = accessibilityUnreadBarIndex();
 	return int(accessibleElements().size()) + (barIndex >= 0 ? 1 : 0);

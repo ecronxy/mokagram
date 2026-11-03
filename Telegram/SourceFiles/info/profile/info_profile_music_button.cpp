@@ -40,7 +40,8 @@ bool MusicShown() {
 bool MusicAttachedTo(not_null<QWidget*> bar) {
 	const auto bottom = bar->mapToGlobal(QPoint(0, bar->height())).y();
 	for (const auto widget : MusicWidgets) {
-		if (std::abs(widget->mapToGlobal(QPoint()).y() - bottom) <= 2) {
+		// Зазор между шапкой и плашкой бывает больше пикселя (масштаб, отступы).
+		if (std::abs(widget->mapToGlobal(QPoint()).y() - bottom) <= 40) {
 			return true;
 		}
 	}
@@ -60,7 +61,10 @@ MusicButton::MusicButton(
 , _noteWidth(st::normalFont->width(_noteSymbol)) {
 	updateData(std::move(data));
 	setClickedCallback(std::move(handler));
-	MusicBand = Ui::BlendColors(st::boxDividerBg->c, Qt::black, 0.12);
+	// Mokagram: считаем плашку сразу при создании, а не при показе: иначе
+	// заливки уголков шапки появляются с задержкой. Скрытие (другая вкладка)
+	// по-прежнему снимает учёт в hideEvent.
+	setCounted(true);
 }
 
 MusicButton::~MusicButton() {
@@ -77,6 +81,13 @@ void MusicButton::setCounted(bool counted) {
 	MusicCount += counted ? 1 : -1;
 	if (counted) {
 		MusicWidgets.push_back(this);
+		// Mokagram: старая плашка при уничтожении сбрасывает цвет полосы, а
+		// новая его уже задала в конструкторе: без этого уголки «связки»
+		// шапки красятся фоном списка и видны дырками.
+		MusicBand = Ui::BlendColors(
+			_overrideBg.value_or(QColor(st::boxDividerBg->c)),
+			Qt::black,
+			0.12);
 	} else {
 		MusicWidgets.erase(
 			ranges::remove(MusicWidgets, not_null<QWidget*>(this)),

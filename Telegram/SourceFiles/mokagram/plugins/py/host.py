@@ -85,6 +85,9 @@ def _moka_parse(source):
 
 _log = collections.deque()
 
+# Режим разработчика плагинов: MOKAGRAM_PLUGIN_DEBUG=1 (см. DEVELOPING.md в каталоге плагинов).
+_DEV = bool(os.environ.get('MOKAGRAM_PLUGIN_DEBUG'))
+
 
 class _LogOut:
     def __init__(self):
@@ -228,6 +231,10 @@ def _audit(entry, op, target, decision, size=0):
             'target': str(target)[:200], 'decision': decision, 'size': size,
         }, ensure_ascii=False)
         _moka_native('audit', line)
+        if _DEV:
+            calls = entry.setdefault('calls', collections.deque(maxlen=200))
+            calls.append('%s %s %s' % (op, str(target)[:120], decision))
+            _say('[dev] %s: %s %s -> %s' % (entry['id'], op, str(target)[:120], decision))
     except Exception:
         pass
 
@@ -373,7 +380,9 @@ def _activate(entry, source):
 # ---- события клиента (новое, изменённое, удалённое сообщение) ----
 
 _EVENTS = ('new_message', 'message_edited', 'message_deleted', 'new_reaction',
-           'chat_opened', 'peer_updated', 'user_status', 'typing', 'message_sent')
+           'chat_opened', 'peer_updated', 'user_status', 'typing', 'message_sent',
+           'scroll', 'theme_changed', 'pointer_move', 'window_shake', 'media_state')
+_UI_EVENTS = ('scroll', 'theme_changed', 'pointer_move', 'window_shake', 'media_state')   # права: ui (всегда есть)
 
 
 def _register_events(entry):
@@ -381,11 +390,12 @@ def _register_events(entry):
     base = sys.modules['mokagram_sdk.base_plugin'].BasePlugin
     names = [e for e in _EVENTS
              if getattr(type(inst), 'on_' + e, None) is not getattr(base, 'on_' + e, None)]
-    if names and not _granted(entry['id'], 'messages.read'):
+    msg_names = [n for n in names if n not in _UI_EVENTS]
+    if msg_names and not _granted(entry['id'], 'messages.read'):
         _say('[%s] события сообщений: нет права messages.read, не подписан' % entry['id'])
-        _audit(entry, 'events.subscribe', ','.join(names), 'denied')
-        names = []
-    elif names:
+        _audit(entry, 'events.subscribe', ','.join(msg_names), 'denied')
+        names = [n for n in names if n in _UI_EVENTS]
+    if names:
         _audit(entry, 'events.subscribe', ','.join(names), 'allowed')
     base_fn = getattr(base, 'message_filter_hook', None)
     wants_filter = getattr(type(inst), 'message_filter_hook', None) is not base_fn
@@ -672,6 +682,10 @@ def _moka_load_file(name):
             _record(name, raw, meta)
             _say('[%s] хеш записан впервые: %s' % (pid, digest[:12]))
             _activate(entry, source)
+        elif rec.get('hash') != digest and _DEV:
+            _record(name, raw, meta)
+            _say('[dev] %s: файл изменён, хеш обновлён автоматически' % pid)
+            _activate(entry, source)
         elif rec.get('hash') != digest:
             entry['state'] = 'needs_review'
             entry['error'] = None
@@ -702,6 +716,8 @@ def _moka_init(folder, sdk_source, api_source, tl_source='', tl_schema=''):
     _load_state()
     _load_grants()
     _fw_load_all(folder)
+    if _DEV:
+        _dev_start(folder)
     if '_fw_start' in globals():
         try:
             _fw_start()
@@ -967,6 +983,9 @@ def _register_filters(entry):
 # ---- защита от падений: счётчики ошибок и просрочек ----
 
 def _trip(entry, reason):
+    if _DEV:
+        _say('[dev] %s: %s (в режиме разработчика плагин не отключается)' % (entry['id'], reason))
+        return
     _deactivate(entry)
     entry['state'] = 'error'
     entry['error'] = reason
@@ -978,6 +997,8 @@ def _trip(entry, reason):
 def _hook_error(entry, hook, exc):
     _say('[%s] ошибка в %s: %s' % (entry['id'], hook, exc))
     _say(traceback.format_exc().rstrip())
+    if _DEV:
+        return
     errors = entry.get('errors')
     streak = entry.get('streak')
     if errors is None or streak is None:
@@ -1003,6 +1024,9 @@ def _hook_ok(entry, hook):
 
 def _hook_slow(entry, hook, spent, budget):
     """Просрочка бюджета: 3 раза за минуту выключают хук. Прервать Python-код в потоке нельзя, только отключить."""
+    if _DEV:
+        _say('[dev] %s: %s работал %d мс при бюджете %d мс' % (entry['id'], hook, spent * 1000, budget * 1000))
+        return
     slow = entry.setdefault('slow', {}).setdefault(hook, collections.deque())
     now = time.monotonic()
     slow.append(now)
@@ -1203,3 +1227,113 @@ def _moka_menu_click(pid, index, ctx_json):
         _hook_error(entry, 'menu_click', e)
         return 'false'
     return 'true'
+
+
+# ---- режим разработчика: автоперезагрузка, команды из файла, дамп состояния ----
+
+def _dev_out(text):
+    _say(text)
+    try:
+        d = os.path.join(_folder, '.dev')
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, 'out.txt'), 'a', encoding='utf8') as f:
+            f.write(text + '\n')
+    except Exception:
+        pass
+
+
+def _dev_find(arg):
+    arg = (arg or '').strip()
+    if arg in _plugins:
+        return _plugins[arg]
+    for e in _plugins.values():
+        if e['file'] == arg or e['file'] == arg + '.plugin':
+            return e
+    if len(_plugins) == 1:
+        return next(iter(_plugins.values()))
+    return None
+
+
+def _dev_command(line):
+    parts = line.strip().split(None, 2)
+    if not parts:
+        return
+    cmd = parts[0]
+    if cmd == 'list':
+        for e in _plugins.values():
+            _dev_out('[dev] %s file=%s state=%s%s' % (e['id'], e['file'], e['state'], ' error=' + str(e['error']) if e.get('error') else ''))
+        return
+    entry = _dev_find(parts[1] if len(parts) > 1 else '')
+    if entry is None:
+        _dev_out('[dev] нет такого плагина: %s (команда list покажет всех)' % (parts[1] if len(parts) > 1 else ''))
+        return
+    if cmd == 'reload':
+        _dev_out('[dev] перезагрузка %s' % entry['file'])
+        _moka_load_file(entry['file'])
+    elif cmd == 'state':
+        _dev_out('[dev] %s state=%s error=%s hooks_off=%s timers=%d overlays=%s' % (
+            entry['id'], entry['state'], entry.get('error'), sorted(entry.get('hooks_off', ())),
+            len(entry.get('timers', {})), sorted(entry.get('overlays', {}))))
+    elif cmd == 'calls':
+        n = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
+        for c in list(entry.get('calls', []))[-n:]:
+            _dev_out('[dev] ' + c)
+    elif cmd == 'eval':
+        code = parts[2] if len(parts) > 2 else ''
+        mod = entry.get('module')
+        if mod is None:
+            _dev_out('[dev] плагин не загружен')
+            return
+        ns = dict(mod.__dict__)
+        ns['self'] = entry.get('plugin')
+        try:
+            try:
+                res = eval(compile(code, '<dev>', 'eval'), ns)
+                _dev_out('[dev] = %r' % (res,))
+            except SyntaxError:
+                exec(compile(code, '<dev>', 'exec'), ns)
+                _dev_out('[dev] выполнено')
+        except BaseException:
+            _dev_out('[dev] ошибка:\n' + traceback.format_exc().rstrip())
+    else:
+        _dev_out('[dev] команды: list, reload <id>, state <id>, calls <id> [n], eval <id> <код>')
+
+
+def _dev_loop(folder):
+    import threading
+    seen = {}
+    cmd_path = os.path.join(folder, '.dev', 'cmd')
+    os.makedirs(os.path.dirname(cmd_path), exist_ok=True)
+    for n in os.listdir(folder):
+        if n.endswith('.plugin'):
+            try:
+                seen[n] = os.stat(os.path.join(folder, n)).st_mtime_ns
+            except OSError:
+                pass
+    while True:
+        time.sleep(0.5)
+        try:
+            for n in sorted(os.listdir(folder)):
+                if not n.endswith('.plugin'):
+                    continue
+                m = os.stat(os.path.join(folder, n)).st_mtime_ns
+                if seen.get(n) != m:
+                    first = n not in seen
+                    seen[n] = m
+                    time.sleep(0.2)   # дождаться конца записи
+                    _dev_out('[dev] %s %s, загрузка' % (n, 'новый' if first else 'изменён'))
+                    _moka_load_file(n)
+            if os.path.exists(cmd_path) and os.path.getsize(cmd_path):
+                with open(cmd_path, 'r', encoding='utf8') as f:
+                    lines = f.read().splitlines()
+                open(cmd_path, 'w').close()
+                for line in lines:
+                    _dev_command(line)
+        except BaseException:
+            _say('[dev] сбой наблюдателя:\n' + traceback.format_exc().rstrip())
+
+
+def _dev_start(folder):
+    import threading
+    threading.Thread(target=_dev_loop, args=(folder,), daemon=True, name='moka-dev').start()
+    _say('[dev] режим разработчика: слежу за %s, команды в %s' % (folder, os.path.join(folder, '.dev', 'cmd')))

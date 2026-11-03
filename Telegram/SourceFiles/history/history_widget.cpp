@@ -9239,6 +9239,10 @@ bool HistoryWidget::cornerButtonsHas(HistoryView::CornerButtonType type) {
 
 void HistoryWidget::mousePressEvent(QMouseEvent *e) {
 	if (!_list) {
+		if (e->button() == Qt::LeftButton
+			&& Mokagram::Commands::QuoteStageClick(e->pos())) {
+			return;
+		}
 		// Remove focus from the chats list search.
 		setFocus();
 
@@ -11710,6 +11714,7 @@ void HistoryWidget::paintEvent(QPaintEvent *e) {
 	Painter p(this);
 	const auto clip = e->rect();
 	if (_list) {
+		Mokagram::Commands::QuoteStageReset();
 		const auto restrictionHidden = fieldOrDisabledShown()
 			|| isRecording();
 		if (restrictionHidden
@@ -11721,7 +11726,10 @@ void HistoryWidget::paintEvent(QPaintEvent *e) {
 				drawField(p, clip);
 			}
 		}
-	} else {
+	} else if (!Mokagram::Commands::PaintQuoteStage(
+			p,
+			rect(),
+			controller()->chatStyle()->msgServiceFg()->c)) {
 		const auto w = 0
 			+ st::msgServiceFont->width(tr::lng_willbe_history(tr::now))
 			+ st::msgPadding.left()
