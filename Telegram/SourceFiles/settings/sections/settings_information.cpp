@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_information.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 
 #include "settings/sections/settings_main.h"
 #include "settings/settings_builder.h"
@@ -1115,7 +1116,7 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 				}),
 			QMargins(10, 1, 10, 1)))->setDuration(0);
 	const auto button = result->entity();
-	Mokagram::Plugins::MakePill(button, [] { return st::mainMenuBg->c; });
+	Mokagram::BoxParts::MakePill(button, [] { return st::mainMenuBg->c; });
 
 	using Environment = MTP::Environment;
 	const auto add = [=](Environment environment, bool newWindow = false) {
@@ -1254,7 +1255,7 @@ void AccountsList::rebuild() {
 				account,
 				std::move(callback),
 				nextIsLocked), QMargins(10, 0, 10, 0)));
-			Mokagram::Plugins::MakePill(
+			Mokagram::BoxParts::MakePill(
 				button.get(),
 				[] { return st::mainMenuBg->c; });
 		}
