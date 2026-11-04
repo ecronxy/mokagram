@@ -4,6 +4,7 @@
 // mokagram-id: 5d82b513
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/effects/animation_value.h"
@@ -767,8 +768,8 @@ public:
 		setAttribute(Qt::WA_TransparentForMouseEvents);
 		setGeometry(host->rect());
 		host->installEventFilter(this);
-		_logo = QGuiApplication::windowIcon().pixmap(
-			QSize(style::ConvertScale(128), style::ConvertScale(128)));
+		// Всегда наш знак, а не значок окна: он может быть стандартным телеграмовским.
+		_logo = QPixmap::fromImage(Misc::AppIconImage(1));
 		show();
 		raise();
 		_animation.start([=] {
