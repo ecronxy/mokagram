@@ -28,6 +28,9 @@
 #include "api/api_user_privacy.h"
 #include "apiwrap.h"
 #include "main/main_domain.h"
+#include <QtGui/QPixmap>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QWidget>
 #include "ui/power_saving.h"
 #include "storage/cache/storage_cache_database.h"
 #include "base/call_delayed.h"
@@ -85,6 +88,10 @@ void SetMainMenuOnRight(bool right);
 
 namespace Mokagram::Misc {
 namespace {
+
+#include "mokagram/misc/mokagram_app_icons.inc"
+
+constexpr auto kAppIconKey = "look.app_icon";
 
 constexpr auto kMaxAccountsKey = "misc.max_accounts";
 
@@ -312,6 +319,30 @@ void ShowPrivacyLockBox() {
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отмена"))),
 			[=] { box->closeBox(); });
 	}));
+}
+
+QIcon CustomAppIcon() {
+	const auto index = Settings::Int(QString::fromUtf8(kAppIconKey));
+	if (index <= 0 || index > 5) {
+		return QIcon();
+	}
+	auto pixmap = QPixmap();
+	pixmap.loadFromData(
+		kAppIcons[index - 1],
+		uint(kAppIconSizes[index - 1]),
+		"PNG");
+	return pixmap.isNull() ? QIcon() : QIcon(pixmap);
+}
+
+void ApplyAppIcon() {
+	const auto icon = CustomAppIcon();
+	if (icon.isNull()) {
+		return;
+	}
+	QGuiApplication::setWindowIcon(icon);
+	for (const auto widget : QApplication::topLevelWidgets()) {
+		widget->setWindowIcon(icon);
+	}
 }
 
 void RegisterSettings() {
@@ -567,6 +598,27 @@ void RegisterSettings() {
 		.defaultValue = QString(),
 		.hidden = true,
 	});
+	Settings::Register({
+		.key = QString::fromUtf8(kAppIconKey),
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Иконка приложения")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Иконка")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Значок mokaGram в панели задач и в окне. Применяется сразу.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Mokagram::Lang::Tr("Стандартная")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Синий круг")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Синий квадрат")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Тёмный круг")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Тёмный квадрат")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Знак на белом")),
+		},
+		.category = u"look"_q,
+		.sectionIcon = u"palette"_q,
+	});
+	Settings::IntValue(QString::fromUtf8(kAppIconKey)) | rpl::on_next([] {
+		ApplyAppIcon();
+	}, MenuSideLifetime);
 	Settings::IntValue(u"look.menu_side"_q) | rpl::on_next([](int side) {
 		Ui::SetMainMenuOnRight(side == 1);
 	}, MenuSideLifetime);

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/main_window.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "api/api_updates.h"
 #include "storage/localstorage.h"
@@ -218,6 +219,10 @@ QIcon CreateIcon(Main::Session *session, bool returnNullIfDefault) {
 	const auto supportIcon = CreateSupportIcon(session);
 	if (!supportIcon.isNull() || returnNullIfDefault) {
 		return supportIcon;
+	}
+
+	if (const auto custom = Mokagram::Misc::CustomAppIcon(); !custom.isNull()) {
+		return custom;
 	}
 
 	const auto officialIcon = QIcon(
