@@ -324,7 +324,7 @@ void ShowPrivacyLockBox() {
 
 QIcon CustomAppIcon() {
 	const auto index = Settings::Int(QString::fromUtf8(kAppIconKey));
-	if (index <= 0 || index > 5) {
+	if (index <= 0 || index > 6) {
 		return QIcon();
 	}
 	auto pixmap = QPixmap();
@@ -336,7 +336,7 @@ QIcon CustomAppIcon() {
 }
 
 QImage AppIconImage(int index) {
-	if (index <= 0 || index > 5) {
+	if (index <= 0 || index > 6) {
 		return Window::Logo();
 	}
 	auto image = QImage();
@@ -620,11 +620,12 @@ void RegisterSettings() {
 		.defaultValue = 0,
 		.choices = {
 			QString::fromUtf8(Mokagram::Lang::Tr("Стандартная")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Синий круг")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Синий квадрат")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Тёмный круг")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Тёмный квадрат")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Знак на белом")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Лого")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Знак")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Контур")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Ночь")),
+			QString::fromUtf8(Mokagram::Lang::Tr("День")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Стикер")),
 		},
 		.category = u"look"_q,
 		.sectionIcon = u"palette"_q,
