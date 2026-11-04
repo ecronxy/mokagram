@@ -24,6 +24,7 @@ namespace {
 constexpr auto kMetadataLimit = 1024 * 1024;
 constexpr auto kVideoLimit = 8 * 1024 * 1024;
 constexpr auto kCandidateLimit = 60;
+constexpr auto kTitleBatchSize = 6;
 
 QString Normalize(const QString &text) {
 	auto result = QString();
@@ -90,8 +91,13 @@ void CanvasPlayer::refresh(
 		updatePlayback();
 		_repaint();
 	}
-	if (_id == id) {
+	const auto metadata = MotionProtocol::Metadata(
+		title, artist, !id.startsWith(u"telegram:"_q));
+	if (_id == id && _title == metadata.title && _artist == metadata.artist) {
 		return;
+	}
+	if (_id == id) {
+		Videos().remove(id);
 	}
 	setLoading(false);
 	_loadingProgress = -1.;
@@ -103,12 +109,10 @@ void CanvasPlayer::refresh(
 	_pages = 0;
 	_nextPage = QUrl();
 	_id = std::move(id);
-	const auto metadata = MotionProtocol::Metadata(
-		title, artist, !_id.startsWith(u"telegram:"_q));
 	_title = metadata.title;
-	artist = metadata.artist;
+	_artist = metadata.artist;
 	_repaint();
-	if (_id.isEmpty() || _title.isEmpty() || artist.trimmed().isEmpty()) {
+	if (_id.isEmpty() || _title.isEmpty() || _artist.trimmed().isEmpty()) {
 		return;
 	}
 	setLoading(true);
@@ -120,7 +124,7 @@ void CanvasPlayer::refresh(
 		startVideo(*cached);
 		return;
 	}
-	findArtist(artist);
+	findArtist(_artist);
 }
 
 void CanvasPlayer::get(
@@ -231,15 +235,29 @@ void CanvasPlayer::readCandidates(const QByteArray &data) {
 }
 
 void CanvasPlayer::findTitle() {
+	struct Batch {
+		int pending = 0;
+		int start = 0;
+		std::vector<std::pair<Candidate, QString>> results;
+	};
+	const auto batch = std::make_shared<Batch>();
 	while (_candidate < int(_candidates.size())) {
 		const auto candidate = _candidates[_candidate++];
 		if (const auto title = Titles().object(candidate.trackId)) {
-			if (MotionProtocol::MatchesTitle(_title, *title)) {
+			if (batch->pending) {
+				batch->results.emplace_back(candidate, *title);
+			} else if (MotionProtocol::MatchesTitle(_title, *title)) {
 				loadVideo(candidate.video);
 				return;
 			}
 			continue;
 		}
+		if (!batch->pending) {
+			batch->start = _candidate - 1;
+		}
+		const auto index = batch->results.size();
+		batch->results.emplace_back(candidate, QString());
+		++batch->pending;
 		auto url = QUrl(u"https://open.spotify.com/oembed"_q);
 		auto query = QUrlQuery();
 		query.addQueryItem(
@@ -252,12 +270,24 @@ void CanvasPlayer::findTitle() {
 			if (!title.isEmpty()) {
 				Titles().insert(candidate.trackId, new QString(title));
 			}
-			if (MotionProtocol::MatchesTitle(_title, title)) {
-				loadVideo(candidate.video);
-			} else {
+			batch->results[index].second = title;
+			if (--batch->pending == 0) {
+				for (auto i = size_t(0); i != batch->results.size(); ++i) {
+					const auto &[entry, result] = batch->results[i];
+					if (MotionProtocol::MatchesTitle(_title, result)) {
+						_candidate = batch->start + int(i) + 1;
+						loadVideo(entry.video);
+						return;
+					}
+				}
 				findTitle();
 			}
 		});
+		if (batch->pending >= kTitleBatchSize) {
+			return;
+		}
+	}
+	if (batch->pending) {
 		return;
 	}
 	if (!_nextPage.isEmpty() && _candidates.size() < kCandidateLimit) {
