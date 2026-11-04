@@ -75,3 +75,15 @@ settings.local.json
 # Generated changelog page (built by CI, deployed to GitHub Pages)
 /docs/changelog/
 Telegram/SourceFiles/mokagram/misc/mokagram_datereg_key.h
+
+# рабочие файлы и инструменты разработки, в репозиторий не входят
+/.agents/
+/.claude/
+/.codex/
+/.grok/
+/AGENTS.md
+/CLAUDE.md
+/GROK.md
+/REVIEW.md
+/openspec/
+/tasks/

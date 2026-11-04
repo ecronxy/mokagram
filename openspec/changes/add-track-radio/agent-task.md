@@ -1,3 +1,0 @@
-# Create radio from a track through its context menu
-
-Implement OpenSpec add-track-radio independently: right-clicking a supported row or current track offers radio from that seed, with continuation, deduplication and artist blocks. Errors/empty results preserve prior playback. Read proposal, design and spec; follow tasks.md. Work only in music modules and required localization, preserve unrelated edits and do not change the feed. This is a prepared local assignment for a separate agent, not an ai-tdesktop queue record. Implementation is complete locally; see verification.md for checks and the remaining live-app validation.
