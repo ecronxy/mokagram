@@ -633,6 +633,20 @@ void RegisterSettings() {
 	Settings::IntValue(QString::fromUtf8(kAppIconKey)) | rpl::on_next([] {
 		ApplyAppIcon();
 	}, MenuSideLifetime);
+	Settings::Register({
+		.key = u"net.fast_download"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Загрузка файлов")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Быстрая загрузка")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Больше кусков файла запрашивается одновременно. Работает на новых загрузках.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Mokagram::Lang::Tr("Выключено")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Быстрая")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Максимум")),
+		},
+		.category = u"other"_q,
+	});
 	Settings::IntValue(u"look.menu_side"_q) | rpl::on_next([](int side) {
 		Ui::SetMainMenuOnRight(side == 1);
 	}, MenuSideLifetime);

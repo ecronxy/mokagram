@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "storage/download_manager_mtproto.h"
+#include "mokagram/settings/mokagram_settings.h"
 
 #include "mtproto/facade.h"
 #include "mtproto/mtproto_auth_key.h"
@@ -20,8 +21,19 @@ namespace Storage {
 namespace {
 
 constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
-constexpr auto kStartWaitedInSession = 4 * kDownloadPartSize;
-constexpr auto kMaxWaitedInSession = 16 * kDownloadPartSize;
+// Быстрая загрузка (как «Download speed boost» у exteraGram): окно запросов
+// одной сессии побольше. 0 стандартно, 1 быстрая, 2 максимум.
+[[nodiscard]] int FastDownloadMode() {
+	return std::clamp(Mokagram::Settings::Int(u"net.fast_download"_q), 0, 2);
+}
+[[nodiscard]] int StartWaitedInSession() {
+	constexpr int kParts[] = { 4, 8, 16 };
+	return kParts[FastDownloadMode()] * kDownloadPartSize;
+}
+[[nodiscard]] int MaxWaitedInSession() {
+	constexpr int kParts[] = { 16, 24, 32 };
+	return kParts[FastDownloadMode()] * kDownloadPartSize;
+}
 constexpr auto kStartSessionsCount = 1;
 constexpr auto kMaxSessionsCount = 8;
 constexpr auto kMaxTrackedSessionRemoves = 64;
@@ -110,7 +122,7 @@ void DownloadManagerMtproto::Queue::removeSession(int index) {
 }
 
 DownloadManagerMtproto::DcSessionBalanceData::DcSessionBalanceData()
-: maxWaitedAmount(kStartWaitedInSession) {
+: maxWaitedAmount(StartWaitedInSession()) {
 }
 
 DownloadManagerMtproto::DcBalanceData::DcBalanceData()
@@ -184,7 +196,7 @@ bool DownloadManagerMtproto::trySendNextPart(MTP::DcId dcId, Queue &queue) {
 		const auto proj = [](const DcSessionBalanceData &data) {
 			return (data.requested < data.maxWaitedAmount)
 				? data.requested
-				: kMaxWaitedInSession;
+				: MaxWaitedInSession();
 		};
 		const auto j = ranges::min_element(sessions, ranges::less(), proj);
 		return (j->requested + kDownloadPartSize <= j->maxWaitedAmount)
@@ -260,10 +272,10 @@ void DownloadManagerMtproto::requestSucceeded(
 		return;
 	}
 	if (amountAtRequestStart == data.maxWaitedAmount
-		&& data.maxWaitedAmount < kMaxWaitedInSession) {
+		&& data.maxWaitedAmount < MaxWaitedInSession()) {
 		data.maxWaitedAmount = std::min(
 			data.maxWaitedAmount + kDownloadPartSize,
-			kMaxWaitedInSession);
+			MaxWaitedInSession());
 		DEBUG_LOG(("Download (%1,%2) increased max waited amount %3."
 			).arg(dcId
 			).arg(index
@@ -350,9 +362,9 @@ void DownloadManagerMtproto::removeSession(MTP::DcId dcId) {
 	auto &session = dc.sessions.back();
 
 	// Make sure we don't send anything to that session while redirecting.
-	session.requested += kMaxWaitedInSession * kMaxSessionsCount;
+	session.requested += MaxWaitedInSession() * kMaxSessionsCount;
 	queue.removeSession(index);
-	Assert(session.requested == kMaxWaitedInSession * kMaxSessionsCount);
+	Assert(session.requested == MaxWaitedInSession() * kMaxSessionsCount);
 
 	dc.sessions.pop_back();
 	api().instance().killSession(MTP::downloadDcId(dcId, index));
