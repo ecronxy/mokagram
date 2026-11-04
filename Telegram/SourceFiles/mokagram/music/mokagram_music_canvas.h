@@ -39,6 +39,7 @@ private:
 	Fn<void()> _repaint;
 	QString _id;
 	QString _title;
+	QString _artist;
 	std::vector<Candidate> _candidates;
 	int _candidate = 0;
 	int _pages = 0;
