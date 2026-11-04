@@ -8,6 +8,7 @@
 #include "mokagram/plugins/mokagram_plugin_store.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "mokagram/misc/mokagram_misc.h"
 #include "ui/widgets/menu/menu_action.h"
 #include "ui/widgets/menu/menu_common.h"
@@ -391,57 +392,6 @@ void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
 		return value;
 	}();
 	return result;
-}
-
-// Переключатель в стиле Material 3, значение приходит из реестра.
-// Сам не кликается: клик обрабатывает строка.
-[[nodiscard]] not_null<Ui::AbstractButton*> MakeSwitch(
-		not_null<QWidget*> parent,
-		rpl::producer<bool> value) {
-	struct State {
-		Ui::Animations::Simple animation;
-		bool checked = false;
-		bool started = false;
-	};
-	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
-	const auto state = button->lifetime().make_state<State>();
-	button->resize(40, 24);
-	button->setAttribute(Qt::WA_TransparentForMouseEvents);
-	button->paintRequest(
-	) | rpl::on_next([=] {
-		auto p = QPainter(button);
-		auto hq = PainterHighQualityEnabler(p);
-		const auto t = state->animation.value(state->checked ? 1. : 0.);
-		const auto on = st::windowBgActive->c;
-		const auto off = st::windowSubTextFg->c;
-		const auto track = QRectF(1, 1, 38, 22);
-		p.setBrush(anim::color(QColor(0, 0, 0, 0), on, t));
-		p.setPen(QPen(anim::color(off, on, t), 1.6));
-		p.drawRoundedRect(track, 11, 11);
-		const auto size = 10. + 8. * t;
-		const auto cx = 12. + 16. * t;
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(off, st::windowFgActive->c, t));
-		p.drawEllipse(QPointF(cx, 12.), size / 2, size / 2);
-	}, button->lifetime());
-	std::move(value) | rpl::on_next([=](bool checked) {
-		if (state->checked == checked && state->started) {
-			return;
-		}
-		const auto first = !state->started;
-		state->started = true;
-		state->checked = checked;
-		if (first) {
-			button->update();
-			return;
-		}
-		state->animation.start(
-			[=] { button->update(); },
-			checked ? 0. : 1.,
-			checked ? 1. : 0.,
-			200);
-	}, button->lifetime());
-	return button;
 }
 
 // Круглая кнопка шапки: закрыть или лупа, рисуются вручную.
@@ -1146,7 +1096,7 @@ void ShowColorBox(const QString &title, const QString &key) {
 	auto rippled = true;
 	switch (kind) {
 	case Kind::Bool:
-		toggle = MakeSwitch(row, BoolValue(key));
+		toggle = BoxParts::MakeSwitch(row, BoolValue(key));
 		row->setClickedCallback([=] {
 			SetBool(key, !Bool(key));
 			afterChange();
