@@ -105,6 +105,17 @@
 
 namespace Mokagram::Settings {
 namespace {
+// Список выбора без значков: ширина по самому длинному пункту, отступы слева и справа равны.
+[[nodiscard]] const style::PopupMenu &CompactChoiceMenuStyle() {
+	static const auto result = [] {
+		auto menu = st::defaultPopupMenu;
+		menu.menu.widthMin = style::ConvertScale(96);
+		menu.menu.itemRightSkip = 0;
+		return menu;
+	}();
+	return result;
+}
+
 // Строка выбора иконки приложения: слева круглая миниатюра варианта.
 class AppIconMenuItem final : public Ui::Menu::Action {
 public:
@@ -1157,7 +1168,7 @@ void ShowColorBox(const QString &title, const QString &key) {
 				row,
 				(key == u"look.app_icon"_q)
 					? st::popupMenuWithIcons
-					: st::defaultPopupMenu);
+					: CompactChoiceMenuStyle());
 			for (auto i = 0; i != int(entry.choices.size()); ++i) {
 				const auto choose = [=] {
 					SetInt(key, i);
