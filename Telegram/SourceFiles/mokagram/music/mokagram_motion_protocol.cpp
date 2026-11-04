@@ -103,8 +103,16 @@ MotionMetadata Metadata(QString title, QString artist, bool soundcloud) {
 }
 
 bool MatchesTitle(const QString &title, const QString &candidate) {
-	const auto a = Normalize(Metadata(title, {}).title);
-	const auto b = Normalize(Metadata(candidate, {}).title);
+	static const auto featured = QRegularExpression(
+		uR"re(\s*(?:[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+[^\)\]]*[\)\]]|(?:feat\.?|ft\.?|featuring)\s+.+)$)re"_q,
+		QRegularExpression::CaseInsensitiveOption);
+	const auto comparable = [&](const QString &value) {
+		auto result = Metadata(value, {}).title;
+		result.remove(featured);
+		return Normalize(result);
+	};
+	const auto a = comparable(title);
+	const auto b = comparable(candidate);
 	return !a.isEmpty() && a == b;
 }
 

@@ -19,6 +19,17 @@ void SetLiked(const Track &track, bool liked);
 [[nodiscard]] std::vector<Track> LikedTracks();
 [[nodiscard]] rpl::producer<> LikesChanged();
 
+struct RecentItem {
+	Track track;
+	Album album;
+	bool isAlbum = false;
+};
+
+[[nodiscard]] std::vector<RecentItem> RecentItems();
+void RecordRecentTrack(const Track &track);
+void RecordRecentAlbum(const Album &album);
+[[nodiscard]] rpl::producer<> RecentChanged();
+
 // История: сколько реально прослушано. finished: трек доигран до конца.
 // Пропуск (мало прослушано) считается сильным сигналом «не нравится».
 void RecordListen(const Track &track, int listenedMs, bool finished);
@@ -41,6 +52,7 @@ void UnblockArtist(const QString &artistId);
 struct StreamContext {
 	Track current;
 	std::vector<Track> avoid;
+	bool avoidPreviousArtists = true;
 };
 
 // Пополнение потока: подборка с учётом сессии (последние дослушанные), плавных

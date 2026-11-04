@@ -541,9 +541,9 @@ void AlbumsRequest(
 void HydrateTracks(
 		std::shared_ptr<std::map<QString, Track>> found,
 		QStringList missing,
-		Fn<void()> done) {
+		Fn<void(QString)> done) {
 	if (missing.isEmpty()) {
-		done();
+		done(QString());
 		return;
 	}
 	const auto chunk = missing.mid(0, 50);
@@ -554,9 +554,20 @@ void HydrateTracks(
 		QString::fromLatin1(kApi) + u"/tracks"_q,
 		q,
 		[=](QByteArray data, QString error) {
-			for (const auto &value : QJsonDocument::fromJson(data).array()) {
+			if (!error.isEmpty()) {
+				done(error);
+				return;
+			}
+			auto parseError = QJsonParseError();
+			const auto json = QJsonDocument::fromJson(data, &parseError);
+			if (parseError.error != QJsonParseError::NoError || !json.isArray()) {
+				done(QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить треки альбома. Попробуйте снова.")));
+				return;
+			}
+			for (const auto &value : json.array()) {
 				auto track = ParseTrack(value.toObject());
-				if (!track.transcodingUrl.isEmpty()) {
+				if (track.id.toULongLong() && !track.title.isEmpty()) {
+					track.unavailable = track.transcodingUrl.isEmpty();
 					(*found)[track.id] = std::move(track);
 				}
 			}
@@ -598,7 +609,15 @@ void AlbumTracks(
 				done({}, error);
 				return;
 			}
-			const auto root = QJsonDocument::fromJson(data).object();
+			auto parseError = QJsonParseError();
+			const auto json = QJsonDocument::fromJson(data, &parseError);
+			if (parseError.error != QJsonParseError::NoError
+				|| !json.isObject()
+				|| !json.object().value("tracks").isArray()) {
+				done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить треки альбома. Попробуйте снова.")));
+				return;
+			}
+			const auto root = json.object();
 			auto order = QStringList();
 			auto missing = QStringList();
 			const auto found = std::make_shared<std::map<QString, Track>>();
@@ -608,14 +627,22 @@ void AlbumTracks(
 					object.value("id").toVariant().toLongLong());
 				order.push_back(id);
 				auto track = ParseTrack(object);
+				if (id == u"0"_q) {
+					continue;
+				}
 				if (track.transcodingUrl.isEmpty()) {
-					// В ответе полные данные только у первых треков, остальные приходят одним id.
 					missing.push_back(id);
-				} else {
+				}
+				if (!track.title.isEmpty()) {
+					track.unavailable = track.transcodingUrl.isEmpty();
 					(*found)[id] = std::move(track);
 				}
 			}
-			HydrateTracks(found, missing, [=] {
+			HydrateTracks(found, missing, [=](QString error) {
+				if (!error.isEmpty()) {
+					done({}, error);
+					return;
+				}
 				auto result = std::vector<Track>();
 				for (const auto &id : order) {
 					if (const auto i = found->find(id); i != found->end()) {

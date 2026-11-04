@@ -72,8 +72,10 @@ struct Library {
 	std::vector<Liked> boosted;    // «больше такого», новые сверху
 	std::vector<Blocked> blocked;  // авторы, которых не предлагать
 	std::vector<Shown> shown;      // что уже попадало в подборку, старые сверху
+	std::vector<RecentItem> recent;
 	bool loaded = false;
 	rpl::event_stream<> likesChanged;
+	rpl::event_stream<> recentChanged;
 };
 
 [[nodiscard]] Library &Lib();
@@ -168,6 +170,24 @@ void Save() {
 	root.insert("boosted", boosted);
 	root.insert("blocked", blocked);
 	root.insert("shown", shown);
+	auto recent = QJsonArray();
+	for (const auto &item : lib.recent) {
+		auto o = QJsonObject();
+		o.insert("album", item.isAlbum);
+		if (item.isAlbum) {
+			auto album = QJsonObject();
+			album.insert("id", item.album.id);
+			album.insert("title", item.album.title);
+			album.insert("artist", item.album.artist);
+			album.insert("art", item.album.artworkUrl);
+			album.insert("count", item.album.trackCount);
+			o.insert("data", album);
+		} else {
+			o.insert("data", ToJson(item.track));
+		}
+		recent.push_back(o);
+	}
+	root.insert("recent", recent);
 	QDir().mkpath(QFileInfo(FilePath()).absolutePath());
 	// Через временный файл: обрыв посреди записи не стирает историю.
 	auto file = QSaveFile(FilePath());
@@ -184,6 +204,26 @@ Library &Lib() {
 		auto file = QFile(FilePath());
 		if (file.open(QIODevice::ReadOnly)) {
 			const auto root = QJsonDocument::fromJson(file.readAll()).object();
+			for (const auto &v : root.value("recent").toArray()) {
+				const auto o = v.toObject();
+				const auto data = o.value("data").toObject();
+				auto item = RecentItem();
+				item.isAlbum = o.value("album").toBool();
+				if (item.isAlbum) {
+					item.album.id = data.value("id").toString();
+					item.album.title = data.value("title").toString();
+					item.album.artist = data.value("artist").toString();
+					item.album.artworkUrl = data.value("art").toString();
+					item.album.trackCount = data.value("count").toInt();
+					if (item.album.id.isEmpty()) continue;
+				} else {
+					item.track = FromJson(data);
+					if (item.track.id.isEmpty()) continue;
+				}
+				if (library.recent.size() < 30) {
+					library.recent.push_back(std::move(item));
+				}
+			}
 			for (const auto &v : root.value("liked").toArray()) {
 				const auto o = v.toObject();
 				library.liked.push_back({ FromJson(o), qint64(o.value("at").toDouble()) });
@@ -688,14 +728,16 @@ void BuildImpl(
 		// Жёсткие исключения: уже играет или стоит в очереди, лайкнуто.
 		auto excluded = std::set<QString>();
 		auto avoidArtists = std::set<QString>();
-		const auto exclude = [&](const Track &t) {
+		const auto exclude = [&](const Track &t, bool artist) {
 			for (const auto &k : KeysFor(t)) {
 				excluded.insert(k);
 			}
-			if (!t.artistId.isEmpty()) {
-				avoidArtists.insert(t.artistId);
+			if (artist) {
+				if (!t.artistId.isEmpty()) {
+					avoidArtists.insert(t.artistId);
+				}
+				avoidArtists.insert(Origin(t));
 			}
-			avoidArtists.insert(Origin(t));
 		};
 		for (const auto &l : lib.liked) {
 			for (const auto &k : KeysFor(l.track)) {
@@ -708,10 +750,10 @@ void BuildImpl(
 			}
 		}
 		if (!ctx->current.id.isEmpty()) {
-			exclude(ctx->current);
+			exclude(ctx->current, true);
 		}
 		for (const auto &t : ctx->avoid) {
-			exclude(t);
+			exclude(t, ctx->avoidPreviousArtists);
 		}
 		auto shownAt = std::map<QString, qint64>();
 		for (const auto &sh : lib.shown) {
@@ -960,6 +1002,49 @@ std::vector<Track> LikedTracks() {
 
 rpl::producer<> LikesChanged() {
 	return Lib().likesChanged.events();
+}
+
+std::vector<RecentItem> RecentItems() {
+	return Lib().recent;
+}
+
+void RecordRecentTrack(const Track &track) {
+	if (track.id.isEmpty() || IsTelegramId(track.id)) {
+		return;
+	}
+	auto &lib = Lib();
+	std::erase_if(lib.recent, [&](const RecentItem &item) {
+		return !item.isAlbum && item.track.id == track.id;
+	});
+	auto item = RecentItem();
+	item.track = track;
+	item.track.transcodingUrl.clear();
+	item.track.authorization.clear();
+	lib.recent.insert(lib.recent.begin(), std::move(item));
+	if (lib.recent.size() > 30) lib.recent.resize(30);
+	Save();
+	lib.recentChanged.fire({});
+}
+
+void RecordRecentAlbum(const Album &album) {
+	if (album.id.isEmpty()) {
+		return;
+	}
+	auto &lib = Lib();
+	std::erase_if(lib.recent, [&](const RecentItem &item) {
+		return item.isAlbum && item.album.id == album.id;
+	});
+	auto item = RecentItem();
+	item.album = album;
+	item.isAlbum = true;
+	lib.recent.insert(lib.recent.begin(), std::move(item));
+	if (lib.recent.size() > 30) lib.recent.resize(30);
+	Save();
+	lib.recentChanged.fire({});
+}
+
+rpl::producer<> RecentChanged() {
+	return Lib().recentChanged.events();
 }
 
 void RecordListen(const Track &track, int listenedMs, bool finished) {
