@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_privacy_security.h"
 #include "ui/vertical_list.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/wrap/slide_wrap.h"
@@ -514,7 +515,7 @@ Ui::SettingsButton *SectionBuilder::addButton(ButtonArgs &&args) {
 		if (args.toggled) {
 			button->toggleOn(std::move(args.toggled));
 		}
-		Mokagram::Plugins::MakePill(
+		Mokagram::BoxParts::MakePill(
 			button.data(),
 			[] { return st::windowBg->c; });
 		if (navigates) {
