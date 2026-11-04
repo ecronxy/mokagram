@@ -3259,7 +3259,7 @@ private:
 
 };
 
-enum class Glyph { Previous, Next, Play, Add, Shuffle, Repeat, More, Block, Collapse, Queue };
+enum class Glyph { Previous, Next, Play, Add, Shuffle, Repeat, More, Block, Collapse, Queue, Filter };
 
 class RoundGlyph final : public Ui::AbstractButton {
 public:
@@ -3350,6 +3350,17 @@ private:
 				c + QPointF(-7, -3) * u * 1.2,
 				c + QPointF(0, 4) * u * 1.2,
 				c + QPointF(7, -3) * u * 1.2 }));
+			return;
+		}
+		if (_glyph == Glyph::Filter) {
+			p.setPen(pen);
+			for (auto i = 0; i != 3; ++i) {
+				const auto x = c.x() + (i - 1) * 7 * u;
+				const auto y = c.y() + (i - 1) * 3 * u;
+				p.drawLine(QPointF(x, c.y() - 9 * u), QPointF(x, y - 2 * u));
+				p.drawLine(QPointF(x, y + 2 * u), QPointF(x, c.y() + 9 * u));
+				p.drawEllipse(QPointF(x, y), 2 * u, 2 * u);
+			}
 			return;
 		}
 		if (_glyph == Glyph::Queue) {
@@ -3725,6 +3736,8 @@ public:
 		_lyrics = std::move(lyrics);
 		_status = _lyrics.found
 			? QString()
+			: _lyrics.unavailable
+			? QString::fromUtf8(Mokagram::Lang::Tr("Сервис текста временно недоступен"))
 			: QString::fromUtf8(Mokagram::Lang::Tr("Текст этой песни не найден"));
 		_weights.assign(_lyrics.lines.size(), 0.f);
 		updateTimer();
@@ -4525,6 +4538,7 @@ public:
 	, _seek(Ui::CreateChild<SeekBar>(this))
 	, _heart(Ui::CreateChild<RoundGlyph>(this, Glyph::Add, 44))
 	, _collapse(Ui::CreateChild<RoundGlyph>(this, Glyph::Collapse, 44))
+	, _filter(Ui::CreateChild<RoundGlyph>(this, Glyph::Filter, 44))
 	, _queueToggle(Ui::CreateChild<RoundGlyph>(this, Glyph::Queue, 44))
 	, _volume(Ui::CreateChild<SeekBar>(this))
 	, _tabScroll(Ui::CreateChild<Ui::ScrollArea>(this, st::defaultScrollArea))
@@ -4557,6 +4571,34 @@ public:
 			_volume->setProgress(value);
 			update();
 		}, lifetime());
+		_filter->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Звуковой фильтр")));
+		_filter->setClickedCallback([=] {
+			_filterMenu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
+			for (const auto &entry : Mokagram::Settings::Entries()) {
+				if (entry.key != u"player.audio_filter"_q) {
+					continue;
+				}
+				const auto current = Mokagram::Settings::Int(entry.key);
+				const auto icons = std::array{
+					&st::menuIconSoundOn,
+					&st::menuIconBoosts,
+					&st::menuIconStartStream,
+					&st::menuIconSettings,
+					&st::menuIconSoundSelect,
+					&st::menuIconPalette,
+					&st::menuIconPhone,
+				};
+				for (auto i = 0; i != entry.choices.size(); ++i) {
+					const auto label = entry.choices[i]
+						+ (i == current ? u"  ✓"_q : QString());
+					_filterMenu->addAction(label, [=] {
+						Mokagram::Settings::SetInt(u"player.audio_filter"_q, i);
+					}, (i < icons.size()) ? icons[i] : nullptr);
+				}
+				break;
+			}
+			_filterMenu->popup(_filter->mapToGlobal(QPoint(0, _filter->height())));
+		});
 		_queueToggle->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Очередь")));
 		_queueToggle->setClickedCallback([=] { setTab(Tab::Queue); });
 		const auto s = [](int v) { return style::ConvertScale(v); };
@@ -4636,7 +4678,7 @@ public:
 				rebuildTab();
 			}
 		}, lifetime());
-		for (const auto button : { _heart, _collapse, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
+		for (const auto button : { _heart, _collapse, _filter, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
 			button->setOverlay(true);
 		}
 		_heart->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Нравится")));
@@ -4838,15 +4880,29 @@ protected:
 			openNowPlayingFromBar();
 			return;
 		}
+		if (hover == InfoHover::Cover) {
+			setHover(InfoHover::None);
+			const auto layout = computeLayout();
+			if (layout.barCover.isEmpty() || anim::Disabled()
+				|| PowerSaving::On(PowerSaving::kAnimations)) {
+				setTab(Tab::Home);
+			} else if (!_coverClosing.animating()) {
+				_coverClosing.start([=] {
+					update();
+					if (!_coverClosing.animating() && _tab == Tab::Now) {
+						setTab(Tab::Home);
+					}
+				}, 0., 1., 200, anim::easeOutQuint);
+			}
+			return;
+		}
 		const auto track = PlayingTrack();
 		const auto artist = track.artist.trimmed();
 		const auto controller = _controller;
 		if (hover == InfoHover::Title || hover == InfoHover::BarTitle) {
-			// Альбомы с этим треком, затем остальные альбомы исполнителя.
-			const auto query = artist.isEmpty() ? track.title.trimmed() : artist;
-			const auto trackId = IsTelegramTrack(track) ? QString() : track.id;
-			close();
-			ShowAlbumsBox(controller, query, trackId);
+			setHover(InfoHover::None);
+			setTab(Tab::Home);
+			openHomeTrack(track);
 		} else if (!artist.isEmpty()) {
 			close();
 			ShowMusicBox(controller, artist);
@@ -4858,7 +4914,7 @@ protected:
 	void leaveEventHook(QEvent *e) override {
 		setHover(InfoHover::None);
 	}
-	enum class InfoHover { None, Title, Artist, BarCover, BarTitle, BarArtist };
+	enum class InfoHover { None, Title, Artist, Cover, BarCover, BarTitle, BarArtist };
 	[[nodiscard]] QFont titleFont() const {
 		auto result = st::semiboldFont->f;
 		result.setPixelSize(style::ConvertScale(22));
@@ -5090,6 +5146,8 @@ protected:
 			? InfoHover::Title
 			: (artist.contains(point) && !_artist.trimmed().isEmpty())
 			? InfoHover::Artist
+			: layout.cover.contains(point)
+			? InfoHover::Cover
 			: InfoHover::None;
 	}
 
@@ -5097,6 +5155,7 @@ protected:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto layout = computeLayout();
 		_collapse->move(layout.collapse);
+		_filter->move(style::ConvertScale(16), layout.collapse.y());
 		_queueToggle->move(layout.queue);
 		_heart->move(layout.heart);
 		for (const auto button : { _shuffle.get(), _previous.get(), _play.get(), _next.get(), _repeat.get(), _queueToggle.get() }) {
@@ -5165,7 +5224,7 @@ protected:
 			button->move(x, layout.controlsTop + (_play->height() - button->height()) / 2);
 			x += button->width() + gap;
 		}
-		for (const auto button : { _collapse.get(), _queueToggle.get(), _heart.get() }) {
+		for (const auto button : { _collapse.get(), _filter.get(), _queueToggle.get(), _heart.get() }) {
 			button->raise();
 		}
 		RpWidget::resizeEvent(e);
@@ -5300,6 +5359,7 @@ protected:
 		if (_tab == tab) {
 			return;
 		}
+		_coverClosing.stop();
 		_plainAnim.start(
 			[=] { update(); },
 			_tab == Tab::Now ? 0. : 1.,
@@ -5903,6 +5963,19 @@ protected:
 			}
 			p.restore();
 		};
+		p.save();
+		const auto closing = _coverClosing.value(0.);
+		if (closing > 0. && !layout.cover.isEmpty()) {
+			const auto target = QRectF(layout.barCover);
+			const auto source = QRectF(layout.cover);
+			const auto x = source.x() + (target.x() - source.x()) * closing;
+			const auto y = source.y() + (target.y() - source.y()) * closing;
+			const auto w = source.width() + (target.width() - source.width()) * closing;
+			const auto h = source.height() + (target.height() - source.height()) * closing;
+			p.translate(x, y);
+			p.scale(w / source.width(), h / source.height());
+			p.translate(-source.x(), -source.y());
+		}
 		drawCover(_coverWas, 1. - fade, false);
 		drawCover(_cover, fade, true);
 		p.save();
@@ -5951,7 +6024,8 @@ protected:
 				QFontMetrics(font).elidedText(artist, Qt::ElideRight, available));
 		};
 		drawInfo(_wasTitle, _wasArtist, 1. - fade, false);
-		drawInfo(_title, _artist, fade, true);
+		drawInfo(_title, _artist, fade * (1. - closing), true);
+		p.restore();
 		if (!layout.barShown) {
 			return;
 		}
@@ -6222,6 +6296,8 @@ private:
 	const not_null<SeekBar*> _seek;
 	const not_null<RoundGlyph*> _heart;
 	const not_null<RoundGlyph*> _collapse;
+	const not_null<RoundGlyph*> _filter;
+	base::unique_qptr<Ui::PopupMenu> _filterMenu;
 	const not_null<RoundGlyph*> _queueToggle;
 	const not_null<SeekBar*> _volume;
 	const not_null<Ui::ScrollArea*> _tabScroll;
@@ -6295,6 +6371,7 @@ private:
 	Ui::Animations::Simple _fade;
 	Ui::Animations::Simple _playAnim;
 	Ui::Animations::Simple _coverMorph;
+	Ui::Animations::Simple _coverClosing;
 	QRect _morphFrom;
 	Ui::Animations::Simple _plainAnim;
 	Ui::Animations::Simple _colorAnim;

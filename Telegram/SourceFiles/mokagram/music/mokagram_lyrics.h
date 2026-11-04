@@ -25,6 +25,7 @@ struct Lyrics {
 	std::vector<LyricLine> lines;
 	bool synced = false;
 	bool found = false;
+	bool unavailable = false;
 };
 
 // done вызывается в главном потоке; результат кэшируется по ключу трека.
