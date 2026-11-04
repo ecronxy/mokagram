@@ -1152,9 +1152,12 @@ void ShowColorBox(const QString &title, const QString &key) {
 		const auto menu = row->lifetime().make_state<
 			base::unique_qptr<Ui::PopupMenu>>();
 		row->setClickedCallback([=] {
+			// Без значков слева нет пустого места под них: обычный стиль меню.
 			*menu = base::make_unique_q<Ui::PopupMenu>(
 				row,
-				st::popupMenuWithIcons);
+				(key == u"look.app_icon"_q)
+					? st::popupMenuWithIcons
+					: st::defaultPopupMenu);
 			for (auto i = 0; i != int(entry.choices.size()); ++i) {
 				const auto choose = [=] {
 					SetInt(key, i);
