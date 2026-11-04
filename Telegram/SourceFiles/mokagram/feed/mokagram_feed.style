@@ -15,11 +15,11 @@ feedPostPadding: 20px;
 feedPostCompactPadding: 12px;
 feedCompactWidth: 480px;
 feedPostGap: 12px;
-feedPostMargin: margins(12px, 0px, 12px, 12px);
+feedPostMargin: margins(12px, 12px, 12px, 0px);
 feedFocusInset: 2px;
 feedFocusWidth: 2px;
-feedFocusRadius: 4px;
-feedAvatarSize: 48px;
+feedFocusRadius: 12px;
+feedAvatarSize: 40px;
 feedMetaGap: 4px;
 feedEmptyPadding: 32px;
 feedEmptyGap: 8px;
@@ -37,24 +37,24 @@ feedScroll: ScrollArea(defaultScrollArea) {
 }
 feedCategoryButton: RoundButton(defaultLightButton) {
     height: 36px;
-    radius: 8px;
+    radius: 18px;
     textTop: 8px;
     textFg: windowFg;
     textFgOver: windowFg;
-    textBg: mainMenuBg;
-    textBgOver: windowBgOver;
+    textBg: windowBgOver;
+    textBgOver: windowBgRipple;
     icon: icon {{ "intro_country_dropdown", windowSubTextFg }};
     iconPosition: point(-8px, 16px);
     style: defaultTextStyle;
 }
 feedAction: RoundButton(defaultActiveButton) {
-    height: 36px;
-    radius: 8px;
-    textTop: 8px;
+    height: 40px;
+    radius: 20px;
+    textTop: 10px;
 }
 feedMoreButton: RoundButton(defaultLightButton) {
     height: 36px;
-    radius: 8px;
+    radius: 18px;
     textTop: 8px;
     textBg: mainMenuBg;
     textBgOver: windowBgOver;
@@ -112,13 +112,13 @@ feedLoading: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
 feedMediaPlaySize: 48px;
 feedMediaPlayIcon: icon {{ "history_file_play", windowFg }};
 
-feedPostRadius: 16px;
+feedPostRadius: 22px;
 feedPostMaxWidth: 720px;
 feedReactionGap: 8px;
 feedReactionButton: RoundButton(defaultLightButton) {
     height: 32px;
     width: -24px;
-    radius: 12px;
+    radius: 16px;
     textTop: 6px;
     textFg: windowFg;
     textFgOver: windowFg;
@@ -132,6 +132,7 @@ feedChosenReactionButton: RoundButton(feedReactionButton) {
     textBg: lightButtonBg;
     textBgOver: lightButtonBgOver;
 }
+feedViewsIcon: icon {{ "history_views", windowSubTextFg }};
 feedViews: FlatLabel(defaultFlatLabel) {
     minWidth: 0px;
     textFg: windowSubTextFg;
@@ -145,4 +146,4 @@ feedPostLabel: FlatLabel(defaultFlatLabel) {
     style: feedPostText;
     textFg: windowFg;
 }
-feedMediaRadius: 12px;
+feedMediaRadius: 16px;
