@@ -6103,9 +6103,12 @@ protected:
 
 		// Полоса управления внизу.
 		p.setPen(QPen(QColor(255, 255, 255, 16), s(1)));
+		// «Сейчас играет»: панель под цвет обложки, на остальных вкладках серая.
+		auto tinted = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+		tinted.setAlpha(230);
 		p.setBrush(anim::color(
-			QColor(42, 49, 53, 170),
-			anim::color(_barFrom, _barTo, _barAnim.value(1.)),
+			tinted,
+			QColor(0x28, 0x28, 0x28),
 			_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
 		p.drawRoundedRect(layout.bar, s(22), s(22));
 		// На «Сейчас играет» маленькая обложка уходит: её заменяет большая.
@@ -6288,7 +6291,7 @@ private:
 				const auto now = anim::color(_barFrom, _barTo, _barAnim.value(1.));
 				_barFrom = now;
 				_barTo = _accent.isValid()
-					? _accent.darker(260)
+					? _accent.darker(180)
 					: QColor(0x28, 0x28, 0x28);
 				_barAnim.start([=] { update(); }, 0., 1., 600, anim::easeOutCubic);
 			}
