@@ -54,7 +54,8 @@ void Step(int delta);
 // Меню по правой кнопке на панели плеера: то же, что в окне музыки, плюс управление.
 void ShowCurrentTrackMenu(
 	not_null<Window::SessionController*> controller,
-	QPoint globalPosition);
+	QPoint globalPosition,
+	QWidget *parent = nullptr);
 
 // Полноценный плеер: обложка, перемотка, кнопки, очередь.
 void ShowPlayerBox(not_null<Window::SessionController*> controller);

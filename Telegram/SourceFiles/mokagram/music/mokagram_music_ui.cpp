@@ -5027,6 +5027,7 @@ protected:
 					update();
 					if (!_coverClosing.animating() && _tab == Tab::Now) {
 						setTab(Tab::Home);
+						_plainAnim.stop();
 					}
 				}, 0., 1., 200, anim::easeOutQuint);
 			}
@@ -5042,6 +5043,18 @@ protected:
 		} else if (!artist.isEmpty()) {
 			close();
 			ShowMusicBox(controller, artist);
+		}
+	}
+	void contextMenuEvent(QContextMenuEvent *e) override {
+		const auto layout = computeLayout();
+		const auto point = e->pos();
+		if ((_tab == Tab::Now && layout.cover.contains(point))
+			|| layout.barCover.contains(point)
+			|| barInfoRect(layout).contains(point)) {
+			ShowCurrentTrackMenu(_controller, e->globalPos(), this);
+			e->accept();
+		} else {
+			RpWidget::contextMenuEvent(e);
 		}
 	}
 	void mouseMoveEvent(QMouseEvent *e) override {
@@ -6187,6 +6200,20 @@ protected:
 			QColor(0x28, 0x28, 0x28),
 			_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
 		p.drawRoundedRect(layout.bar, s(22), s(22));
+		if (closing > 0. && !layout.cover.isEmpty()) {
+			const auto source = QRectF(layout.cover);
+			const auto target = QRectF(layout.barCover);
+			p.save();
+			p.setClipRect(layout.bar);
+			p.translate(source.x() + (target.x() - source.x()) * closing,
+				source.y() + (target.y() - source.y()) * closing);
+			p.scale((source.width() + (target.width() - source.width()) * closing) / source.width(),
+				(source.height() + (target.height() - source.height()) * closing) / source.height());
+			p.translate(-source.x(), -source.y());
+			drawCover(_coverWas, 1. - fade, false);
+			drawCover(_cover, fade, true);
+			p.restore();
+		}
 		// На «Сейчас играет» маленькая обложка уходит: её заменяет большая.
 		const auto barCoverShown = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
 		if (!layout.ultra && barCoverShown > 0.) {
@@ -7381,14 +7408,14 @@ void AddTogetherActions(
 
 void ShowCurrentTrackMenu(
 		not_null<Window::SessionController*> controller,
-		QPoint globalPosition) {
+		QPoint globalPosition,
+		QWidget *parent) {
 	BindController(controller);
 	const auto track = PlayingTrack();
 	QueueState().controller = base::make_weak(controller);
 	static auto menu = base::unique_qptr<Ui::PopupMenu>();
-	QWidget *parent = controller->widget().get();
 	menu = base::make_unique_q<Ui::PopupMenu>(
-		parent,
+		parent ? parent : controller->widget().get(),
 		st::popupMenuWithIcons);
 	if (track.id.isEmpty()) {
 		// Ничего не играет: в меню только вход в комнату.
