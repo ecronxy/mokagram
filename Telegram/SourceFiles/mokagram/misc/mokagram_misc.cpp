@@ -92,6 +92,8 @@ namespace {
 
 constexpr auto kAppIconKey = "look.app_icon";
 
+rpl::lifetime AppIconLifetime;
+
 constexpr auto kMaxAccountsKey = "misc.max_accounts";
 
 // Приватный режим: пачка правил приватности одним тумблером и одним окном.
@@ -628,7 +630,7 @@ void RegisterSettings() {
 	});
 	Settings::IntValue(QString::fromUtf8(kAppIconKey)) | rpl::on_next([] {
 		ApplyAppIcon();
-	}, MenuSideLifetime);
+	}, AppIconLifetime);
 	Settings::Register({
 		.key = u"net.fast_download"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Загрузка файлов")),
@@ -644,9 +646,6 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.sectionIcon = u"download"_q,
 	});
-	Settings::IntValue(u"look.menu_side"_q) | rpl::on_next([](int side) {
-		Ui::SetMainMenuOnRight(side == 1);
-	}, MenuSideLifetime);
 }
 
 void CopyWithAuthor(not_null<HistoryItem*> item) {
