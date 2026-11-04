@@ -628,7 +628,7 @@ void RegisterMotionSettings() {
 		.title = QString::fromUtf8(Lang::Tr("Spotify Client ID")),
 		.description = QString::fromUtf8(Lang::Tr("Client ID приложения Spotify с Redirect URI http://127.0.0.1:8899/mokagram. Секрет приложения не нужен.")),
 		.kind = Settings::Kind::String, .defaultValue = u"a3a01911beb24158bb925ad5ba8dd26c"_q,
-		.dependsOn = u"player.spotify_canvas"_q, .hidden = true });
+		.dependsOn = u"player.spotify_canvas"_q });
 	add({ .key = u"player.spotify_login"_q,
 		.title = QString::fromUtf8(Lang::Tr("Войти в Spotify")),
 		.description = QString::fromUtf8(Lang::Tr("Вход через браузер. Сеанс Spotify хранится в памяти до выхода из mokaGram.")),

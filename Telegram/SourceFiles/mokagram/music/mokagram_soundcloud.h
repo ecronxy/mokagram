@@ -27,6 +27,7 @@ struct Track {
 	QString extension;       // "mp3" или "m4a"
 	int durationMs = 0;
 	bool hls = false;
+	bool unavailable = false;
 	// Для рекомендаций.
 	QString artistId;
 	QString genre;

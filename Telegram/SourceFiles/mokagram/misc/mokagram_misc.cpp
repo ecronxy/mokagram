@@ -79,16 +79,10 @@ namespace Mokagram::Guard {
 void RegisterSettings();
 } // namespace Mokagram::Guard
 
-namespace Ui {
-void SetMainMenuOnRight(bool right);
-} // namespace Ui
-
 namespace Mokagram::Misc {
 namespace {
 
 constexpr auto kMaxAccountsKey = "misc.max_accounts";
-
-rpl::lifetime MenuSideLifetime;
 
 // Приватный режим: пачка правил приватности одним тумблером и одним окном.
 struct LockRow {
@@ -567,9 +561,6 @@ void RegisterSettings() {
 		.defaultValue = QString(),
 		.hidden = true,
 	});
-	Settings::IntValue(u"look.menu_side"_q) | rpl::on_next([](int side) {
-		Ui::SetMainMenuOnRight(side == 1);
-	}, MenuSideLifetime);
 }
 
 void CopyWithAuthor(not_null<HistoryItem*> item) {
