@@ -1510,6 +1510,23 @@ private:
 
 };
 
+// Плавное наведение: 0..1 за 160 мс, дёшево, без отдельных таймеров.
+struct HoverFade {
+	Ui::Animations::Simple animation;
+	bool on = false;
+
+	void set(bool now, Fn<void()> repaint) {
+		if (on == now) {
+			return;
+		}
+		on = now;
+		animation.start(std::move(repaint), now ? 0. : 1., now ? 1. : 0., 160, anim::easeOutCubic);
+	}
+	[[nodiscard]] double value() const {
+		return animation.value(on ? 1. : 0.);
+	}
+};
+
 [[nodiscard]] QRect HomeActionRect(const QRect &art) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
 	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
@@ -1517,14 +1534,21 @@ private:
 		art.bottom() - s(8) - size + 1, size, size);
 }
 
-void PaintHomeCardAction(QPainter &p, const QRect &art, bool album) {
+void PaintHomeCardAction(QPainter &p, const QRect &art, bool album, double shown = 1.) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
 	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
 	if (size < s(24)) {
 		return;
 	}
+	if (shown <= 0.) {
+		return;
+	}
 	const auto button = HomeActionRect(art);
 	p.save();
+	p.setOpacity(p.opacity() * shown);
+	p.translate(button.center());
+	p.scale(0.8 + 0.2 * shown, 0.8 + 0.2 * shown);
+	p.translate(-button.center());
 	p.setPen(Qt::NoPen);
 	p.setBrush(QColor(0, 0, 0, 120));
 	p.drawEllipse(button);
@@ -1547,6 +1571,10 @@ enum class RowMode { Results, Queue, Context, Home, Album };
 
 class Row final : public Ui::AbstractButton {
 public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+	}
+
 	Row(
 		QWidget *parent,
 		not_null<Window::SessionController*> controller,
@@ -1845,9 +1873,10 @@ private:
 		const auto artSize = std::max(width() - 2 * inset, 0);
 		const auto art = QRect(inset, inset, artSize, artSize);
 		p.setPen(Qt::NoPen);
-		p.setBrush((isOver() || isDown() || playing)
-			? QColor(0x30, 0x30, 0x30)
-			: QColor(0x24, 0x24, 0x24));
+		p.setBrush(anim::color(
+			QColor(0x24, 0x24, 0x24),
+			QColor(0x30, 0x30, 0x30),
+			playing ? 1. : _hoverFade.value()));
 		p.drawRoundedRect(rect(), s(8), s(8));
 		if (hasFocus()) {
 			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
@@ -1872,9 +1901,7 @@ private:
 			p.drawImage(art, _art);
 		}
 		p.restore();
-		if (isOver() || isDown() || hasFocus()) {
-			PaintHomeCardAction(p, art, false);
-		}
+		PaintHomeCardAction(p, art, false, hasFocus() ? 1. : _hoverFade.value());
 		const auto textWidth = std::max(width() - 2 * inset - s(28), 0);
 		p.setFont(st::semiboldFont);
 		p.setPen(playing ? st::windowActiveTextFg : st::windowFg);
@@ -1902,6 +1929,8 @@ private:
 	std::shared_ptr<Data::DocumentMedia> _media;
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	Ui::Animations::Simple _likeAnimation;
+
+	HoverFade _hoverFade;
 
 };
 
@@ -2077,6 +2106,10 @@ private:
 
 class HomeAlbumCard final : public Ui::AbstractButton {
 public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+	}
+
 	HomeAlbumCard(QWidget *parent, Album album, Fn<void()> open)
 	: AbstractButton(parent)
 	, _album(std::move(album)) {
@@ -2100,7 +2133,7 @@ protected:
 		const auto side = std::max(width() - 2 * inset, 0);
 		const auto art = QRect(inset, inset, side, side);
 		p.setPen(Qt::NoPen);
-		p.setBrush(isOver() || isDown() ? QColor(0x30, 0x30, 0x30) : QColor(0x24, 0x24, 0x24));
+		p.setBrush(anim::color(QColor(0x24, 0x24, 0x24), QColor(0x30, 0x30, 0x30), _hoverFade.value()));
 		p.drawRoundedRect(rect(), s(8), s(8));
 		if (hasFocus()) {
 			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
@@ -2117,9 +2150,7 @@ protected:
 			p.drawImage(art, _art);
 		}
 		p.restore();
-		if (isOver() || isDown() || hasFocus()) {
-			PaintHomeCardAction(p, art, true);
-		}
+		PaintHomeCardAction(p, art, true, hasFocus() ? 1. : _hoverFade.value());
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
 		p.drawText(QRect(inset, art.bottom() + s(8), side, s(22)),
@@ -2135,10 +2166,16 @@ private:
 	Album _album;
 	QImage _art;
 
+	HoverFade _hoverFade;
+
 };
 
 class HomeRecentTile final : public Ui::AbstractButton {
 public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+	}
+
 	HomeRecentTile(QWidget *parent, RecentItem item, Fn<void()> activate, Fn<void()> play)
 	: AbstractButton(parent)
 	, _item(std::move(item)) {
@@ -2171,7 +2208,7 @@ protected:
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		p.setPen(Qt::NoPen);
-		p.setBrush(isOver() || isDown() ? QColor(0x35, 0x35, 0x35) : QColor(0x29, 0x29, 0x29));
+		p.setBrush(anim::color(QColor(0x29, 0x29, 0x29), QColor(0x35, 0x35, 0x35), _hoverFade.value()));
 		p.drawRoundedRect(rect(), s(6), s(6));
 		const auto art = QRect(0, 0, std::min(height(), width()), height());
 		p.save();
@@ -2186,9 +2223,9 @@ protected:
 		p.restore();
 		const auto left = art.right() + s(13);
 		const auto available = std::max(width() - left - s(64), 0);
-		if (isOver() || isDown() || hasFocus()) {
+		{
 			const auto art = QRect(width() - s(64), (height() - s(60)) / 2, s(60), s(60));
-			PaintHomeCardAction(p, art, false);
+			PaintHomeCardAction(p, art, false, hasFocus() ? 1. : _hoverFade.value());
 		}
 		const auto title = _item.isAlbum ? _item.album.title : _item.track.title;
 		p.setFont(st::semiboldFont);
@@ -2205,6 +2242,8 @@ protected:
 private:
 	RecentItem _item;
 	QImage _art;
+
+	HoverFade _hoverFade;
 
 };
 
@@ -2281,10 +2320,15 @@ public:
 		setAttribute(Qt::WA_TransparentForMouseEvents);
 	}
 
+	// Цвет фона под краем, если он не просто #1c1c1c (например, тонировка альбома).
+	void setColor(Fn<QColor()> color) {
+		_color = std::move(color);
+	}
+
 protected:
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
-		auto from = QColor(0x1c, 0x1c, 0x1c);
+		auto from = _color ? _color() : QColor(0x1c, 0x1c, 0x1c);
 		auto to = from;
 		to.setAlpha(0);
 		const auto vertical = (_edge == Edge::Top || _edge == Edge::Bottom);
@@ -2298,6 +2342,7 @@ protected:
 
 private:
 	const Edge _edge = Edge::Left;
+	Fn<QColor()> _color;
 
 };
 
@@ -4651,12 +4696,16 @@ public:
 		_seek->resize(_seek->width(), s(20));
 		_tabList = _tabScroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_tabScroll));
 		_topFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Top);
+		_topFade->setColor([=] { return pageBackgroundAt(_topFade->y()); });
 		_bottomFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Bottom);
+		_bottomFade->setColor([=] { return pageBackgroundAt(_bottomFade->y() + _bottomFade->height()); });
 		_homeMoreRetryTimer.setSingleShot(true);
 		connect(&_homeMoreRetryTimer, &QTimer::timeout, this, [=] {
 			scheduleHomeMoreIfNeeded();
 		});
 		_tabScroll->scrollTopChanges() | rpl::on_next([=](int) {
+			_topFade->update();
+			_bottomFade->update();
 			if (_tab == Tab::Home && _homeAlbumOpen) {
 				update();
 			}
@@ -6056,7 +6105,7 @@ protected:
 		p.setPen(QPen(QColor(255, 255, 255, 16), s(1)));
 		p.setBrush(anim::color(
 			QColor(42, 49, 53, 170),
-			QColor(0x28, 0x28, 0x28),
+			anim::color(_barFrom, _barTo, _barAnim.value(1.)),
 			_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
 		p.drawRoundedRect(layout.bar, s(22), s(22));
 		// На «Сейчас играет» маленькая обложка уходит: её заменяет большая.
@@ -6234,6 +6283,15 @@ private:
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
 			_accent = CurrentCoverAccent();
+			// Полоса управления плавно перекрашивается под обложку трека.
+			{
+				const auto now = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+				_barFrom = now;
+				_barTo = _accent.isValid()
+					? _accent.darker(260)
+					: QColor(0x28, 0x28, 0x28);
+				_barAnim.start([=] { update(); }, 0., 1., 600, anim::easeOutCubic);
+			}
 			_seek->setFillColor(QColor(0xb7, 0xce, 0xd8));
 			_shuffle->setAccent(_accent);
 			_repeat->setAccent(_accent);
@@ -6321,6 +6379,32 @@ private:
 	const not_null<RoundGlyph*> _queueToggle;
 	const not_null<SeekBar*> _volume;
 	const not_null<Ui::ScrollArea*> _tabScroll;
+	// Цвет фона страницы на высоте y: плоский или градиент тонировки альбома.
+	[[nodiscard]] QColor pageBackgroundAt(int y) const {
+		const auto base = QColor(0x1c, 0x1c, 0x1c);
+		if (_tab != Tab::Home || !_homeAlbumOpen) {
+			return base;
+		}
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto headerWidth = std::max(_tabScroll->width() - s(24), 0);
+		const auto headerHeight = (headerWidth < s(480))
+			? std::min(std::max(headerWidth - s(48), 0), s(224)) + s(160)
+			: s(288);
+		const auto top = _tabScroll->y() - _tabScroll->scrollTop();
+		const auto bottom = top + s(56) + headerHeight;
+		const auto tint = _homeAccent.isValid()
+			? _homeAccent.darker(150)
+			: QColor(0x32, 0x32, 0x32);
+		const auto t = std::clamp(
+			double(y - top) / std::max(bottom - top, 1),
+			0.,
+			1.);
+		return QColor::fromRgbF(
+			tint.redF() + (base.redF() - tint.redF()) * t,
+			tint.greenF() + (base.greenF() - tint.greenF()) * t,
+			tint.blueF() + (base.blueF() - tint.blueF()) * t);
+	}
+
 	HomeEdgeFade *_topFade = nullptr;
 	HomeEdgeFade *_bottomFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
@@ -6395,6 +6479,9 @@ private:
 	Ui::Animations::Simple _coverMorph;
 	QRect _morphFrom;
 	Ui::Animations::Simple _plainAnim;
+	Ui::Animations::Simple _barAnim;
+	QColor _barFrom = QColor(0x28, 0x28, 0x28);
+	QColor _barTo = QColor(0x28, 0x28, 0x28);
 	Ui::Animations::Simple _colorAnim;
 	Ui::Animations::Simple _infoFade;
 	QPixmap _cover;
