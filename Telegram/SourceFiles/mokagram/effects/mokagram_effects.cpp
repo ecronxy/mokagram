@@ -9,10 +9,16 @@
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/effects/animation_value.h"
 #include "ui/effects/animations.h"
+#include "media/clip/media_clip_reader.h"
+#include "core/application.h"
+#include "window/window_controller.h"
+#include "core/file_utilities.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/widgets/fields/input_field.h"
 
+#include <QtCore/QFileInfo>
+#include <QtCore/QPointer>
 #include <QtCore/QRandomGenerator>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QPixmap>
@@ -41,6 +47,8 @@ constexpr auto kDelMax = "fx.delete.max_particles";
 constexpr auto kDelOwn = "fx.delete.only_own";
 constexpr auto kDelColor = "fx.delete.color";
 
+constexpr auto kWallpaperEnabled = "look.wallpaper.enabled";
+constexpr auto kWallpaperFile = "look.wallpaper.file";
 constexpr auto kTypEnabled = "fx.typing.enabled";
 constexpr auto kTypStyle = "fx.typing.style";
 constexpr auto kTypCount = "fx.typing.count";
@@ -596,6 +604,46 @@ void RegisterSettings() {
 	const auto d = [&](S::Entry e) { add(std::move(e), del, "trash"); };
 	const auto U = [](const char *s) { return QString::fromUtf8(s); };
 	add({
+		.key = QString::fromUtf8(kWallpaperEnabled),
+		.title = U(Mokagram::Lang::Tr("Анимированные обои")),
+		.description = U(Mokagram::Lang::Tr("Гиф или видео из файла играет вместо фона чата. Пауза при энергосбережении.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = false,
+	}, U(Mokagram::Lang::Tr("Обои")), "palette");
+	add({
+		.key = u"look.wallpaper.pick"_q,
+		.title = U(Mokagram::Lang::Tr("Файл обоев")),
+		.description = U(Mokagram::Lang::Tr("GIF, MP4 или WebM. Выберите свой файл.")),
+		.kind = S::Kind::String,
+		.defaultValue = U(Mokagram::Lang::Tr("Выбрать")),
+		.dependsOn = QString::fromUtf8(kWallpaperEnabled),
+		.action = [] {
+			const auto window = Core::App().activePrimaryWindow();
+			if (!window) {
+				return;
+			}
+			FileDialog::GetOpenPath(
+				window->widget().get(),
+				QString::fromUtf8(Mokagram::Lang::Tr("Файл обоев")),
+				QString::fromUtf8(Mokagram::Lang::Tr("Анимация (*.gif *.mp4 *.webm *.mov);;"))
+					+ FileDialog::AllFilesFilter(),
+				crl::guard(window->widget().get(), [](FileDialog::OpenResult &&result) {
+					if (!result.paths.isEmpty()) {
+						S::SetString(
+							QString::fromUtf8(kWallpaperFile),
+							result.paths.front());
+					}
+				}));
+		},
+	}, U(Mokagram::Lang::Tr("Обои")), "palette");
+	S::Register({
+		.key = QString::fromUtf8(kWallpaperFile),
+		.kind = S::Kind::String,
+		.defaultValue = QString(),
+		.hidden = true,
+	});
+
+	add({
 		.key = u"fx.startup.enabled"_q,
 		.title = U(Mokagram::Lang::Tr("Заставка при запуске")),
 		.description = U(Mokagram::Lang::Tr("Знак mokaGram проявляется и растворяется при открытии окна.")),
@@ -826,6 +874,131 @@ void PlayStartup(not_null<QWidget*> host) {
 		return;
 	}
 	Ui::CreateChild<StartupOverlay>(host.get());
+}
+
+
+namespace {
+
+struct WallpaperState {
+	QString path;
+	Media::Clip::ReaderPointer reader;
+	QPointer<QWidget> widget;
+	QSize frame;
+	bool bad = false;
+	bool subscribed = false;
+	rpl::lifetime lifetime;
+};
+
+[[nodiscard]] WallpaperState &Wallpaper() {
+	static auto result = WallpaperState();
+	return result;
+}
+
+void WallpaperRepaint() {
+	if (const auto widget = Wallpaper().widget.data()) {
+		widget->update();
+	}
+}
+
+void WallpaperReset() {
+	auto &st = Wallpaper();
+	st.reader = nullptr;
+	st.frame = QSize();
+	st.bad = false;
+	st.path = S::Bool(QString::fromUtf8(kWallpaperEnabled))
+		? S::String(QString::fromUtf8(kWallpaperFile))
+		: QString();
+	WallpaperRepaint();
+}
+
+void WallpaperEnsureReader() {
+	auto &st = Wallpaper();
+	if (st.reader || st.bad || st.path.isEmpty()) {
+		return;
+	}
+	if (!QFileInfo::exists(st.path)) {
+		st.bad = true;
+		return;
+	}
+	st.reader = Media::Clip::MakeReader(st.path, [](Media::Clip::Notification n) {
+		auto &st = Wallpaper();
+		if (n == Media::Clip::Notification::Reinit) {
+			if (!st.reader || st.reader->state() == Media::Clip::State::Error) {
+				st.bad = true;
+				st.reader = nullptr;
+			}
+		}
+		WallpaperRepaint();
+	});
+}
+
+} // namespace
+
+void WallpaperAttach(not_null<QWidget*> widget) {
+	auto &st = Wallpaper();
+	st.widget = widget.get();
+	if (!st.subscribed) {
+		st.subscribed = true;
+		S::Changed() | rpl::filter([](const QString &key) {
+			return key == QString::fromUtf8(kWallpaperEnabled)
+				|| key == QString::fromUtf8(kWallpaperFile);
+		}) | rpl::on_next([] {
+			WallpaperReset();
+		}, st.lifetime);
+		WallpaperReset();
+	}
+}
+
+bool PaintWallpaper(QPainter &p, QSize fill, QRect clip, bool paused) {
+	auto &st = Wallpaper();
+	if (st.path.isEmpty() || st.bad || fill.isEmpty()) {
+		return false;
+	}
+	WallpaperEnsureReader();
+	if (!st.reader || !st.reader->ready()) {
+		return false;
+	}
+	const auto original = QSize(st.reader->width(), st.reader->height());
+	if (original.isEmpty()) {
+		return false;
+	}
+	// Окно в фоне: кадр замирает, декодер не работает впустую.
+	paused = paused || (QGuiApplication::applicationState() != Qt::ApplicationActive);
+	// По заполнению: кадр масштабируется так, чтобы закрыть весь фон,
+	// но декодируется не крупнее 1280 по длинной стороне: остальное растянет отрисовка.
+	constexpr auto kMaxSide = 1280;
+	auto target = fill;
+	if (std::max(target.width(), target.height()) > kMaxSide) {
+		target = target.scaled(
+			QSize(kMaxSide, kMaxSide),
+			Qt::KeepAspectRatio);
+	}
+	const auto frame = original.scaled(target, Qt::KeepAspectRatioByExpanding);
+	if (!st.reader->started()) {
+		st.frame = frame;
+		st.reader->start({ .frame = frame, .outer = frame });
+		return false;
+	}
+	const auto image = st.reader->current(
+		{ .frame = st.frame, .outer = st.frame },
+		paused ? 0 : crl::now());
+	if (image.isNull()) {
+		return false;
+	}
+	// Растягиваем до размера фона, если декодировали меньше.
+	const auto cover = QSizeF(image.size() / image.devicePixelRatio())
+		.scaled(QSizeF(fill), Qt::KeepAspectRatioByExpanding);
+	p.save();
+	p.setClipRect(clip);
+	p.drawImage(
+		QRectF(
+			(fill.width() - cover.width()) / 2.,
+			(fill.height() - cover.height()) / 2.,
+			cover.width(),
+			cover.height()),
+		image);
+	p.restore();
+	return true;
 }
 
 } // namespace Mokagram::Effects
