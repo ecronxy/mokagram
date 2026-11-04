@@ -8,6 +8,7 @@
 namespace Ui {
 class AbstractButton;
 class BoxContent;
+class RpWidget;
 } // namespace Ui
 
 namespace style {
@@ -33,6 +34,13 @@ enum class RoundIcon {
 	not_null<QWidget*> parent,
 	RoundIcon icon,
 	Fn<void()> callback);
+
+[[nodiscard]] not_null<Ui::AbstractButton*> MakeSwitch(
+	not_null<QWidget*> parent, rpl::producer<bool> value);
+[[nodiscard]] not_null<Ui::AbstractButton*> MakeSwitch(
+	not_null<QWidget*> parent, bool checked, Fn<void(bool)> changed,
+	rpl::producer<bool> active = rpl::single(true));
+void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg);
 
 void RoundLayer(not_null<Ui::BoxContent*> box);
 void PaintCard(QPainter &p, QRect rect);
