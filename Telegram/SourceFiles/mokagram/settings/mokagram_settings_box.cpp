@@ -1595,9 +1595,11 @@ void AskForRestart() {
 		return u"history"_q;
 	} else if (starts({ "player.", "lyrics." })) {
 		return u"music"_q;
-	} else if (starts({ "lag.", "misc.ping" })
+	} else if (starts({ "lag.", "misc.ping", "net." })
 		|| group.name == U(Mokagram::Lang::Tr("Аккаунты"))) {
 		return u"system"_q;
+	} else if (starts({ "fx.startup" })) {
+		return u"look"_q;
 	} else if (starts({ "chats.", "fx.", "inline.", "translation.", "documents." })) {
 		return u"chats"_q;
 	} else if (starts({ "misc.stars", "quote." })) {
