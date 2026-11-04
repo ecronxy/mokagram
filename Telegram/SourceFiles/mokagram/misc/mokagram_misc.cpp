@@ -27,6 +27,8 @@
 #include "api/api_blocked_peers.h"
 #include "api/api_user_privacy.h"
 #include "apiwrap.h"
+#include "base/flat_map.h"
+#include "base/timer.h"
 #include "main/main_domain.h"
 #include "window/main_window.h"
 #include <QtGui/QPixmap>
@@ -752,6 +754,84 @@ QByteArray BrandRewrite(const QByteArray &value) {
 		i = after;
 	}
 	return result;
+}
+
+
+namespace {
+
+struct DcCache {
+	base::flat_map<uint64, int> values;
+	bool loaded = false;
+	bool saveQueued = false;
+};
+
+[[nodiscard]] DcCache &UserDcCache() {
+	static auto result = DcCache();
+	return result;
+}
+
+[[nodiscard]] QString DcCachePath() {
+	return cWorkingDir() + u"tdata/moka_dc_cache.json"_q;
+}
+
+void LoadDcCache() {
+	auto &cache = UserDcCache();
+	if (cache.loaded) {
+		return;
+	}
+	cache.loaded = true;
+	auto file = QFile(DcCachePath());
+	if (!file.open(QIODevice::ReadOnly)) {
+		return;
+	}
+	const auto object = QJsonDocument::fromJson(file.readAll()).object();
+	for (auto i = object.begin(); i != object.end(); ++i) {
+		cache.values.emplace(i.key().toULongLong(), i.value().toInt());
+	}
+}
+
+void SaveDcCache() {
+	auto &cache = UserDcCache();
+	if (cache.saveQueued) {
+		return;
+	}
+	cache.saveQueued = true;
+	// Пишем не на каждое изменение, а раз в несколько секунд.
+	base::call_delayed(3000, qApp, [] {
+		auto &cache = UserDcCache();
+		cache.saveQueued = false;
+		auto object = QJsonObject();
+		for (const auto &[id, dc] : cache.values) {
+			object.insert(QString::number(id), dc);
+		}
+		auto file = QFile(DcCachePath());
+		if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+			file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+		}
+	});
+}
+
+} // namespace
+
+void RememberUserDc(uint64 userId, int dcId) {
+	if (!userId || dcId < 1 || dcId > 5) {
+		return;
+	}
+	LoadDcCache();
+	auto &values = UserDcCache().values;
+	const auto i = values.find(userId);
+	if (i != values.end() && i->second == dcId) {
+		return;
+	}
+	values[userId] = dcId;
+	SaveDcCache();
+}
+
+int RememberedUserDc(uint64 userId) {
+	LoadDcCache();
+	const auto &values = UserDcCache().values;
+	const auto i = values.find(userId);
+	return (i != values.end()) ? i->second : 0;
 }
 
 } // namespace Mokagram::Misc
