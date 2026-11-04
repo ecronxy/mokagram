@@ -1480,7 +1480,7 @@ public:
 	: AbstractButton(parent)
 	, _track(std::move(track)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		const auto refresh = [=] {
 			const auto text = IsLiked(_track.id)
 				? "Убрать из избранного"
@@ -1563,7 +1563,7 @@ public:
 	, _results(std::move(results)) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		const auto unavailable = _mode == RowMode::Album && _track.unavailable;
 		const auto unavailableText = QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"));
 		setAccessibleName(_track.title + u" - "_q + _track.artist
@@ -1913,7 +1913,7 @@ public:
 	, _back(back) {
 		resize(width(), style::ConvertScale(56));
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(_back
 			? QString::fromUtf8(Mokagram::Lang::Tr("Назад")) + u": "_q + _title
 			: QString::fromUtf8(Mokagram::Lang::Tr("Показать все")) + u": "_q + _title);
@@ -2001,7 +2001,7 @@ public:
 	, _album(album) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Альбом"))
 			+ u": "_q + _album.title + u" - "_q + _album.artist);
 		setClickedCallback(std::move(open));
@@ -2081,7 +2081,7 @@ public:
 	: AbstractButton(parent)
 	, _album(std::move(album)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Альбом"))
 			+ u": "_q + _album.title + u" - "_q + _album.artist);
 		setClickedCallback(std::move(open));
@@ -2143,7 +2143,7 @@ public:
 	: AbstractButton(parent)
 	, _item(std::move(item)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		const auto title = _item.isAlbum ? _item.album.title : _item.track.title;
 		const auto artist = _item.isAlbum ? _item.album.artist : _item.track.artist;
 		setAccessibleName((_item.isAlbum
@@ -2685,7 +2685,7 @@ public:
 	, _image(std::move(image))
 	, _source(source) {
 		setGeometry(parent->rect());
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		parent->installEventFilter(this);
 		show();
 		raise();
@@ -2773,7 +2773,7 @@ public:
 	: AbstractButton(parent)
 	, _message(std::move(message)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Попробовать снова")));
 		setClickedCallback(std::move(retry));
 	}
@@ -4619,7 +4619,7 @@ public:
 	, _canvas(this, [=] {
 		update(computeLayout().cover);
 	}) {
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setMouseTracking(true);
 		_view->setBig(true);
 		_view->setBackground([=](QPainter &p, QRect area) {
@@ -6860,7 +6860,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		Mokagram::Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();
-		content->setFocusPolicy(Qt::StrongFocus);
+		content->setFocusPolicy(Qt::TabFocus);
 		const auto instance = Media::Player::instance();
 		content->events(
 		) | rpl::filter([](not_null<QEvent*> e) {
