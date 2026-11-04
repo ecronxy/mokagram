@@ -4,6 +4,7 @@
 // mokagram-id: 7b8dec14
 #include "mokagram/music/mokagram_music_ui.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "ui/boxes/confirm_box.h"
 #include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
@@ -6892,7 +6893,34 @@ struct Together {
 	QString lastKey;
 	base::Timer timer;
 	bool busy = false;
+	int listeners = 0;
+	int lastEvent = 0;
+	bool eventsSeen = false;
+	bool eventsBusy = false;
+	int tickCount = 0;
 };
+
+[[nodiscard]] Together &TogetherState();
+
+constexpr auto kTogetherPollMs = 700;
+constexpr auto kTogetherDriftMs = 700;
+
+// Сообщает, когда число слушателей изменилось (первый раз молча).
+void TogetherNoteListeners(int count) {
+	auto &t = TogetherState();
+	if (count <= 0 || count == t.listeners) {
+		return;
+	}
+	const auto first = (t.listeners == 0);
+	t.listeners = count;
+	if (first) {
+		return;
+	}
+	if (const auto controller = QueueState().controller.get()) {
+		controller->showToast(QString::fromUtf8(
+			Mokagram::Lang::Tr("Слушают вместе: ")) + QString::number(count));
+	}
+}
 
 [[nodiscard]] Together &TogetherState() {
 	static auto result = Together();
@@ -6911,6 +6939,11 @@ void TogetherStop() {
 	t.lastVer = -1;
 	t.lastKey.clear();
 	t.busy = false;
+	t.listeners = 0;
+	t.lastEvent = 0;
+	t.eventsSeen = false;
+	t.eventsBusy = false;
+	t.tickCount = 0;
 }
 
 // Что сейчас играет у нас: ключ трека, позиция мс, играет ли. false: слать нечего.
@@ -6940,7 +6973,12 @@ void TogetherHostTick() {
 	const auto code = t.code;
 	Mokagram::Bot::Ask(
 		u"room:put:%1:%2|%3|%4"_q.arg(code).arg(key).arg(position).arg(playing ? 1 : 0),
-		[=](Mokagram::Bot::Results) { TogetherState().busy = false; },
+		[=](Mokagram::Bot::Results results) {
+			TogetherState().busy = false;
+			if (!results.empty()) {
+				TogetherNoteListeners(results.front().description.toInt());
+			}
+		},
 		[=] { TogetherState().busy = false; });
 }
 
@@ -6949,6 +6987,9 @@ void TogetherGuestApply(const QString &reply, qint64 roundTripMs) {
 	const auto parts = reply.split('|');
 	if (parts.size() < 5) {
 		return;
+	}
+	if (parts.size() > 5) {
+		TogetherNoteListeners(parts[5].toInt());
 	}
 	const auto key = parts[1];
 	auto position = parts[2].toLongLong();
@@ -6981,8 +7022,8 @@ void TogetherGuestApply(const QString &reply, qint64 roundTripMs) {
 	} else if (!playing && weArePlaying) {
 		instance->pause(AudioMsgId::Type::Song);
 	}
-	// Расхождение больше секунды: перематываем к позиции хозяина.
-	if (state.length > 0 && std::abs(ours - position) > 1000) {
+	// Расхождение больше порога: перематываем к позиции хозяина.
+	if (state.length > 0 && std::abs(ours - position) > kTogetherDriftMs) {
 		const auto total = state.length * 1000 / std::max<int64>(state.frequency, 1);
 		if (total > 0) {
 			instance->finishSeeking(
@@ -7021,6 +7062,123 @@ void TogetherGuestTick() {
 		[=] { TogetherState().busy = false; });
 }
 
+// События комнаты (реакции и сообщения): забираем новые раз в несколько опросов.
+void TogetherPollEvents() {
+	auto &t = TogetherState();
+	if (!TogetherActive() || t.eventsBusy) {
+		return;
+	}
+	t.eventsBusy = true;
+	const auto code = t.code;
+	Mokagram::Bot::Ask(
+		u"room:ev:%1:%2"_q.arg(code).arg(t.lastEvent),
+		[=](Mokagram::Bot::Results results) {
+			auto &t = TogetherState();
+			t.eventsBusy = false;
+			if (!TogetherActive() || t.code != code) {
+				return;
+			}
+			const auto show = t.eventsSeen;
+			t.eventsSeen = true;
+			for (const auto &item : results) {
+				const auto parts = item.title.split('|');
+				if (parts.size() < 4) {
+					continue;
+				}
+				const auto id = parts[0].toInt();
+				if (id <= t.lastEvent) {
+					continue;
+				}
+				t.lastEvent = id;
+				if (!show) {
+					continue;
+				}
+				const auto body = parts.mid(3).join('|');
+				const auto text = (parts[1] == u"r"_q)
+					? parts[2] + u" "_q + body
+					: parts[2] + u": "_q + body;
+				if (const auto controller = QueueState().controller.get()) {
+					controller->showToast(text);
+				}
+			}
+		},
+		[=] { TogetherState().eventsBusy = false; });
+}
+
+void TogetherSay(
+		not_null<Window::SessionController*> controller,
+		const QString &kind,
+		QString body) {
+	body = body.simplified().left(120);
+	if (!TogetherActive() || body.isEmpty()) {
+		return;
+	}
+	Mokagram::Bot::Ask(
+		u"room:say:%1:%2:%3"_q.arg(TogetherState().code).arg(kind).arg(body),
+		[=](Mokagram::Bot::Results) {
+			// Свои события приходят обратно через опрос, отдельно не показываем.
+			TogetherPollEvents();
+		},
+		[=] {
+			controller->showToast(QString::fromUtf8(
+				Mokagram::Lang::Tr("Не удалось отправить")));
+		});
+}
+
+void TogetherWho(not_null<Window::SessionController*> controller) {
+	if (!TogetherActive()) {
+		return;
+	}
+	const auto weak = base::make_weak(controller);
+	Mokagram::Bot::Ask(u"room:who:%1"_q.arg(TogetherState().code), [=](Mokagram::Bot::Results results) {
+		const auto strong = weak.get();
+		if (!strong) {
+			return;
+		}
+		auto names = QStringList();
+		for (const auto &item : results) {
+			if (item.title == u"none"_q) {
+				continue;
+			}
+			names.push_back(item.title.startsWith('*')
+				? item.title.mid(1) + QString::fromUtf8(" (хозяин)")
+				: item.title);
+		}
+		strong->show(Ui::MakeInformBox(
+			names.isEmpty()
+				? QString::fromUtf8(Mokagram::Lang::Tr("В комнате пока никого не видно"))
+				: names.join('\n')));
+	}, [=] {
+		if (const auto strong = weak.get()) {
+			strong->showToast(QString::fromUtf8(
+				Mokagram::Lang::Tr("Не удалось получить список")));
+		}
+	});
+}
+
+void TogetherChatBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(QString::fromUtf8(
+			Mokagram::Lang::Tr("Сообщение в комнату"))));
+		const auto input = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Текст")))));
+		box->setFocusCallback([=] { input->setFocusFast(); });
+		const auto submit = [=] {
+			TogetherSay(controller, u"m"_q, input->getLastText());
+			box->closeBox();
+		};
+		input->submits() | rpl::on_next(submit, input->lifetime());
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отправить"))),
+			submit);
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отмена"))),
+			[=] { box->closeBox(); });
+	}));
+}
+
 void TogetherStart(not_null<Window::SessionController*> controller, QString code, bool host) {
 	BindController(controller);
 	Subscribe();
@@ -7029,13 +7187,17 @@ void TogetherStart(not_null<Window::SessionController*> controller, QString code
 	t.code = code;
 	t.host = host;
 	t.timer.setCallback([] {
+		auto &t = TogetherState();
+		if (++t.tickCount % 3 == 0) {
+			TogetherPollEvents();
+		}
 		if (TogetherState().host) {
 			TogetherHostTick();
 		} else {
 			TogetherGuestTick();
 		}
 	});
-	t.timer.callEach(2000);
+	t.timer.callEach(kTogetherPollMs);
 	if (host) {
 		TogetherHostTick();
 	} else {
@@ -7103,7 +7265,29 @@ void AddTogetherActions(
 	};
 	if (TogetherActive()) {
 		const auto code = TogetherState().code;
-		add(QString::fromUtf8(Mokagram::Lang::Tr("Выйти из комнаты ")) + code, [=] {
+		const auto listeners = TogetherState().listeners;
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Скопировать код комнаты ")) + code, [=] {
+			QGuiApplication::clipboard()->setText(code);
+			controller->showToast(QString::fromUtf8(
+				Mokagram::Lang::Tr("Код скопирован")));
+		}, &st::menuIconLink);
+		for (const auto emoji : { "🔥", "❤️", "😂", "👏" }) {
+			const auto text = QString::fromUtf8(emoji);
+			add(QString::fromUtf8(Mokagram::Lang::Tr("Реакция ")) + text, [=] {
+				TogetherSay(controller, u"r"_q, text);
+			}, nullptr);
+		}
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Написать в комнату")), [=] {
+			TogetherChatBox(controller);
+		}, &st::menuIconChats);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Кто в комнате")), [=] {
+			TogetherWho(controller);
+		}, &st::menuIconProfile);
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Выйти из комнаты"))
+			+ (listeners > 0
+				? QString::fromUtf8(Mokagram::Lang::Tr(" (слушают: "))
+					+ QString::number(listeners) + u")"_q
+				: QString()), [=] {
 			TogetherStop();
 			controller->showToast(QString::fromUtf8(
 				Mokagram::Lang::Tr("Вы вышли из комнаты")));
