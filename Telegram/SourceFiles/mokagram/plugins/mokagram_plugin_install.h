@@ -58,7 +58,6 @@ void OpenPluginDocument(
 	FullMsgId replyTo = FullMsgId());
 
 // Делает из прямоугольной кнопки пилюлю: накладывает на углы виджеты цвета фона.
-void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg);
 
 // Окно первого запуска (один раз после входа) и его принудительный показ.
 void MaybeShowWelcome(not_null<Window::SessionController*> controller);
