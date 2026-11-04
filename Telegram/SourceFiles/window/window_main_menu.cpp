@@ -253,15 +253,29 @@ private:
 		const auto over = _hover.value(isOver() ? 1. : 0.);
 		const auto pressed = _press.value(isDown() ? 1. : 0.);
 		const auto on = _toggled && _toggled();
+		if (on != _wasOn) {
+			_wasOn = on;
+			_toggle.start(
+				[=] { update(); },
+				on ? 0. : 1.,
+				on ? 1. : 0.,
+				220,
+				anim::easeOutCubic);
+		}
+		const auto lit = _toggle.value(on ? 1. : 0.);
 		p.setOpacity(_reveal);
 		// Всплывает из меньшего размера, при нажатии слегка проседает.
 		const auto scale = (0.6 + 0.4 * _reveal) * (1. - 0.08 * pressed);
 		p.translate(width() / 2., height() / 2.);
 		p.scale(scale, scale);
 		p.translate(-width() / 2., -height() / 2.);
-		if (over > 0. || on) {
-			auto bg = on ? st::windowActiveTextFg->c : st::windowFg->c;
-			bg.setAlphaF(on ? 0.20 : 0.08 * over);
+		if (over > 0. || lit > 0.) {
+			// Подсветка включённого пункта плавно загорается и гаснет.
+			auto bg = anim::color(
+				st::windowFg->c,
+				st::windowActiveTextFg->c,
+				lit);
+			bg.setAlphaF(0.08 * over * (1. - lit) + 0.20 * lit);
 			p.setPen(Qt::NoPen);
 			p.setBrush(bg);
 			p.drawRoundedRect(rect(), height() / 2., height() / 2.);
@@ -269,9 +283,10 @@ private:
 		if (!_icon) {
 			return;
 		}
-		const auto color = on
-			? st::windowActiveTextFg->c
-			: anim::color(st::menuIconFg->c, st::menuIconFgOver->c, over);
+		const auto color = anim::color(
+			anim::color(st::menuIconFg->c, st::menuIconFgOver->c, over),
+			st::windowActiveTextFg->c,
+			lit);
 		_icon->paint(
 			p,
 			QPoint((width() - _icon->width()) / 2, (height() - _icon->height()) / 2),
@@ -282,8 +297,10 @@ private:
 	const style::icon *_icon = nullptr;
 	Fn<bool()> _toggled;
 	double _reveal = 0.;
+	bool _wasOn = false;
 	Ui::Animations::Simple _hover;
 	Ui::Animations::Simple _press;
+	Ui::Animations::Simple _toggle;
 
 };
 

@@ -8,10 +8,13 @@
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/effects/animation_value.h"
 #include "ui/effects/animations.h"
+#include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/widgets/fields/input_field.h"
 
 #include <QtCore/QRandomGenerator>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QPixmap>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
 #include <QtGui/QRadialGradient>
@@ -591,6 +594,14 @@ void RegisterSettings() {
 	};
 	const auto d = [&](S::Entry e) { add(std::move(e), del, "trash"); };
 	const auto U = [](const char *s) { return QString::fromUtf8(s); };
+	add({
+		.key = u"fx.startup.enabled"_q,
+		.title = U(Mokagram::Lang::Tr("Заставка при запуске")),
+		.description = U(Mokagram::Lang::Tr("Знак mokaGram проявляется и растворяется при открытии окна.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+	}, U(Mokagram::Lang::Tr("Запуск")), "palette");
+
 
 	d({
 		.key = u"fx.delete.enabled"_q,
@@ -743,6 +754,73 @@ void PlayDelete(
 		return;
 	}
 	canvas->addBurst(std::move(burst));
+}
+
+
+namespace {
+
+// Накрывает окно фоном клиента, пока знак проявляется, затем плавно растворяется.
+class StartupOverlay final : public Ui::RpWidget {
+public:
+	StartupOverlay(not_null<QWidget*> host)
+	: RpWidget(host) {
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+		setGeometry(host->rect());
+		host->installEventFilter(this);
+		_logo = QGuiApplication::windowIcon().pixmap(
+			QSize(style::ConvertScale(128), style::ConvertScale(128)));
+		show();
+		raise();
+		_animation.start([=] {
+			update();
+			if (!_animation.animating()) {
+				deleteLater();
+			}
+		}, 0., 1., 900, anim::linear);
+	}
+
+protected:
+	bool eventFilter(QObject *o, QEvent *e) override {
+		if (e->type() == QEvent::Resize) {
+			setGeometry(parentWidget()->rect());
+		}
+		return false;
+	}
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto t = _animation.value(1.);
+		// 0..0.35: знак въезжает, 0.35..1: всё растворяется.
+		const auto appear = anim::easeOutCubic(1., std::clamp(t / 0.35, 0., 1.));
+		const auto fade = 1. - anim::easeOutCubic(1., std::clamp((t - 0.35) / 0.65, 0., 1.));
+		p.setOpacity(fade);
+		p.fillRect(rect(), QColor(0x1c, 0x1c, 0x1c));
+		if (_logo.isNull()) {
+			return;
+		}
+		const auto size = style::ConvertScale(96);
+		const auto scale = (0.8 + 0.2 * appear) + 0.12 * (1. - fade);
+		p.translate(rect().center());
+		p.scale(scale, scale);
+		p.setOpacity(fade * appear);
+		p.drawPixmap(
+			QRect(-size / 2, -size / 2, size, size),
+			_logo);
+	}
+
+private:
+	QPixmap _logo;
+	Ui::Animations::Simple _animation;
+
+};
+
+} // namespace
+
+void PlayStartup(not_null<QWidget*> host) {
+	if (!S::Bool(u"fx.startup.enabled"_q)) {
+		return;
+	}
+	Ui::CreateChild<StartupOverlay>(host.get());
 }
 
 } // namespace Mokagram::Effects

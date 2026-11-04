@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mainwindow.h"
+#include "mokagram/effects/mokagram_effects.h"
 
 #include "data/data_document.h"
 #include "data/data_session.h"
@@ -168,6 +169,7 @@ void MainWindow::finishFirstShow() {
 	} else if (!_passcodeLock && !_setupEmailLock && _intro) {
 		_intro->setInnerFocus();
 	}
+	Mokagram::Effects::PlayStartup(this);
 }
 
 void MainWindow::clearWidgetsHook() {

@@ -17,6 +17,9 @@ namespace Mokagram::Effects {
 
 void RegisterSettings();
 
+// Короткая заставка при первом показе окна: знак проявляется и растворяется.
+void PlayStartup(not_null<QWidget*> host);
+
 // Сообщение в rectInSource (координаты source) рассыпается поверх host.
 void PlayDelete(
 	not_null<QWidget*> host,
