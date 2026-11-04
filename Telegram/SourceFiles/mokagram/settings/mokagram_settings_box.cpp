@@ -754,6 +754,7 @@ private:
 			{ u"filter"_q, QString::fromUtf8("📑") },
 			{ u"block"_q, QString::fromUtf8("🚫") },
 			{ u"storage"_q, QString::fromUtf8("📁") },
+			{ u"download"_q, QString::fromUtf8("🔽") },
 			{ u"calendar"_q, QString::fromUtf8("🗓") },
 			{ u"accounts"_q, QString::fromUtf8("👥") },
 			{ u"palette"_q, QString::fromUtf8("🖼") },

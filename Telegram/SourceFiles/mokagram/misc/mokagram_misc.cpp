@@ -646,6 +646,7 @@ void RegisterSettings() {
 			QString::fromUtf8(Mokagram::Lang::Tr("Максимум")),
 		},
 		.category = u"other"_q,
+		.sectionIcon = u"download"_q,
 	});
 	Settings::IntValue(u"look.menu_side"_q) | rpl::on_next([](int side) {
 		Ui::SetMainMenuOnRight(side == 1);
