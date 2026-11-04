@@ -67,6 +67,7 @@
 #include "ui/image/image.h"
 #include "ui/image/image_prepare.h"
 #include "ui/layers/generic_box.h"
+#include "ui/color_contrast.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "ui/power_saving.h"
@@ -116,6 +117,7 @@ constexpr auto kArtSize = 56;
 
 struct Radio {
 	Track seed;
+	QString sourceId;
 	std::set<QString> seen;
 	std::set<QString> cursors;
 	QString next;
@@ -508,7 +510,7 @@ void FetchRadioBatch(
 		Fn<void(std::vector<Track>, QString)> done,
 		int pagesLeft = 4) {
 	const auto cursor = radio->next;
-	LoadRelatedPage(radio->seed.id, cursor, [=](RelatedPage page) {
+	LoadRelatedPage(radio->sourceId, cursor, [=](RelatedPage page) {
 		if (!valid()) {
 			return;
 		}
@@ -630,7 +632,9 @@ void CommitRadio(
 	queue.tracks.insert(queue.tracks.end(), tracks.begin(), tracks.end());
 	queue.index = 0;
 	queue.currentId = seed.id;
-	if (!keepPlaying) {
+	if (!keepPlaying && IsTelegramTrack(seed)) {
+		PlayIndex(0);
+	} else if (!keepPlaying) {
 		queue.current = seed;
 		queue.recorded = false;
 		const auto document = MakeDocument(&controller->session(), seed, path);
@@ -665,7 +669,13 @@ void PrepareRadioSeed(
 		std::vector<Track> tracks,
 		Fn<bool()> valid) {
 	const auto seed = radio->seed;
-	if (PlayingTrack().id == seed.id) {
+	if (IsTelegramTrack(seed)
+		&& PlayingTrack().id != seed.id
+		&& !TrackMessage(seed)) {
+		FailRadio();
+		return;
+	}
+	if (PlayingTrack().id == seed.id || IsTelegramTrack(seed)) {
 		CommitRadio(radio, tracks, seed, {});
 		return;
 	}
@@ -694,12 +704,14 @@ void StartRadio(
 		not_null<Window::SessionController*> controller,
 		Track seed) {
 	BindController(controller);
-	if (IsTelegramTrack(seed) || !seed.id.toULongLong() || IsArtistBlocked(seed)) {
+	if ((!IsTelegramTrack(seed) && !seed.id.toULongLong())
+		|| IsArtistBlocked(seed)) {
 		return;
 	}
 	auto &queue = QueueState();
 	const auto radio = std::make_shared<Radio>();
 	radio->seed = seed;
+	radio->sourceId = IsTelegramTrack(seed) ? QString() : seed.id;
 	RememberRadioTrack(*radio, seed);
 	queue.pendingRadio = radio;
 	const auto session = queue.session;
@@ -713,20 +725,53 @@ void StartRadio(
 	};
 	controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
 		"Загружаю радио по треку: ")) + seed.title);
-	FetchRadioBatch(radio, valid, [=](std::vector<Track> tracks, QString error) {
-		const auto controller = QueueState().controller.get();
-		if (!controller) {
+	const auto fetch = [=] {
+		FetchRadioBatch(radio, valid, [=](std::vector<Track> tracks, QString error) {
+			const auto controller = QueueState().controller.get();
+			if (!controller) {
+				return;
+			}
+			if (!error.isEmpty() || tracks.empty()) {
+				QueueState().pendingRadio.reset();
+				controller->showToast(error.isEmpty()
+					? QString::fromUtf8(Mokagram::Lang::Tr(
+						"Нет новых подходящих треков для радио."))
+					: error);
+				return;
+			}
+			PrepareRadioSeed(radio, std::move(tracks), valid);
+		});
+	};
+	if (!IsTelegramTrack(seed)) {
+		fetch();
+		return;
+	}
+	const auto metadata = MotionProtocol::Metadata(seed.title, seed.artist, false);
+	Search(metadata.artist + u" "_q + metadata.title, 0, [=](SearchResult result) {
+		if (!valid()) {
 			return;
 		}
-		if (!error.isEmpty() || tracks.empty()) {
-			QueueState().pendingRadio.reset();
-			controller->showToast(error.isEmpty()
-				? QString::fromUtf8(Mokagram::Lang::Tr(
-					"Нет новых подходящих треков для радио."))
-				: error);
-			return;
+		for (const auto &candidate : result.tracks) {
+			const auto match = MotionProtocol::Metadata(
+				candidate.title, candidate.artist, true);
+			const auto hasDuration = seed.durationMs > 0 && candidate.durationMs > 0;
+			if (candidate.id.toULongLong() && !IsArtistBlocked(candidate)
+				&& MotionProtocol::MatchesTrack(
+					metadata.title, metadata.artist, hasDuration ? seed.durationMs : 1,
+					match.title, match.artist, hasDuration ? candidate.durationMs : 1)) {
+				radio->sourceId = candidate.id;
+				RememberRadioTrack(*radio, candidate);
+				fetch();
+				return;
+			}
 		}
-		PrepareRadioSeed(radio, std::move(tracks), valid);
+		QueueState().pendingRadio.reset();
+		if (const auto controller = QueueState().controller.get()) {
+			controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
+				result.error.isEmpty()
+					? "Не найден подходящий трек для радио."
+					: "Не удалось загрузить радио. Попробуйте ещё раз.")));
+		}
 	});
 }
 
@@ -734,7 +779,9 @@ void AddRadioAction(
 		not_null<Ui::PopupMenu*> menu,
 		not_null<Window::SessionController*> controller,
 		const Track &track) {
-	const auto supported = !IsTelegramTrack(track) && track.id.toULongLong();
+	const auto supported = IsTelegramTrack(track)
+		? (!track.title.trimmed().isEmpty() && !track.artist.trimmed().isEmpty())
+		: (track.id.toULongLong() != 0);
 	const auto text = !supported
 		? Mokagram::Lang::Tr("Радио недоступно для треков Telegram")
 		: IsArtistBlocked(track)
@@ -3552,7 +3599,7 @@ private:
 				active ? _accent : QColor(255, 255, 255, 150));
 			return;
 		}
-		p.setBrush((_glyph == Glyph::Play) ? QColor(25, 27, 29) : QColor(Qt::white));
+		p.setBrush(Qt::white);
 		p.setPen(Qt::NoPen);
 		if (_glyph == Glyph::Play) {
 			if (_playing) {
@@ -4540,9 +4587,9 @@ public:
 			update();
 		}
 	}
-	void setPlain(bool plain) {
-		if (_plain != plain) {
-			_plain = plain;
+	void setActiveColor(QColor color) {
+		if (_activeColor != color) {
+			_activeColor = color;
 			update();
 		}
 	}
@@ -4564,17 +4611,12 @@ private:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		p.setPen(Qt::NoPen);
-		p.setBrush(_plain
-			? (_active ? QColor(0x0a, 0x84, 0xff) : isOver() ? QColor(0x32, 0x32, 0x32) : QColor(0, 0, 0, 0))
-			: QColor(255, 255, 255, _active ? 38 : isOver() ? 18 : 0));
-		p.drawRoundedRect(rect(), height() / 2., height() / 2.);
 		auto font = st::semiboldFont->f;
 		font.setPixelSize(s(15));
 		p.setFont(font);
-		p.setPen(_plain
-			? (_active ? QColor(Qt::white) : QColor(0x8e, 0x8e, 0x93))
-			: QColor(255, 255, 255, _active ? 255 : 190));
+		p.setPen(_active && _activeColor.isValid()
+			? _activeColor
+			: (_active ? st::windowFg->c : st::windowSubTextFg->c));
 		const auto inner = rect().adjusted(s(16), 0, -s(16), 0);
 		p.drawText(
 			inner,
@@ -4583,9 +4625,9 @@ private:
 	}
 
 	QString _text;
+	QColor _activeColor;
 	bool _centered = false;
 	bool _active = false;
-	bool _plain = false;
 
 };
 
@@ -5029,6 +5071,15 @@ protected:
 					if (!_coverClosing.animating() && _tab == Tab::Now) {
 						setTab(Tab::Home);
 						_plainAnim.stop();
+						auto effect = new QGraphicsOpacityEffect(_tabScroll);
+						effect->setOpacity(0.);
+						_tabScroll->setGraphicsEffect(effect);
+						_homeEntrance.start([=] {
+							effect->setOpacity(_homeEntrance.value(1.));
+							if (!_homeEntrance.animating()) {
+								_tabScroll->setGraphicsEffect(nullptr);
+							}
+						}, 0., 1., kSwitchDuration, anim::easeOutCubic);
 					}
 				}, 0., 1., 200, anim::easeOutQuint);
 			}
@@ -5172,7 +5223,11 @@ protected:
 		} else {
 			const auto contentWidth = std::max(width() - 2 * margin, 0);
 			result.center = QRect((width() - contentWidth) / 2, top, contentWidth, areaHeight);
-			result.scrollTop = result.center.y() + ((_tab == Tab::Home) ? 0 : (_tab == Tab::Search) ? (_searchChats ? s(168) : s(216)) : s(72));
+			result.scrollTop = result.center.y() + ((_tab == Tab::Home)
+				? 0
+				: (_tab == Tab::Search)
+				? ((!_searchChats && contentWidth < s(500)) ? s(228) : s(180))
+				: s(72));
 		}
 
 		// Внизу: постоянная полоса управления.
@@ -5324,18 +5379,18 @@ protected:
 		_seek->setGeometry(layout.seek);
 		_view->setVisible(_tab == Tab::Now);
 		_view->setGeometry(layout.lyrics);
-		_tabScroll->setVisible(_tab != Tab::Now);
+		_tabScroll->setVisible(_tab != Tab::Now && _tab != Tab::Playlists);
 		_tabScroll->setGeometry(
 			layout.center.x(),
 			layout.scrollTop,
 			layout.center.width(),
 			std::max(layout.center.y() + layout.center.height() - layout.scrollTop - s(12), 0));
 		_tabList->resizeToWidth(_tabScroll->width());
-		_topFade->setVisible(_tab != Tab::Now);
+		_topFade->setVisible(_tab != Tab::Now && _tab != Tab::Playlists);
 		_topFade->setGeometry(
 			_tabScroll->x(), _tabScroll->y(), _tabScroll->width(), s(28));
 		_topFade->raise();
-		_bottomFade->setVisible(_tab != Tab::Now);
+		_bottomFade->setVisible(_tab != Tab::Now && _tab != Tab::Playlists);
 		_bottomFade->setGeometry(
 			_tabScroll->x(),
 			_tabScroll->y() + _tabScroll->height() - s(36),
@@ -5345,31 +5400,42 @@ protected:
 
 		// Навигация: ряд пилюль сверху по центру.
 		{
-			const auto gap = s(6);
+			const auto inset = s(4);
 			const auto count = int(_nav.size());
-			const auto w = std::max((layout.nav.width() - (count - 1) * gap) / count, 0);
-			auto x = layout.nav.x();
-			for (const auto item : _nav) {
-				item->setCentered(true);
-				item->setGeometry(x, layout.nav.y(), w, layout.nav.height());
-				x += w + gap;
+			const auto inner = std::max(layout.nav.width() - 2 * inset, 0);
+			for (auto i = 0; i != count; ++i) {
+				const auto left = layout.nav.x() + inset + inner * i / count;
+				const auto right = layout.nav.x() + inset + inner * (i + 1) / count;
+				_nav[i]->setCentered(true);
+				_nav[i]->setGeometry(left, layout.nav.y(), right - left, layout.nav.height());
 			}
 		}
 		{
 			const auto inner = std::max(layout.center.width() - s(20), 0);
 			const auto left = layout.center.x() + s(10);
-			const auto fieldHeight = s(44);
+			const auto fieldHeight = s(52);
 			const auto fieldTop = layout.center.y() + s(64);
 			_searchField->setGeometry(left, fieldTop, inner, fieldHeight);
 			auto font = st::normalFont->f;
 			font.setPixelSize(s(15));
 			_searchField->setFont(font);
-			_searchField->setStyleSheet(u"QLineEdit { background: %3; color: white; border: none; border-radius: %1px; padding: 0 %2px; selection-background-color: #0a84ff; }"_q
+			_searchField->setStyleSheet(u"QLineEdit { background: %3; color: %4; border: none; border-radius: %1px; padding: 0 %2px; selection-background-color: %5; }"_q
 				.arg(fieldHeight / 2)
-				.arg(s(18))
-				.arg(st::windowBgOver->c.name()));
-			_sourceSwitch->setGeometry(left, fieldTop + fieldHeight + s(10), inner, s(40));
-			_kindSwitch->setGeometry(left, fieldTop + fieldHeight + s(10) + s(48), inner, s(40));
+				.arg(s(20))
+				.arg(st::windowBgOver->c.name())
+				.arg(st::windowFg->c.name())
+				.arg(st::windowActiveTextFg->c.name()));
+			const auto switchTop = fieldTop + fieldHeight + s(12);
+			const auto stacked = layout.center.width() < s(500);
+			const auto switchWidth = stacked
+				? std::min(inner, s(240))
+				: std::min(std::max((inner - s(8)) / 2, 0), s(240));
+			_sourceSwitch->setGeometry(left, switchTop, switchWidth, s(40));
+			_kindSwitch->setGeometry(
+				stacked ? left : left + switchWidth + s(8),
+				stacked ? switchTop + s(48) : switchTop,
+				switchWidth,
+				s(40));
 		}
 
 		const auto row = { _shuffle, _previous, _play, _next, _repeat };
@@ -5522,6 +5588,8 @@ protected:
 		if (_tab == tab) {
 			return;
 		}
+		_homeEntrance.stop();
+		_tabScroll->setGraphicsEffect(nullptr);
 		_coverClosing.stop();
 		_plainAnim.start(
 			[=] { update(); },
@@ -5529,13 +5597,24 @@ protected:
 			tab == Tab::Now ? 0. : 1.,
 			220,
 			anim::easeOutCubic);
+		const auto navFrom = _navSlide.value(float64(int(_tab)));
 		_tab = tab;
+		if (anim::Disabled()) {
+			_navSlide.stop();
+		} else {
+			_navSlide.start(
+				[=] { update(computeLayout().nav); },
+				navFrom,
+				float64(int(tab)),
+				kSwitchDuration,
+				anim::easeOutCubic);
+		}
+		update(computeLayout().nav);
 		_homeSection = 0;
 		_homeAlbumOpen = false;
 		++_homeAlbumGeneration;
 		for (auto i = 0; i != 6; ++i) {
 			_nav[i]->setActive(i == int(tab));
-			_nav[i]->setPlain(tab != Tab::Now);
 		}
 		rebuildTab();
 		auto event = QResizeEvent(size(), size());
@@ -5755,6 +5834,9 @@ protected:
 		_rebuiltTab = _tab;
 		_tabList->clear();
 		_tabNote.clear();
+		if (_tab != Tab::Playlists) {
+			_playlistsSticker = nullptr;
+		}
 		const auto searching = (_tab == Tab::Search);
 		const auto fresh = searching && !_searchField->isVisible();
 		_searchField->setVisible(searching);
@@ -5953,7 +6035,14 @@ protected:
 			}
 		} break;
 		case Tab::Playlists:
-			_tabNote = tr("Плейлистов пока нет.");
+			if (!_playlistsSticker) {
+				auto file = QFile(u":/animations/mokagram_playlists_empty.webm"_q);
+				if (file.open(QIODevice::ReadOnly)) {
+					_playlistsSticker = Media::Clip::MakeReader(
+						file.readAll(),
+						[=](Media::Clip::Notification) { update(); });
+				}
+			}
 			break;
 		case Tab::Queue:
 			fillQueue();
@@ -6042,6 +6131,24 @@ protected:
 			p.fillRect(e->rect(), gradient);
 		}
 		const auto layout = computeLayout();
+		// Одна общая дорожка и движущаяся пилюля вместо отдельных фонов вкладок.
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBgOver);
+		p.drawRoundedRect(layout.nav, layout.nav.height() / 2., layout.nav.height() / 2.);
+		const auto inset = s(4);
+		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(_nav.size());
+		const auto at = _navSlide.value(float64(int(_tab)));
+		const auto active = QRectF(
+			layout.nav.x() + inset + segment * at,
+			layout.nav.y() + inset,
+			segment,
+			std::max(layout.nav.height() - 2 * inset, 0));
+		const auto coverColor = _accent.isValid()
+			? _accent
+			: st::windowActiveTextFg->c;
+		const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		p.setBrush(anim::color(coverColor, st::windowActiveTextFg->c, plain));
+		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		const auto labelFont = [&](int size, bool bold) {
 			auto font = (bold ? st::semiboldFont : st::normalFont)->f;
 			font.setPixelSize(s(size));
@@ -6050,7 +6157,8 @@ protected:
 
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
-			if (_tab != Tab::Home) {
+			if (_tab != Tab::Home && _tab != Tab::Library
+				&& _tab != Tab::Playlists) {
 				p.setFont(labelFont(19, true));
 				p.setPen(Qt::white);
 				p.drawText(
@@ -6060,12 +6168,37 @@ protected:
 			}
 			if (!_tabNote.isEmpty()) {
 				p.setFont(labelFont(15, false));
-				p.setPen(QColor(0x8e, 0x8e, 0x93));
+				p.setPen(st::windowSubTextFg);
 				const auto noteWidth = std::max(layout.center.width() - s(20), 0);
 				p.drawText(
 					QRect(layout.center.x() + s(10), layout.scrollTop, noteWidth, s(80)),
 					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
 					_tabNote);
+			}
+			if (_tab == Tab::Playlists) {
+				const auto area = QRect(
+					layout.center.x(), layout.scrollTop,
+					layout.center.width(),
+					std::max(layout.center.bottom() - layout.scrollTop, 0));
+				const auto side = std::max(0, std::min({ s(180), area.width(), area.height() - s(50) }));
+				const auto top = area.y() + std::max((area.height() - side - s(42)) / 2, 0);
+				const auto sticker = QRect(area.center().x() - side / 2, top, side, side);
+				if (_playlistsSticker && _playlistsSticker->ready() && side > 0) {
+					const auto request = Media::Clip::FrameRequest{
+						.frame = sticker.size(),
+						.outer = sticker.size(),
+						.factor = style::DevicePixelRatio(),
+					};
+					if (!_playlistsSticker->started()) _playlistsSticker->start(request);
+					const auto animate = isVisible() && Mokagram::Perf::UserIsLooking()
+						&& !PowerSaving::On(PowerSaving::kAnimations);
+					p.drawImage(sticker, _playlistsSticker->current(request, animate ? crl::now() : 0));
+				}
+				p.setFont(labelFont(15, false));
+				p.setPen(st::windowSubTextFg);
+				p.drawText(QRect(area.x(), sticker.bottom() + s(12), area.width(), s(30)),
+					Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+					QString::fromUtf8(Mokagram::Lang::Tr("Кажется, ты ещё ничего не добавил.")));
 			}
 		}
 
@@ -6395,6 +6528,13 @@ private:
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
 			_accent = CurrentCoverAccent();
+			const auto navColor = _accent.isValid()
+				? _accent
+				: st::windowActiveTextFg->c;
+			_nav[0]->setActiveColor(
+				Ui::CountContrast(navColor, Qt::white) >= Ui::CountContrast(navColor, Qt::black)
+					? QColor(Qt::white)
+					: QColor(Qt::black));
 			// Полоса управления плавно перекрашивается под обложку трека.
 			{
 				const auto now = anim::color(_barFrom, _barTo, _barAnim.value(1.));
@@ -6523,6 +6663,8 @@ private:
 	HomeEdgeFade *_bottomFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
 	std::array<NavItem*, 6> _nav = {};
+	Ui::Animations::Simple _navSlide;
+	Ui::Animations::Simple _homeEntrance;
 	QLineEdit *_searchField = nullptr;
 	Segmented *_sourceSwitch = nullptr;
 	Segmented *_kindSwitch = nullptr;
@@ -6584,6 +6726,7 @@ private:
 	CanvasPlayer _canvas;
 	QTimer _ambientTimer;
 	Media::Clip::ReaderPointer _motionCover;
+	Media::Clip::ReaderPointer _playlistsSticker;
 	Media::Clip::ReaderPointer _spotifyCanvas;
 	QString _motionFor;
 	Fn<void()> _cancelMotion;
@@ -6814,8 +6957,9 @@ void ShowFullscreenPlayer(not_null<Window::SessionController*> controller) {
 		return;
 	}
 	instance = Ui::CreateChild<FullscreenPlayer>(
-		not_null<Ui::RpWidget*>(controller->widget()).get(),
+		controller->widget()->body(),
 		controller);
+	controller->widget()->fixOrder();
 }
 
 void DebugGrabFullscreen(const QString &path) {
