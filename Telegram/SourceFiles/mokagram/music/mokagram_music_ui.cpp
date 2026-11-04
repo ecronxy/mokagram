@@ -5246,7 +5246,9 @@ protected:
 	}
 	[[nodiscard]] QRect barInfoRect(const Layout &layout) const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto shown = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		const auto shown = _coverClosing.animating()
+			? 1.
+			: _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
 		const auto shift = int((s(48) + s(12)) * (1. - shown));
 		return layout.barInfo.adjusted(-shift, 0, 0, 0);
 	}
@@ -6140,8 +6142,11 @@ protected:
 		drawCover(_coverWas, 1. - fade, false);
 		drawCover(_cover, fade, true);
 		p.save();
+		p.translate(coverRect.center());
+		p.scale(scale, scale);
+		p.translate(-coverRect.center());
 		auto cardPath = QPainterPath();
-		cardPath.addRoundedRect(coverRect, s(16), s(16));
+		cardPath.addRoundedRect(coverRect, coverRadius, coverRadius);
 		p.setClipPath(cardPath);
 		auto shade = QLinearGradient(coverRect.topLeft(), coverRect.bottomLeft());
 		shade.setColorAt(0., QColor(0, 0, 0, 20));
@@ -6205,7 +6210,7 @@ protected:
 			const auto source = QRectF(layout.cover);
 			const auto target = QRectF(layout.barCover);
 			p.save();
-			p.setClipRect(layout.bar);
+			p.setClipRect(layout.barCover);
 			p.translate(source.x() + (target.x() - source.x()) * closing,
 				source.y() + (target.y() - source.y()) * closing);
 			p.scale((source.width() + (target.width() - source.width()) * closing) / source.width(),
