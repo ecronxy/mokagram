@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_info.h"
 #include "styles/style_dialogs.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_music_ui.h"
 #include "mokagram/feed/mokagram_feed.h"
@@ -1085,7 +1086,7 @@ void MainMenu::setupArchive() {
 			archiveStyle,
 			{ &st::menuIconArchiveOpen }),
 		QMargins(10, 1, 10, 1));
-	Mokagram::Plugins::MakePill(button, [] { return st::mainMenuBg->c; });
+	Mokagram::BoxParts::MakePill(button, [] { return st::mainMenuBg->c; });
 	button->setAcceptBoth(true);
 	button->clicks(
 	) | rpl::on_next([=](Qt::MouseButton which) {
@@ -1353,7 +1354,7 @@ void MainMenu::setupMenu() {
 				rowStyle,
 				std::move(descriptor)),
 			pillMargins);
-		Mokagram::Plugins::MakePill(button, menuBg);
+		Mokagram::BoxParts::MakePill(button, menuBg);
 		entry.button = button;
 		_barEntries.push_back(std::move(entry));
 		return button;
@@ -1427,7 +1428,7 @@ void MainMenu::setupMenu() {
 					rowStyle,
 					{ &st::walletMenuIcon }),
 				pillMargins));
-		Mokagram::Plugins::MakePill(wallet->entity(), menuBg);
+		Mokagram::BoxParts::MakePill(wallet->entity(), menuBg);
 		Ui::NewBadge::AddAfterButtonText(
 			wallet->entity(),
 			tr::lng_wallet_menu(),
