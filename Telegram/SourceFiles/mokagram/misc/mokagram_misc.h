@@ -12,6 +12,7 @@
 #include <vector>
 #include <QtCore/QString>
 #include <QtGui/QIcon>
+#include <QtGui/QImage>
 
 class PhotoData;
 class PeerData;
@@ -32,6 +33,9 @@ void RegisterSettings();
 
 // Выбранная в настройках иконка приложения; пустая, если стоит стандартная.
 [[nodiscard]] QIcon CustomAppIcon();
+
+// Картинка варианта иконки для списка выбора: 0 стандартная, 1..5 свои.
+[[nodiscard]] QImage AppIconImage(int index);
 
 // Кладёт в буфер «[дата время] автор: текст» для сообщения.
 void CopyWithAuthor(not_null<HistoryItem*> item);

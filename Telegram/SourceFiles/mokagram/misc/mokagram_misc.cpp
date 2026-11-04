@@ -28,6 +28,7 @@
 #include "api/api_user_privacy.h"
 #include "apiwrap.h"
 #include "main/main_domain.h"
+#include "window/main_window.h"
 #include <QtGui/QPixmap>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QWidget>
@@ -332,6 +333,18 @@ QIcon CustomAppIcon() {
 		uint(kAppIconSizes[index - 1]),
 		"PNG");
 	return pixmap.isNull() ? QIcon() : QIcon(pixmap);
+}
+
+QImage AppIconImage(int index) {
+	if (index <= 0 || index > 5) {
+		return Window::Logo();
+	}
+	auto image = QImage();
+	image.loadFromData(
+		kAppIcons[index - 1],
+		uint(kAppIconSizes[index - 1]),
+		"PNG");
+	return image;
 }
 
 void ApplyAppIcon() {

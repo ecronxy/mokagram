@@ -8,6 +8,9 @@
 #include "mokagram/plugins/mokagram_plugin_store.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/misc/mokagram_misc.h"
+#include "ui/widgets/menu/menu_action.h"
+#include "ui/widgets/menu/menu_common.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
 #include "ui/power_saving.h"
@@ -102,6 +105,52 @@
 
 namespace Mokagram::Settings {
 namespace {
+// Строка выбора иконки приложения: слева круглая миниатюра варианта.
+class AppIconMenuItem final : public Ui::Menu::Action {
+public:
+	AppIconMenuItem(
+		not_null<Ui::Menu::Menu*> menu,
+		const style::Menu &st,
+		not_null<QAction*> action,
+		QImage image)
+	: Action(menu, st, action, nullptr, nullptr)
+	, _image(std::move(image)) {
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto selected = isSelected();
+		paintBackground(p, selected);
+		RippleButton::paintRipple(p, 0, 0);
+		const auto &menu = st();
+		const auto size = style::ConvertScale(26);
+		const auto thumb = QRect(
+			menu.itemIconPosition.x(),
+			(height() - size) / 2,
+			size,
+			size);
+		auto path = QPainterPath();
+		path.addEllipse(thumb);
+		p.save();
+		p.setClipPath(path);
+		p.drawImage(thumb, _image);
+		p.restore();
+		p.setFont(menu.itemStyle.font);
+		p.setPen(selected ? menu.itemFgOver : menu.itemFg);
+		const auto left = menu.itemPadding.left();
+		p.drawText(
+			QRect(left, 0, width() - left - menu.itemPadding.right(), height()),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			action()->text());
+	}
+
+	QImage _image;
+
+};
+
+
 
 QString PendingQuery;
 
@@ -1106,10 +1155,20 @@ void ShowColorBox(const QString &title, const QString &key) {
 				row,
 				st::popupMenuWithIcons);
 			for (auto i = 0; i != int(entry.choices.size()); ++i) {
-				(*menu)->addAction(entry.choices[i], [=] {
+				const auto choose = [=] {
 					SetInt(key, i);
 					afterChange();
-				});
+				};
+				if (key == u"look.app_icon"_q) {
+					const auto raw = (*menu)->menu();
+					(*menu)->addAction(base::make_unique_q<AppIconMenuItem>(
+						raw,
+						raw->st(),
+						Ui::Menu::CreateAction(raw, entry.choices[i], Fn<void()>(choose)),
+						Mokagram::Misc::AppIconImage(i)));
+					continue;
+				}
+				(*menu)->addAction(entry.choices[i], choose);
 			}
 			(*menu)->popup(QCursor::pos());
 		});
