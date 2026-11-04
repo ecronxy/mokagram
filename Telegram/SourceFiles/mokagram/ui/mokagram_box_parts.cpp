@@ -6,6 +6,8 @@
 
 #include "base/call_delayed.h"
 #include "ui/abstract_button.h"
+#include "ui/rp_widget.h"
+#include "ui/effects/animations.h"
 #include "ui/layers/box_content.h"
 #include "ui/painter.h"
 #include "styles/style_layers.h"
@@ -31,7 +33,166 @@ namespace {
 	return result;
 }
 
+void PaintSwitch(QPainter &p, float64 t) {
+	const auto on = st::windowBgActive->c;
+	const auto off = st::windowSubTextFg->c;
+	const auto track = QRectF(1, 1, 38, 22);
+	p.setBrush(anim::color(QColor(0, 0, 0, 0), on, t));
+	p.setPen(QPen(anim::color(off, on, t), 1.6));
+	p.drawRoundedRect(track, 11, 11);
+	const auto size = 10. + 8. * t;
+	const auto cx = 12. + 16. * t;
+	p.setPen(Qt::NoPen);
+	p.setBrush(anim::color(off, st::windowFgActive->c, t));
+	p.drawEllipse(QPointF(cx, 12.), size / 2, size / 2);
+}
+
 } // namespace
+
+// Переключатель в стиле Material 3: переключатель 40x24, при включении бегунок растёт.
+not_null<Ui::AbstractButton*> MakeSwitch(
+		not_null<QWidget*> parent,
+		bool checked,
+		Fn<void(bool)> changed,
+		rpl::producer<bool> active) {
+	struct State {
+		Ui::Animations::Simple animation;
+		bool checked = false;
+		bool active = true;
+		[[nodiscard]] bool shown() const {
+			return checked && active;
+		}
+	};
+	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
+	const auto state = button->lifetime().make_state<State>();
+	state->checked = checked;
+	button->resize(40, 24);
+	button->setPointerCursor(true);
+	button->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(button);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto t = state->animation.value(state->shown() ? 1. : 0.);
+		PaintSwitch(p, t);
+	}, button->lifetime());
+	button->setClickedCallback([=] {
+		const auto was = state->shown();
+		state->checked = !state->checked;
+		const auto now = state->shown();
+		if (was != now) {
+			state->animation.start(
+				[=] { button->update(); },
+				was ? 1. : 0.,
+				now ? 1. : 0.,
+				200);
+		}
+		changed(state->checked);
+	});
+	// Выключенная система плагинов гасит тумблер, не меняя выбор пользователя.
+	std::move(active) | rpl::on_next([=](bool value) {
+		const auto was = state->shown();
+		state->active = value;
+		const auto now = state->shown();
+		if (was != now) {
+			state->animation.start(
+				[=] { button->update(); },
+				was ? 1. : 0.,
+				now ? 1. : 0.,
+				200);
+		}
+	}, button->lifetime());
+	return button;
+}
+
+// Переключатель в стиле Material 3, значение приходит из реестра.
+// Сам не кликается: клик обрабатывает строка.
+not_null<Ui::AbstractButton*> MakeSwitch(
+		not_null<QWidget*> parent,
+		rpl::producer<bool> value) {
+	struct State {
+		Ui::Animations::Simple animation;
+		bool checked = false;
+		bool started = false;
+	};
+	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
+	const auto state = button->lifetime().make_state<State>();
+	button->resize(40, 24);
+	button->setAttribute(Qt::WA_TransparentForMouseEvents);
+	button->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(button);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto t = state->animation.value(state->checked ? 1. : 0.);
+		PaintSwitch(p, t);
+	}, button->lifetime());
+	std::move(value) | rpl::on_next([=](bool checked) {
+		if (state->checked == checked && state->started) {
+			return;
+		}
+		const auto first = !state->started;
+		state->started = true;
+		state->checked = checked;
+		if (first) {
+			button->update();
+			return;
+		}
+		state->animation.start(
+			[=] { button->update(); },
+			checked ? 0. : 1.,
+			checked ? 1. : 0.,
+			200);
+	}, button->lifetime());
+	return button;
+}
+
+void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg) {
+	struct Corner {
+		not_null<Ui::RpWidget*> widget;
+		bool right;
+		bool bottom;
+	};
+	struct State {
+		std::vector<Corner> corners;
+		int radius = 1;
+	};
+	const auto state = widget->lifetime().make_state<State>();
+	for (const auto right : { false, true }) {
+		for (const auto bottom : { false, true }) {
+			const auto corner = Ui::CreateChild<Ui::RpWidget>(widget.get());
+			corner->setAttribute(Qt::WA_TransparentForMouseEvents);
+			corner->paintRequest(
+			) | rpl::on_next([=] {
+				auto p = QPainter(corner);
+				auto hq = PainterHighQualityEnabler(p);
+				const auto r = state->radius;
+				auto path = QPainterPath();
+				path.addRect(corner->rect());
+				auto circle = QPainterPath();
+				circle.addEllipse(QRectF(
+					right ? -r : 0,
+					bottom ? -r : 0,
+					2 * r,
+					2 * r));
+				p.fillPath(path.subtracted(circle), pageBg());
+			}, corner->lifetime());
+			state->corners.push_back({ corner, right, bottom });
+		}
+	}
+	widget->sizeValue(
+	) | rpl::on_next([=](QSize size) {
+		const auto r = std::max(1, std::min(size.width(), size.height()) / 2);
+		state->radius = r;
+		for (const auto &corner : state->corners) {
+			corner.widget->resize(r, r);
+			corner.widget->move(
+				corner.right ? size.width() - r : 0,
+				corner.bottom ? size.height() - r : 0);
+			corner.widget->update();
+			corner.widget->raise();
+		}
+	}, widget->lifetime());
+}
+
 
 not_null<Ui::AbstractButton*> MakeRoundButton(
 		not_null<QWidget*> parent,
