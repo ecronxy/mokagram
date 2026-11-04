@@ -4,6 +4,7 @@
 // mokagram-id: 88dee111
 // Mokagram: окно установки плагина при клике на файл .plugin в чате.
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -690,71 +691,6 @@ void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
 	box->setNoContentMargin(true);
 }
 
-// Переключатель в стиле Material 3: дорожка 52x32, при включении бегунок растёт.
-[[nodiscard]] not_null<Ui::AbstractButton*> MakeSwitch(
-		not_null<QWidget*> parent,
-		bool checked,
-		Fn<void(bool)> changed,
-		rpl::producer<bool> active = rpl::single(true)) {
-	struct State {
-		Ui::Animations::Simple animation;
-		bool checked = false;
-		bool active = true;
-		[[nodiscard]] bool shown() const {
-			return checked && active;
-		}
-	};
-	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
-	const auto state = button->lifetime().make_state<State>();
-	state->checked = checked;
-	button->resize(40, 24);
-	button->setPointerCursor(true);
-	button->paintRequest(
-	) | rpl::on_next([=] {
-		auto p = QPainter(button);
-		auto hq = PainterHighQualityEnabler(p);
-		const auto t = state->animation.value(state->shown() ? 1. : 0.);
-		const auto on = st::windowBgActive->c;
-		const auto off = st::windowSubTextFg->c;
-		const auto track = QRectF(1, 1, 38, 22);
-		p.setBrush(anim::color(QColor(0, 0, 0, 0), on, t));
-		p.setPen(QPen(anim::color(off, on, t), 1.6));
-		p.drawRoundedRect(track, 11, 11);
-		const auto size = 10. + 8. * t;
-		const auto cx = 12. + 16. * t;
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(off, st::windowFgActive->c, t));
-		p.drawEllipse(QPointF(cx, 12.), size / 2, size / 2);
-	}, button->lifetime());
-	button->setClickedCallback([=] {
-		const auto was = state->shown();
-		state->checked = !state->checked;
-		const auto now = state->shown();
-		if (was != now) {
-			state->animation.start(
-				[=] { button->update(); },
-				was ? 1. : 0.,
-				now ? 1. : 0.,
-				200);
-		}
-		changed(state->checked);
-	});
-	// Выключенная система плагинов гасит тумблер, не меняя выбор пользователя.
-	std::move(active) | rpl::on_next([=](bool value) {
-		const auto was = state->shown();
-		state->active = value;
-		const auto now = state->shown();
-		if (was != now) {
-			state->animation.start(
-				[=] { button->update(); },
-				was ? 1. : 0.,
-				now ? 1. : 0.,
-				200);
-		}
-	}, button->lifetime());
-	return button;
-}
-
 // Автор: «@name», «name» или «Имя (@name)». Возвращает остаток без юзернейма.
 [[nodiscard]] QString SplitAuthor(const QString &author, QString &username) {
 	static const auto handle = QRegularExpression("@([A-Za-z0-9_]{4,32})");
@@ -993,7 +929,7 @@ Card AddPluginCard(
 		panel,
 		entry.value("version").toString(),
 		author);
-	const auto toggle = MakeSwitch(
+	const auto toggle = BoxParts::MakeSwitch(
 		panel,
 		entry.value("enabled").toBool(),
 		[=](bool enabled) {
@@ -1313,7 +1249,7 @@ void WelcomeBox(
 			card,
 			row.about,
 			st::boxDividerLabel);
-		const auto toggle = MakeSwitch(card, row.on, apply);
+		const auto toggle = BoxParts::MakeSwitch(card, row.on, apply);
 		placed->push_back({ name, about, toggle.get() });
 	}
 	card->widthValue() | rpl::on_next([=](int width) {
@@ -1487,7 +1423,7 @@ void PluginsBox(
 		engine,
 		U(Mokagram::Lang::Tr("Включить систему плагинов")),
 		st::boxLabel);
-	const auto engineSwitch = MakeSwitch(
+	const auto engineSwitch = BoxParts::MakeSwitch(
 		engine,
 		EngineEnabled(),
 		[=](bool enabled) {
@@ -1645,53 +1581,6 @@ void PluginsBox(
 	});
 }
 
-void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg) {
-	struct Corner {
-		not_null<Ui::RpWidget*> widget;
-		bool right;
-		bool bottom;
-	};
-	struct State {
-		std::vector<Corner> corners;
-		int radius = 1;
-	};
-	const auto state = widget->lifetime().make_state<State>();
-	for (const auto right : { false, true }) {
-		for (const auto bottom : { false, true }) {
-			const auto corner = Ui::CreateChild<Ui::RpWidget>(widget.get());
-			corner->setAttribute(Qt::WA_TransparentForMouseEvents);
-			corner->paintRequest(
-			) | rpl::on_next([=] {
-				auto p = QPainter(corner);
-				auto hq = PainterHighQualityEnabler(p);
-				const auto r = state->radius;
-				auto path = QPainterPath();
-				path.addRect(corner->rect());
-				auto circle = QPainterPath();
-				circle.addEllipse(QRectF(
-					right ? -r : 0,
-					bottom ? -r : 0,
-					2 * r,
-					2 * r));
-				p.fillPath(path.subtracted(circle), pageBg());
-			}, corner->lifetime());
-			state->corners.push_back({ corner, right, bottom });
-		}
-	}
-	widget->sizeValue(
-	) | rpl::on_next([=](QSize size) {
-		const auto r = std::max(1, std::min(size.width(), size.height()) / 2);
-		state->radius = r;
-		for (const auto &corner : state->corners) {
-			corner.widget->resize(r, r);
-			corner.widget->move(
-				corner.right ? size.width() - r : 0,
-				corner.bottom ? size.height() - r : 0);
-			corner.widget->update();
-			corner.widget->raise();
-		}
-	}, widget->lifetime());
-}
 
 namespace {
 [[nodiscard]] const style::icon *MenuIconByName(QString name);
