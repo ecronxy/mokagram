@@ -225,6 +225,8 @@
 	{ "Итого потрачено", "Total spent" },
 	{ "Ищу ваши сообщения…", "Searching your messages…" },
 	{ "Ищу текст…", "Searching lyrics…" },
+	{ "Введи название или исполнителя.", "Enter a title or artist." },
+	{ "Введи название альбома или исполнителя.", "Enter an album title or artist." },
 	{ "Ищу…", "Searching…" },
 	{ "Как в Telegram", "Like in Telegram" },
 	{ "Каналы", "Channels" },
@@ -967,3 +969,4 @@
 	{ "Главная", "Home" },
 	{ "Библиотека", "Library" },
 	{ "Плейлисты", "Playlists" },
+	{ "Кажется, ты ещё ничего не добавил.", "Looks like you haven't added anything yet." },
