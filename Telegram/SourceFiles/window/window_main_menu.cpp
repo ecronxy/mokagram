@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/event_filter.h"
 #include "base/qt_signal_producer.h"
 #include "boxes/about_box.h"
+#include "boxes/premium_limits_box.h"
 #include "core/update_channel.h"
 #include "boxes/peer_list_controllers.h"
 #include "boxes/premium_preview_box.h"
@@ -73,6 +74,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/widgets/menu/menu_action.h"
+#include "ui/widgets/menu/menu_common.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/shadow.h"
 #include "ui/wrap/slide_wrap.h"
@@ -284,6 +287,124 @@ private:
 
 };
 
+// Строка списка аккаунтов: аватарка слева, активный аккаунт жирным шрифтом.
+class AccountMenuItem final : public Ui::Menu::Action {
+public:
+	AccountMenuItem(
+		not_null<Ui::Menu::Menu*> menu,
+		const style::Menu &st,
+		not_null<QAction*> action,
+		not_null<UserData*> user,
+		bool active)
+	: Action(menu, st, action, nullptr, nullptr)
+	, _user(user)
+	, _active(active) {
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = Painter(this);
+		const auto selected = isSelected();
+		paintBackground(p, selected);
+		RippleButton::paintRipple(p, 0, 0);
+		const auto &menu = st();
+		const auto size = style::ConvertScale(24);
+		_user->paintUserpic(
+			p,
+			_view,
+			menu.itemIconPosition.x(),
+			(height() - size) / 2,
+			size,
+			true);
+		p.setFont(_active ? st::semiboldFont : menu.itemStyle.font);
+		p.setPen(selected ? menu.itemFgOver : menu.itemFg);
+		const auto left = menu.itemPadding.left();
+		const auto available = width() - left - menu.itemPadding.right();
+		p.drawText(
+			QRect(left, 0, available, height()),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			p.fontMetrics().elidedText(
+				_user->name(),
+				Qt::ElideRight,
+				available));
+	}
+
+	const not_null<UserData*> _user;
+	Ui::PeerUserpicView _view;
+	const bool _active;
+
+};
+
+// Круглая аватарка текущего аккаунта слева на панели: открывает список аккаунтов.
+class AccountBarButton final : public Ui::AbstractButton {
+public:
+	AccountBarButton(QWidget *parent, not_null<Main::Session*> session)
+	: AbstractButton(parent)
+	, _user(session->user()) {
+		setPointerCursor(true);
+		resize(style::ConvertScale(44), style::ConvertScale(44));
+		session->changes().peerUpdates(
+			_user,
+			Data::PeerUpdate::Flag::Photo
+		) | rpl::on_next([=] {
+			update();
+		}, lifetime());
+	}
+	void setReveal(double value) {
+		if (_reveal != value) {
+			_reveal = value;
+			update();
+		}
+	}
+
+private:
+	void onStateChanged(State was, StateChangeSource source) override {
+		const auto now = isOver();
+		if (now != bool(was & StateFlag::Over)) {
+			_hover.start(
+				[=] { update(); },
+				now ? 0. : 1.,
+				now ? 1. : 0.,
+				140,
+				anim::easeOutCubic);
+		}
+	}
+	void paintEvent(QPaintEvent *e) override {
+		if (_reveal <= 0.) {
+			return;
+		}
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto over = _hover.value(isOver() ? 1. : 0.);
+		p.setOpacity(_reveal);
+		const auto scale = 0.6 + 0.4 * _reveal;
+		p.translate(width() / 2., height() / 2.);
+		p.scale(scale, scale);
+		p.translate(-width() / 2., -height() / 2.);
+		if (over > 0.) {
+			auto bg = st::windowFg->c;
+			bg.setAlphaF(0.08 * over);
+			p.setPen(Qt::NoPen);
+			p.setBrush(bg);
+			p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+		}
+		const auto size = style::ConvertScale(32);
+		_user->paintUserpic(
+			p,
+			_view,
+			(width() - size) / 2,
+			(height() - size) / 2,
+			size,
+			true);
+	}
+
+	const not_null<UserData*> _user;
+	Ui::PeerUserpicView _view;
+	double _reveal = 0.;
+	Ui::Animations::Simple _hover;
+
+};
+
 // Горизонтальная панель меню у верхнего или нижнего края области чата.
 // Её высота в раскладке задаётся свойством "moka-progress" (0..1), оно анимируется.
 class DockBar final : public Ui::RpWidget {
@@ -317,6 +438,9 @@ public:
 	}
 	void setBurger(not_null<BarButton*> button) {
 		_burger = button.get();
+	}
+	void setAccount(not_null<AccountBarButton*> button) {
+		_account = button.get();
 	}
 	void addDock(not_null<DockButton*> button) {
 		_docks.push_back(QPointer<DockButton>(button.get()));
@@ -389,6 +513,9 @@ private:
 		if (_burger) {
 			_burger->setReveal(value);
 		}
+		if (_account) {
+			_account->setReveal(value);
+		}
 		if (const auto parent = parentWidget()) {
 			auto event = QResizeEvent(parent->size(), parent->size());
 			QCoreApplication::sendEvent(parent, &event);
@@ -407,6 +534,9 @@ private:
 			itemsWidth += (button ? button->width() : 0) + skip;
 		}
 		itemsWidth -= skip;
+		if (_account) {
+			_account->move(margin, (height() - _account->height()) / 2);
+		}
 		auto burgerLeft = width() - margin;
 		if (_burger) {
 			burgerLeft -= _burger->width();
@@ -451,6 +581,7 @@ private:
 	Ui::Animations::Simple _docksAnim;
 	base::Timer _collapse;
 	QPointer<BarButton> _burger;
+	QPointer<AccountBarButton> _account;
 	std::vector<QPointer<BarButton>> _buttons;
 	std::vector<QPointer<DockButton>> _docks;
 
@@ -1102,6 +1233,60 @@ not_null<Ui::RpWidget*> MainMenu::createDockBar(QWidget *parent, int side) {
 		}
 	}, burger->lifetime());
 	bar->setBurger(burger);
+	const auto account = Ui::CreateChild<AccountBarButton>(
+		bar,
+		&_controller->session());
+	account->show();
+	const auto menu = account->lifetime().make_state<
+		base::unique_qptr<Ui::PopupMenu>>();
+	account->setClickedCallback([=] {
+		*menu = base::make_unique_q<Ui::PopupMenu>(
+			account,
+			st::popupMenuWithIcons);
+		auto &domain = Core::App().domain();
+		const auto current = &_controller->session().account();
+		for (const auto &other : domain.orderedAccounts()) {
+			if (!other->sessionExists()) {
+				continue;
+			}
+			const auto user = other->session().user();
+			const auto raw = (*menu)->menu();
+			const auto action = Ui::Menu::CreateAction(
+				raw,
+				user->name(),
+				[=] {
+					if (other != current) {
+						Core::App().domain().maybeActivate(other);
+					}
+				});
+			(*menu)->addAction(base::make_unique_q<AccountMenuItem>(
+				raw,
+				raw->st(),
+				action,
+				user,
+				other == current));
+		}
+		(*menu)->addAction(
+			tr::lng_menu_add_account(tr::now),
+			[=] {
+				auto &domain = _controller->session().domain();
+				if (domain.accounts().size() >= domain.maxAccounts()) {
+					_controller->show(
+						Box(AccountsLimitBox, &_controller->session()));
+				} else {
+					_controller->window().preventOrInvoke([=] {
+						Core::App().setActivePrimaryWindow(
+							&_controller->window());
+						_controller->session().domain().addActivated(
+							MTP::Environment::Production);
+					});
+				}
+			},
+			&st::menuIconAddAccount);
+		(*menu)->popup(account->mapToGlobal(
+			QPoint(0, account->height())));
+	});
+	bar->setAccount(account);
 	for (const auto dockSide : { 0, 1, 2, 3 }) {
 		const auto dock = Ui::CreateChild<DockButton>(bar, dockSide, 32);
 		bar->addDock(dock);
