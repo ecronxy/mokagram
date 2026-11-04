@@ -18,6 +18,8 @@
 #include "data/data_session.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/view/reactions/history_view_reactions_selector.h"
+#include "payments/payments_reaction_process.h"
 #include "lang/lang_keys.h"
 #include "main/session/session_show.h"
 #include "main/main_session.h"
@@ -128,7 +130,7 @@ struct ReactionControl {
 
 class PostRow final : public Ui::RpWidget {
 public:
-	PostRow(QWidget *parent, not_null<Main::Session*> session,
+	PostRow(QWidget *parent, not_null<Window::SessionController*> controller,
 		const Post &post, Fn<void()> open, Fn<void()> comments,
 		Fn<void()> openMedia);
 	QString accessibilityName() override;
@@ -144,10 +146,13 @@ private:
 	void toggleReaction(const Data::ReactionId &id);
 	void showReactionMenu();
 
+	not_null<Window::SessionController*> _controller;
 	not_null<Main::Session*> _session;
 	FullMsgId _itemId;
 	std::vector<ReactionControl> _reactionControls;
 	Ui::RoundButton *_reactionMore = nullptr;
+	Ui::RoundButton *_reactionExpand = nullptr;
+	bool _reactionsExpanded = false;
 	Ui::FlatLabel *_views = nullptr;
 	base::unique_qptr<Ui::PopupMenu> _reactionMenu;
 	PeerData *_peer = nullptr;
@@ -288,15 +293,16 @@ object_ptr<Window::SectionWidget> FeedMemento::createWidget(
 
 PostRow::PostRow(
 		QWidget *parent,
-		not_null<Main::Session*> session,
+		not_null<Window::SessionController*> controller,
 		const Post &post,
 		Fn<void()> open,
 		Fn<void()> comments,
 		Fn<void()> openMedia)
 : Ui::RpWidget(parent)
-, _session(session)
+, _controller(controller)
+, _session(&controller->session())
 , _itemId(post.peer, MsgId(post.id))
-, _peer(session->data().peerLoaded(post.peer))
+, _peer(_session->data().peerLoaded(post.peer))
 , _title(st::semiboldTextStyle, _peer
 	? (_peer->isSelf() ? tr::lng_saved_messages(tr::now) : _peer->name())
 	: QString())
@@ -325,26 +331,34 @@ PostRow::PostRow(
 	_reactionMore->setClickedCallback([=] { showReactionMenu(); });
 	_reactionMore->setFocusPolicy(Qt::StrongFocus);
 	_reactionMore->installEventFilter(this);
+	_reactionExpand = Ui::CreateChild<Ui::RoundButton>(this,
+		rpl::single(QString()), st::feedReactionButton);
+	_reactionExpand->setClickedCallback([=] {
+		_reactionsExpanded = !_reactionsExpanded;
+		syncReactions();
+	});
+	_reactionExpand->setFocusPolicy(Qt::StrongFocus);
+	_reactionExpand->installEventFilter(this);
 	_views = Ui::CreateChild<Ui::FlatLabel>(this, QString(), st::feedViews);
 	syncReactions();
-	session->data().itemDataChanges() | rpl::on_next([=](const auto item) {
+	_session->data().itemDataChanges() | rpl::on_next([=](const auto item) {
 		if (item->fullId() == _itemId) {
 			scheduleReactionsUpdate();
 		}
 	}, lifetime());
-	session->data().itemRepaintRequest() | rpl::on_next([=](const auto item) {
+	_session->data().itemRepaintRequest() | rpl::on_next([=](const auto item) {
 		if (item->fullId() == _itemId) {
 			update();
 		}
 	}, lifetime());
 	if (_peer) {
-		session->changes().peerUpdates(_peer,
+		_session->changes().peerUpdates(_peer,
 			Data::PeerUpdate::Flag::Reactions
 		) | rpl::on_next([=] { scheduleReactionsUpdate(); }, lifetime());
 	}
-	session->data().reactions().defaultUpdates(
+	_session->data().reactions().defaultUpdates(
 	) | rpl::on_next([=] { scheduleReactionsUpdate(); }, lifetime());
-	const auto item = session->data().message(post.peer, MsgId(post.id));
+	const auto item = _session->data().message(post.peer, MsgId(post.id));
 	if (!item) {
 		return;
 	}
@@ -354,7 +368,7 @@ PostRow::PostRow(
 		_sender->setSelectable(true);
 	}
 	_body->setMarkedText(item->originalText(), Core::TextContext({
-		.session = session,
+		.session = _session,
 		.repaint = [=] { update(); },
 		.customEmojiLoopLimit = -1,
 	}));
@@ -474,32 +488,41 @@ int PostRow::resizeGetHeight(int newWidth) {
 		for (const auto &control : _reactionControls) {
 			place(control.button);
 		}
+		if (!_reactionExpand->isHidden()) {
+			place(_reactionExpand);
+		}
 		if (!_reactionMore->isHidden()) {
 			place(_reactionMore);
 		}
 		top += st::feedReactionButton.height;
 	}
 	top += st::feedPostGap;
-	_open->resizeToNaturalWidth(textWidth);
+	const auto viewsWidth = _views->isHidden() ? 0 : [&] {
+		_views->resizeToNaturalWidth(textWidth);
+		_views->moveToRight(_padding, top, newWidth);
+		return _views->width() + st::feedMetaGap + st::feedViewsIcon.width();
+	}();
+	const auto actionWidth = std::max(0, textWidth
+		- (viewsWidth ? viewsWidth + st::feedPostGap : 0));
+	_open->resizeToNaturalWidth(actionWidth);
 	_open->moveToLeft(_padding, top, newWidth);
+	const auto firstRowHeight = std::max(_open->height(),
+		_views->isHidden() ? 0 : _views->height());
 	if (_comments) {
 		_comments->resizeToNaturalWidth(textWidth);
 		const auto available = std::max(0,
-			textWidth - _open->width() - st::feedPostGap);
+			actionWidth - _open->width() - st::feedPostGap);
 		if (_comments->width() > available) {
-			top += _open->height() + st::feedPostGap;
+			top += firstRowHeight + st::feedPostGap;
 			_comments->moveToLeft(_padding, top, newWidth);
+			top += _comments->height();
 		} else {
 			_comments->moveToLeft(_padding + _open->width()
 				+ st::feedPostGap, top, newWidth);
+			top += std::max(firstRowHeight, _comments->height());
 		}
-	}
-	top += std::max(_open->height(), _comments ? _comments->height() : 0);
-	if (!_views->isHidden()) {
-		top += st::feedPostGap;
-		_views->resizeToWidth(textWidth);
-		_views->moveToLeft(_padding, top, newWidth);
-		top += _views->height();
+	} else {
+		top += firstRowHeight;
 	}
 	return top + _padding;
 }
@@ -515,6 +538,12 @@ void PostRow::paintEvent(QPaintEvent *event) {
 	}
 	if (const auto item = _session->data().message(_itemId)) {
 		_session->data().reactions().poll(item, crl::now());
+	}
+	if (!_views->isHidden()) {
+		const auto &icon = st::feedViewsIcon;
+		icon.paint(p, width() - _padding - _views->width()
+			- st::feedMetaGap - icon.width(),
+			_views->y() + (_views->height() - icon.height()) / 2, width());
 	}
 	const auto left = _padding;
 	const auto top = _padding;
@@ -572,8 +601,8 @@ void PostRow::paintEvent(QPaintEvent *event) {
 		p.restore();
 	}
 
-	for (const auto child : std::array<QWidget*, 5>{
-			_open, _expand, _comments, _mediaButton, _reactionMore }) {
+	for (const auto child : std::array<QWidget*, 6>{
+			_open, _expand, _comments, _mediaButton, _reactionMore, _reactionExpand }) {
 		PaintFocus(p, this, child);
 	}
 	for (const auto &control : _reactionControls) {
@@ -625,10 +654,24 @@ void PostRow::syncReactions() {
 		}
 	}
 	_reactionMore->setVisible(!allowed.empty());
+	const auto reactionCount = ranges::count_if(shown, [](const auto &reaction) {
+		return !reaction.id.paid();
+	});
+	_reactionExpand->setVisible(reactionCount > 3);
+	_reactionExpand->setText(rpl::single(_reactionsExpanded
+		? u"−"_q
+		: u"+"_q + QString::number(reactionCount - 3)));
+	_reactionExpand->setAccessibleName(_reactionsExpanded
+		? Text("Свернуть") : Text("Показать ещё"));
+	auto visibleCount = 0;
 	for (const auto &reaction : shown) {
 		if (reaction.id.paid()) {
 			continue;
 		}
+		if (!_reactionsExpanded && visibleCount >= 3) {
+			continue;
+		}
+		++visibleCount;
 		const auto button = Ui::CreateChild<Ui::RoundButton>(this,
 			rpl::single(QString()), reaction.my
 				? st::feedChosenReactionButton : st::feedReactionButton);
@@ -667,7 +710,8 @@ void PostRow::syncReactions() {
 	}
 	_views->setVisible(item && item->hasViews());
 	if (item && item->hasViews()) {
-		_views->setText(tr::lng_views_tooltip(tr::now, lt_count, item->viewsCount()));
+		_views->setText(QString::number(item->viewsCount()));
+		_views->setToolTip(tr::lng_views_tooltip(tr::now, lt_count, item->viewsCount()));
 	}
 	if (width() > 2 * st::feedPostPadding) {
 		resizeToWidth(width());
@@ -695,19 +739,34 @@ void PostRow::showReactionMenu() {
 	if (!item) {
 		return;
 	}
-	const auto possible = Data::LookupPossibleReactions(item);
 	_reactionMenu = base::make_unique_q<Ui::PopupMenu>(this);
-	for (const auto reaction : possible.recent) {
-		const auto id = reaction->id;
-		if (id.paid()) {
-			continue;
+	_reactionMenu->addAction(Text("Показать в чате"), [=] {
+		if (const auto peer = _session->data().peerLoaded(_itemId.peer)) {
+			_controller->showPeerHistory(peer, {}, _itemId.msg);
 		}
-		const auto label = id.emoji().isEmpty() ? reaction->title : id.emoji();
-		if (!label.isEmpty()) {
-			_reactionMenu->addAction(label, [=] { toggleReaction(id); });
-		}
+	});
+	const auto position = _reactionMore->mapToGlobal(QPoint(0, _reactionMore->height()));
+	using namespace HistoryView::Reactions;
+	const auto attached = AttachSelectorToMenu(
+		_reactionMenu.get(), _controller, position, item,
+		[=](ChosenReaction reaction) {
+			const auto current = _session->data().message(reaction.context);
+			if (!current) {
+				return;
+			} else if (reaction.id.paid()) {
+				Payments::ShowPaidReactionDetails(
+					_controller, current, nullptr, HistoryReactionSource::Selector);
+			} else if (!Window::ShowReactPremiumError(_controller, current, reaction.id)) {
+				current->toggleReaction(reaction.id, HistoryReactionSource::Selector);
+			}
+		}, ItemReactionsAbout(item));
+	if (attached == AttachSelectorResult::Attached) {
+		_reactionMenu->popupPrepared();
+	} else if (attached == AttachSelectorResult::Skipped) {
+		_reactionMenu->popup(position);
+	} else {
+		_reactionMenu = nullptr;
 	}
-	_reactionMenu->popup(_reactionMore->mapToGlobal(QPoint(0, _reactionMore->height())));
 }
 
 SourcesController::SourcesController(
@@ -960,9 +1019,11 @@ void FeedSection::paintEvent(QPaintEvent *event) {
 	p.fillRect(event->rect(), st::mainMenuBg);
 	p.setFont(st::boxTitleFont);
 	p.setPen(st::windowFg);
-	p.drawTextLeft(st::feedTitleLeft, st::feedTitleTop, width(),
+	p.drawText(QRect(st::feedTitleLeft, st::feedTitleTop,
+		std::max(0, width() - st::feedTitleLeft - st::feedTitleRight),
+		st::boxTitleFont->height), Qt::AlignCenter,
 		st::boxTitleFont->elided(Text("Лента"),
-			width() - st::feedTitleLeft - st::feedTitleRight));
+			std::max(0, width() - st::feedTitleLeft - st::feedTitleRight)));
 	if (_busy) {
 		_loading.draw(p, QPoint(width() - st::feedTitleRight,
 			st::feedTitleTop), width());
@@ -1106,7 +1167,7 @@ void FeedSection::renderPosts() {
 	_content->clear();
 	for (const auto &post : _posts) {
 		const auto row = _content->add(object_ptr<PostRow>(
-			_content, _session, post, [=] {
+			_content, controller(), post, [=] {
 				if (const auto peer = _session->data().peerLoaded(post.peer)) {
 					controller()->showPeerHistory(peer, {}, MsgId(post.id));
 				}
