@@ -1512,32 +1512,33 @@ private:
 
 [[nodiscard]] QRect HomeActionRect(const QRect &art) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
-	const auto size = std::min(s(44), std::max(art.width() - s(16), 0));
+	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
 	return QRect(art.right() - s(8) - size + 1,
 		art.bottom() - s(8) - size + 1, size, size);
 }
 
 void PaintHomeCardAction(QPainter &p, const QRect &art, bool album) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
-	const auto size = std::min(s(44), std::max(art.width() - s(16), 0));
+	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
 	if (size < s(24)) {
 		return;
 	}
 	const auto button = HomeActionRect(art);
 	p.save();
 	p.setPen(Qt::NoPen);
-	p.setBrush(st::windowActiveTextFg);
+	p.setBrush(QColor(0, 0, 0, 120));
 	p.drawEllipse(button);
 	const auto center = button.center();
+	const auto glyph = QColor(255, 255, 255, 235);
 	if (album) {
-		p.setPen(QPen(QColor(0x12, 0x18, 0x20), s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.setPen(QPen(glyph, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 		p.setBrush(Qt::NoBrush);
-		p.drawPolyline(QPolygon({ center + QPoint(-s(4), -s(7)),
-			center + QPoint(s(3), 0), center + QPoint(-s(4), s(7)) }));
+		p.drawPolyline(QPolygon({ center + QPoint(-s(3), -s(6)),
+			center + QPoint(s(3), 0), center + QPoint(-s(3), s(6)) }));
 	} else {
-		p.setBrush(QColor(0x12, 0x18, 0x20));
-		p.drawPolygon(QPolygon({ center + QPoint(-s(5), -s(8)),
-			center + QPoint(s(8), 0), center + QPoint(-s(5), s(8)) }));
+		p.setBrush(glyph);
+		p.drawPolygon(QPolygon({ center + QPoint(-s(4), -s(7)),
+			center + QPoint(s(7), 0), center + QPoint(-s(4), s(7)) }));
 	}
 	p.restore();
 }
@@ -2268,40 +2269,101 @@ private:
 
 };
 
+// Затухание по краю карусели: карточки уходят в фон, а не обрываются.
+class HomeEdgeFade final : public Ui::RpWidget {
+public:
+	// Край, у которого фон гуще: слева, справа или сверху.
+	enum class Edge { Left, Right, Top };
+
+	HomeEdgeFade(QWidget *parent, Edge edge)
+	: RpWidget(parent)
+	, _edge(edge) {
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto from = QColor(st::windowBg->c);
+		auto to = from;
+		to.setAlpha(0);
+		const auto vertical = (_edge == Edge::Top);
+		const auto far = (_edge == Edge::Right);
+		auto gradient = QLinearGradient(
+			0, 0, vertical ? 0 : width(), vertical ? height() : 0);
+		gradient.setColorAt(0., far ? to : from);
+		gradient.setColorAt(1., far ? from : to);
+		p.fillRect(rect(), gradient);
+	}
+
+private:
+	const Edge _edge = Edge::Left;
+
+};
+
 class HomeCarouselArrow final : public Ui::AbstractButton {
 public:
 	HomeCarouselArrow(QWidget *parent, bool forward, Fn<void()> action)
 	: AbstractButton(parent)
 	, _forward(forward) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::NoFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr(
 			forward ? "Вперёд" : "Назад")));
 		setClickedCallback(std::move(action));
 	}
 
+	// Появляется и пропадает плавно, а не щёлкает.
+	void toggle(bool shown) {
+		if (_shown == shown) {
+			return;
+		}
+		_shown = shown;
+		if (shown) {
+			show();
+		}
+		_fade.start([=] {
+			update();
+			if (!_shown && !_fade.animating()) {
+				hide();
+			}
+		}, shown ? 0. : 1., shown ? 1. : 0., 180, anim::easeOutCubic);
+	}
+
 protected:
+	void onStateChanged(State was, StateChangeSource source) override {
+		const auto now = isOver();
+		if (now != bool(was & StateFlag::Over)) {
+			_hover.start([=] { update(); },
+				now ? 0. : 1., now ? 1. : 0., 140, anim::easeOutCubic);
+		}
+	}
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto visible = _fade.value(_shown ? 1. : 0.);
+		const auto over = _hover.value(isOver() ? 1. : 0.);
+		p.setOpacity(visible);
+		const auto scale = 0.85 + 0.15 * visible;
+		p.translate(rect().center());
+		p.scale(scale, scale);
+		p.translate(-rect().center());
 		p.setPen(Qt::NoPen);
-		p.setBrush(isOver() ? QColor(0x48, 0x48, 0x48) : QColor(0x30, 0x30, 0x30));
+		p.setBrush(anim::color(QColor(0x30, 0x30, 0x30), QColor(0x48, 0x48, 0x48), over));
 		p.drawEllipse(rect());
 		p.setPen(QPen(Qt::white, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 		const auto center = rect().center();
 		const auto sign = _forward ? 1 : -1;
-		p.drawPolyline(QPolygon({ center + QPoint(-sign * s(3), -s(6)),
-			center + QPoint(sign * s(3), 0), center + QPoint(-sign * s(3), s(6)) }));
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawEllipse(rect().adjusted(s(1), s(1), -s(1), -s(1)));
-		}
+		p.drawPolyline(QPolygon({ center + QPoint(-sign * s(4), -s(8)),
+			center + QPoint(sign * s(4), 0), center + QPoint(-sign * s(4), s(8)) }));
 	}
 
 private:
 	bool _forward = false;
+	bool _shown = false;
+	Ui::Animations::Simple _fade;
+	Ui::Animations::Simple _hover;
 
 };
 
@@ -2336,12 +2398,21 @@ public:
 				if (!_restoring && _offset) *_offset = _scroll->scrollLeft();
 				updateArrows();
 			}, lifetime());
+			const auto slide = [=](int delta) {
+				const auto from = _scroll->scrollLeft();
+				const auto to = std::clamp(from + delta, 0, _scroll->scrollLeftMax());
+				_slide.start([=](float64 value) {
+					_scroll->scrollToX(int(base::SafeRound(value)));
+				}, from, to, 320, anim::easeOutCubic);
+			};
 			_previous = Ui::CreateChild<HomeCarouselArrow>(this, false, [=] {
-				_scroll->scrollToX(_scroll->scrollLeft() - _scroll->width() * 3 / 4);
+				slide(-_scroll->width() * 3 / 4);
 			});
 			_next = Ui::CreateChild<HomeCarouselArrow>(this, true, [=] {
-				_scroll->scrollToX(_scroll->scrollLeft() + _scroll->width() * 3 / 4);
+				slide(_scroll->width() * 3 / 4);
 			});
+			_fadeLeft = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Left);
+			_fadeRight = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Right);
 		} else {
 			_content = this;
 		}
@@ -2386,7 +2457,12 @@ protected:
 		for (auto i = 0; i != int(_items.size()); ++i) {
 			_items[i]->setGeometry(gap + i * (cardWidth + gap), 0, cardWidth, cardHeight);
 		}
-		const auto arrow = s(36);
+		const auto arrow = s(48);
+		const auto fade = s(72);
+		_fadeLeft->setGeometry(0, 0, fade, cardHeight + gap);
+		_fadeRight->setGeometry(std::max(newWidth - fade, 0), 0, fade, cardHeight + gap);
+		_fadeLeft->raise();
+		_fadeRight->raise();
 		_previous->setGeometry(gap, (cardWidth - arrow) / 2, arrow, arrow);
 		_next->setGeometry(std::max(newWidth - gap - arrow, 0), (cardWidth - arrow) / 2, arrow, arrow);
 		_previous->raise();
@@ -2406,8 +2482,12 @@ protected:
 private:
 	void updateArrows() {
 		if (!_scroll || !_previous || !_next) return;
-		_previous->setVisible(_scroll->scrollLeft() > 0);
-		_next->setVisible(_scroll->scrollLeft() < _scroll->scrollLeftMax());
+		const auto canBack = _scroll->scrollLeft() > 0;
+		const auto canForward = _scroll->scrollLeft() < _scroll->scrollLeftMax();
+		_previous->toggle(canBack);
+		_next->toggle(canForward);
+		_fadeLeft->setVisible(canBack);
+		_fadeRight->setVisible(canForward);
 	}
 
 	bool _expanded = false;
@@ -2418,6 +2498,9 @@ private:
 	Ui::RpWidget *_content = nullptr;
 	HomeCarouselArrow *_previous = nullptr;
 	HomeCarouselArrow *_next = nullptr;
+	HomeEdgeFade *_fadeLeft = nullptr;
+	HomeEdgeFade *_fadeRight = nullptr;
+	Ui::Animations::Simple _slide;
 	std::vector<Ui::RpWidget*> _items;
 
 };
@@ -3332,7 +3415,7 @@ private:
 		p.setPen(Qt::NoPen);
 		// Play: тёмный полупрозрачный круг с белым значком, как кнопки в шапке.
 		p.setBrush(play
-			? QColor(255, 255, 255, int(235 + 20 * over))
+			? QColor(255, 255, 255, int(36 + 20 * over))
 			: dark
 			? QColor(0, 0, 0, int(80 + 50 * over))
 			: QColor(255, 255, 255, int(40 * over)));
@@ -3410,7 +3493,7 @@ private:
 				active ? _accent : QColor(255, 255, 255, 150));
 			return;
 		}
-		p.setBrush((_glyph == Glyph::Play) ? QColor(25, 27, 29) : QColor(Qt::white));
+		p.setBrush(QColor(Qt::white));
 		p.setPen(Qt::NoPen);
 		if (_glyph == Glyph::Play) {
 			if (_playing) {
@@ -3525,11 +3608,11 @@ private:
 			return;
 		}
 		if (_glyph == Glyph::Play) {
-			p.setBrush(isOver()
-				? QColor(st::windowFg->c).darker(110)
-				: st::windowFg->c);
+			auto fill = QColor(st::windowFg->c);
+			fill.setAlpha(isOver() ? 56 : 38);
+			p.setBrush(fill);
 			p.drawEllipse(r.adjusted(2, 2, -2, -2));
-			p.setBrush(st::windowBg);
+			p.setBrush(st::windowFg);
 			const auto u = r.width() / 100.;
 			if (_playing) {
 				p.drawRoundedRect(QRectF(c.x() - 14 * u, c.y() - 17 * u, 10 * u, 34 * u), 3 * u, 3 * u);
@@ -4567,6 +4650,7 @@ public:
 		_repeat->resize(s(36), s(36));
 		_seek->resize(_seek->width(), s(20));
 		_tabList = _tabScroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_tabScroll));
+		_topFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Top);
 		_homeMoreRetryTimer.setSingleShot(true);
 		connect(&_homeMoreRetryTimer, &QTimer::timeout, this, [=] {
 			scheduleHomeMoreIfNeeded();
@@ -5120,6 +5204,10 @@ protected:
 			layout.center.width(),
 			std::max(layout.center.y() + layout.center.height() - layout.scrollTop - s(12), 0));
 		_tabList->resizeToWidth(_tabScroll->width());
+		_topFade->setVisible(_tab != Tab::Now);
+		_topFade->setGeometry(
+			_tabScroll->x(), _tabScroll->y(), _tabScroll->width(), s(28));
+		_topFade->raise();
 
 		// Навигация: ряд пилюль сверху по центру.
 		{
@@ -6225,6 +6313,7 @@ private:
 	const not_null<RoundGlyph*> _queueToggle;
 	const not_null<SeekBar*> _volume;
 	const not_null<Ui::ScrollArea*> _tabScroll;
+	HomeEdgeFade *_topFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
 	std::array<NavItem*, 6> _nav = {};
 	QLineEdit *_searchField = nullptr;
