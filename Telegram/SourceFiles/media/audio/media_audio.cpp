@@ -22,8 +22,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "ui/chat/attach/attach_prepare.h"
 
+#define AL_ALEXT_PROTOTYPES
 #include <al.h>
 #include <alc.h>
+#include <alext.h>
+#include <efx.h>
+#include <efx-presets.h>
+
+#include <set>
 
 #include <numeric>
 
@@ -54,6 +60,188 @@ namespace {
 
 Player::Mixer *MixerInstance = nullptr;
 
+// Mokagram: аудиофильтры плеера на OpenAL EFX (реверб, эхо, бас, «под водой», «телефон»).
+// Эффект висит на общем слоте, сухой тракт каждого источника получает свой фильтр.
+struct FxState {
+	bool available = false;
+	ALuint slot = 0;
+	ALuint effect = 0;
+	ALuint dryLowpass = 0;
+	ALuint dryBandpass = 0;
+	int preset = 0;
+	ALuint dryFilter = 0;
+};
+FxState Fx;
+QMutex FxSourcesMutex;
+std::set<ALuint> FxSources;
+
+enum FxPresetIndex {
+	kFxOff = 0,
+	kFxBass,
+	kFxHall,
+	kFxRoom,
+	kFxEcho,
+	kFxUnderwater,
+	kFxPhone,
+};
+
+// Thread: Any. Needs a current context.
+void ApplyFxToSource(ALuint source) {
+	if (!Fx.available || !source) {
+		return;
+	}
+	alSource3i(
+		source,
+		AL_AUXILIARY_SEND_FILTER,
+		(Fx.preset == kFxOff || Fx.preset == kFxPhone) ? AL_EFFECTSLOT_NULL : Fx.slot,
+		0,
+		AL_FILTER_NULL);
+	alSourcei(source, AL_DIRECT_FILTER, Fx.dryFilter);
+}
+
+void LoadReverb(const EFXEAXREVERBPROPERTIES &p) {
+	alEffecti(Fx.effect, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
+	if (alGetError() != AL_NO_ERROR) {
+		alEffecti(Fx.effect, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
+		alEffectf(Fx.effect, AL_REVERB_DENSITY, p.flDensity);
+		alEffectf(Fx.effect, AL_REVERB_DIFFUSION, p.flDiffusion);
+		alEffectf(Fx.effect, AL_REVERB_GAIN, p.flGain);
+		alEffectf(Fx.effect, AL_REVERB_GAINHF, p.flGainHF);
+		alEffectf(Fx.effect, AL_REVERB_DECAY_TIME, p.flDecayTime);
+		alEffectf(Fx.effect, AL_REVERB_DECAY_HFRATIO, p.flDecayHFRatio);
+		alEffectf(Fx.effect, AL_REVERB_REFLECTIONS_GAIN, p.flReflectionsGain);
+		alEffectf(Fx.effect, AL_REVERB_REFLECTIONS_DELAY, p.flReflectionsDelay);
+		alEffectf(Fx.effect, AL_REVERB_LATE_REVERB_GAIN, p.flLateReverbGain);
+		alEffectf(Fx.effect, AL_REVERB_LATE_REVERB_DELAY, p.flLateReverbDelay);
+		alEffectf(Fx.effect, AL_REVERB_AIR_ABSORPTION_GAINHF, p.flAirAbsorptionGainHF);
+		alEffectf(Fx.effect, AL_REVERB_ROOM_ROLLOFF_FACTOR, p.flRoomRolloffFactor);
+		alEffecti(Fx.effect, AL_REVERB_DECAY_HFLIMIT, p.iDecayHFLimit);
+		return;
+	}
+	alEffectf(Fx.effect, AL_EAXREVERB_DENSITY, p.flDensity);
+	alEffectf(Fx.effect, AL_EAXREVERB_DIFFUSION, p.flDiffusion);
+	alEffectf(Fx.effect, AL_EAXREVERB_GAIN, p.flGain);
+	alEffectf(Fx.effect, AL_EAXREVERB_GAINHF, p.flGainHF);
+	alEffectf(Fx.effect, AL_EAXREVERB_GAINLF, p.flGainLF);
+	alEffectf(Fx.effect, AL_EAXREVERB_DECAY_TIME, p.flDecayTime);
+	alEffectf(Fx.effect, AL_EAXREVERB_DECAY_HFRATIO, p.flDecayHFRatio);
+	alEffectf(Fx.effect, AL_EAXREVERB_DECAY_LFRATIO, p.flDecayLFRatio);
+	alEffectf(Fx.effect, AL_EAXREVERB_REFLECTIONS_GAIN, p.flReflectionsGain);
+	alEffectf(Fx.effect, AL_EAXREVERB_REFLECTIONS_DELAY, p.flReflectionsDelay);
+	alEffectfv(Fx.effect, AL_EAXREVERB_REFLECTIONS_PAN, p.flReflectionsPan);
+	alEffectf(Fx.effect, AL_EAXREVERB_LATE_REVERB_GAIN, p.flLateReverbGain);
+	alEffectf(Fx.effect, AL_EAXREVERB_LATE_REVERB_DELAY, p.flLateReverbDelay);
+	alEffectfv(Fx.effect, AL_EAXREVERB_LATE_REVERB_PAN, p.flLateReverbPan);
+	alEffectf(Fx.effect, AL_EAXREVERB_ECHO_TIME, p.flEchoTime);
+	alEffectf(Fx.effect, AL_EAXREVERB_ECHO_DEPTH, p.flEchoDepth);
+	alEffectf(Fx.effect, AL_EAXREVERB_MODULATION_TIME, p.flModulationTime);
+	alEffectf(Fx.effect, AL_EAXREVERB_MODULATION_DEPTH, p.flModulationDepth);
+	alEffectf(Fx.effect, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, p.flAirAbsorptionGainHF);
+	alEffectf(Fx.effect, AL_EAXREVERB_HFREFERENCE, p.flHFReference);
+	alEffectf(Fx.effect, AL_EAXREVERB_LFREFERENCE, p.flLFReference);
+	alEffectf(Fx.effect, AL_EAXREVERB_ROOM_ROLLOFF_FACTOR, p.flRoomRolloffFactor);
+	alEffecti(Fx.effect, AL_EAXREVERB_DECAY_HFLIMIT, p.iDecayHFLimit);
+}
+
+// Thread: Any. Needs a current context. Должен вызываться под AudioMutex.
+void ConfigureFx(int preset) {
+	if (!Fx.available) {
+		return;
+	}
+	Fx.preset = preset;
+	Fx.dryFilter = AL_FILTER_NULL;
+	switch (preset) {
+	case kFxBass: {
+		// Усиленные низы: эквалайзер почти глушит середину и верх, к сухому сигналу добавляется бас.
+		alEffecti(Fx.effect, AL_EFFECT_TYPE, AL_EFFECT_EQUALIZER);
+		alEffectf(Fx.effect, AL_EQUALIZER_LOW_GAIN, 2.2f);
+		alEffectf(Fx.effect, AL_EQUALIZER_LOW_CUTOFF, 220.f);
+		alEffectf(Fx.effect, AL_EQUALIZER_MID1_GAIN, 0.126f);
+		alEffectf(Fx.effect, AL_EQUALIZER_MID2_GAIN, 0.126f);
+		alEffectf(Fx.effect, AL_EQUALIZER_HIGH_GAIN, 0.126f);
+	} break;
+	case kFxHall: {
+		EFXEAXREVERBPROPERTIES p = EFX_REVERB_PRESET_CONCERTHALL;
+		LoadReverb(p);
+	} break;
+	case kFxRoom: {
+		EFXEAXREVERBPROPERTIES p = EFX_REVERB_PRESET_ROOM;
+		LoadReverb(p);
+	} break;
+	case kFxEcho: {
+		alEffecti(Fx.effect, AL_EFFECT_TYPE, AL_EFFECT_ECHO);
+		alEffectf(Fx.effect, AL_ECHO_DELAY, 0.2f);
+		alEffectf(Fx.effect, AL_ECHO_LRDELAY, 0.1f);
+		alEffectf(Fx.effect, AL_ECHO_DAMPING, 0.5f);
+		alEffectf(Fx.effect, AL_ECHO_FEEDBACK, 0.4f);
+		alEffectf(Fx.effect, AL_ECHO_SPREAD, -1.f);
+	} break;
+	case kFxUnderwater: {
+		EFXEAXREVERBPROPERTIES p = EFX_REVERB_PRESET_UNDERWATER;
+		LoadReverb(p);
+		Fx.dryFilter = Fx.dryLowpass;
+	} break;
+	case kFxPhone: {
+		alEffecti(Fx.effect, AL_EFFECT_TYPE, AL_EFFECT_NULL);
+		Fx.dryFilter = Fx.dryBandpass;
+	} break;
+	default:
+		alEffecti(Fx.effect, AL_EFFECT_TYPE, AL_EFFECT_NULL);
+		break;
+	}
+	alAuxiliaryEffectSloti(Fx.slot, AL_EFFECTSLOT_EFFECT, Fx.effect);
+	alAuxiliaryEffectSlotf(Fx.slot, AL_EFFECTSLOT_GAIN, preset == kFxHall || preset == kFxRoom ? 0.7f : 1.f);
+	alGetError();
+
+	// Уже играющие источники получают новый тракт.
+	QMutexLocker lock(&FxSourcesMutex);
+	for (const auto source : FxSources) {
+		ApplyFxToSource(source);
+	}
+}
+
+// Thread: Any. Must be locked: AudioMutex. Needs a current context.
+void InitFx(int preset) {
+	Fx = FxState();
+	if (!AudioDevice || !alcIsExtensionPresent(AudioDevice, "ALC_EXT_EFX")) {
+		return;
+	}
+	alGetError();
+	alGenEffects(1, &Fx.effect);
+	alGenAuxiliaryEffectSlots(1, &Fx.slot);
+	alGenFilters(1, &Fx.dryLowpass);
+	alGenFilters(1, &Fx.dryBandpass);
+	if (alGetError() != AL_NO_ERROR || !Fx.effect || !Fx.slot) {
+		LOG(("Audio Info: EFX objects are not available."));
+		return;
+	}
+	alFilteri(Fx.dryLowpass, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+	alFilterf(Fx.dryLowpass, AL_LOWPASS_GAIN, 0.9f);
+	alFilterf(Fx.dryLowpass, AL_LOWPASS_GAINHF, 0.12f);
+	alFilteri(Fx.dryBandpass, AL_FILTER_TYPE, AL_FILTER_BANDPASS);
+	alFilterf(Fx.dryBandpass, AL_BANDPASS_GAIN, 1.f);
+	alFilterf(Fx.dryBandpass, AL_BANDPASS_GAINLF, 0.12f);
+	alFilterf(Fx.dryBandpass, AL_BANDPASS_GAINHF, 0.28f);
+	alGetError();
+	Fx.available = true;
+	ConfigureFx(preset);
+	LOG(("Audio Info: EFX is available, filter preset %1.").arg(preset));
+}
+
+// Thread: Any. Must be locked: AudioMutex. Needs a current context.
+void DestroyFx() {
+	if (Fx.available) {
+		alAuxiliaryEffectSloti(Fx.slot, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
+		alDeleteAuxiliaryEffectSlots(1, &Fx.slot);
+		alDeleteEffects(1, &Fx.effect);
+		alDeleteFilters(1, &Fx.dryLowpass);
+		alDeleteFilters(1, &Fx.dryBandpass);
+	}
+	const auto preset = Fx.preset;
+	Fx = FxState();
+	Fx.preset = preset;
+}
+
 // Thread: Any.
 bool ContextErrorHappened() {
 	ALenum errCode;
@@ -77,6 +265,7 @@ bool PlaybackErrorHappened() {
 // Thread: Any. Must be locked: AudioMutex.
 void DestroyPlaybackDevice() {
 	if (AudioContext) {
+		DestroyFx();
 		alcMakeContextCurrent(nullptr);
 		alcDestroyContext(AudioContext);
 		AudioContext = nullptr;
@@ -121,6 +310,8 @@ bool CreatePlaybackDevice() {
 
 	alDistanceModel(AL_NONE);
 
+	InitFx(Fx.preset);
+
 	return true;
 }
 
@@ -141,6 +332,16 @@ void ClosePlaybackDevice(not_null<Instance*> instance) {
 } // namespace
 
 // Thread: Main.
+// Mokagram: фильтр плеера (0 выкл, 1 бас, 2 зал, 3 комната, 4 эхо, 5 под водой, 6 телефон).
+void SetFilterPreset(int preset) {
+	QMutexLocker lock(&AudioMutex);
+	if (!AudioContext) {
+		Fx.preset = preset;
+		return;
+	}
+	ConfigureFx(preset);
+}
+
 void Start(not_null<Instance*> instance) {
 	Assert(AudioDevice == nullptr);
 
@@ -268,6 +469,11 @@ Mixer *mixer() {
 
 void Mixer::Track::createStream(AudioMsgId::Type type) {
 	alGenSources(1, &stream.source);
+	{
+		QMutexLocker lock(&Audio::FxSourcesMutex);
+		Audio::FxSources.insert(stream.source);
+	}
+	Audio::ApplyFxToSource(stream.source);
 	alSourcef(stream.source, AL_PITCH, 1.f);
 	alSource3f(stream.source, AL_POSITION, 0, 0, 0);
 	alSource3f(stream.source, AL_VELOCITY, 0, 0, 0);
@@ -286,6 +492,10 @@ void Mixer::Track::createStream(AudioMsgId::Type type) {
 void Mixer::Track::destroyStream() {
 	if (isStreamCreated()) {
 		alDeleteBuffers(3, stream.buffers);
+		{
+			QMutexLocker lock(&Audio::FxSourcesMutex);
+			Audio::FxSources.erase(stream.source);
+		}
 		alDeleteSources(1, &stream.source);
 	}
 	stream.source = 0;

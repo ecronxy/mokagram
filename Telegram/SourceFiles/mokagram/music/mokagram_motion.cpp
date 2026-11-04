@@ -26,6 +26,10 @@
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
 
+namespace Media::Audio {
+void SetFilterPreset(int preset);
+} // namespace Media::Audio
+
 namespace Mokagram::Music {
 namespace {
 
@@ -574,6 +578,10 @@ private:
 
 } // namespace
 
+namespace {
+rpl::lifetime AudioFilterLifetime;
+} // namespace
+
 void RegisterMotionSettings() {
 	const auto add = [](Settings::Entry entry) {
 		entry.section = QString::fromUtf8(Lang::Tr("Плеер"));
@@ -581,6 +589,23 @@ void RegisterMotionSettings() {
 		entry.sectionIcon = u"hide"_q;
 		Settings::Register(std::move(entry));
 	};
+	add({ .key = u"player.audio_filter"_q,
+		.title = QString::fromUtf8(Lang::Tr("Звуковой фильтр")),
+		.description = QString::fromUtf8(Lang::Tr("Обрабатывает звук всего плеера: бас, зал, комната, эхо, под водой, телефон. На сами файлы не влияет.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Lang::Tr("Без обработки")),
+			QString::fromUtf8(Lang::Tr("Усиление баса")),
+			QString::fromUtf8(Lang::Tr("Концертный зал")),
+			QString::fromUtf8(Lang::Tr("Комната")),
+			QString::fromUtf8(Lang::Tr("Эхо")),
+			QString::fromUtf8(Lang::Tr("Под водой")),
+			QString::fromUtf8(Lang::Tr("Телефон")),
+		} });
+	Settings::IntValue(u"player.audio_filter"_q) | rpl::on_next([](int preset) {
+		::Media::Audio::SetFilterPreset(preset);
+	}, AudioFilterLifetime);
 	add({ .key = u"player.dynamic_background"_q,
 		.title = QString::fromUtf8(Lang::Tr("Динамичный фон плеера")),
 		.kind = Settings::Kind::Bool, .defaultValue = true });
