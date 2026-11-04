@@ -1528,7 +1528,7 @@ void AskForRestart() {
 		}
 		return false;
 	};
-	if (starts({ "streamer.", "ghost.", "filters." })) {
+	if (starts({ "streamer.", "ghost.", "filters.", "privacy." })) {
 		return u"privacy"_q;
 	} else if (starts({ "scam.", "guard." })) {
 		return u"security"_q;

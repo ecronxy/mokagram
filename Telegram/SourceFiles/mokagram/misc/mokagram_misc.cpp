@@ -516,19 +516,19 @@ void RegisterSettings() {
 	Settings::Register({
 		.key = u"look.menu_side"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
-		.title = QString::fromUtf8(Mokagram::Lang::Tr("С какой стороны открывать меню")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сторона меню")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr(
-			"Меню с аккаунтами, контактами и настройками выезжает с выбранного края окна.")),
+			"Откуда выезжает меню. Сверху и снизу это панель, она работает при закреплении.")),
 		.kind = Settings::Kind::Choice,
 		.defaultValue = 0,
 		.choices = {
 			QString::fromUtf8(Mokagram::Lang::Tr("Слева")),
 			QString::fromUtf8(Mokagram::Lang::Tr("Справа")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Сверху (панелью, при закреплении)")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Снизу (панелью, при закреплении)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Сверху")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Снизу")),
 		},
 		.category = u"look"_q,
-		.sectionIcon = u"hide"_q,
+		.sectionIcon = u"palette"_q,
 	});
 	Settings::Register({
 		.key = u"privacy.lock_all"_q,
@@ -539,7 +539,7 @@ void RegisterSettings() {
 		.kind = Settings::Kind::String,
 		.defaultValue = QString::fromUtf8(Mokagram::Lang::Tr("Открыть")),
 		.category = u"privacy"_q,
-		.sectionIcon = u"hide"_q,
+		.sectionIcon = u"lock"_q,
 		.action = [] { ShowPrivacyLockBox(); },
 	});
 	Settings::Register({
@@ -552,13 +552,13 @@ void RegisterSettings() {
 	Settings::Register({
 		.key = u"look.menu_pinned"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
-		.title = QString::fromUtf8(Mokagram::Lang::Tr("Закрепить меню колонкой")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Закрепить меню")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr(
-			"Меню остаётся открытым у выбранного края окна, как правая панель, и не закрывается по клику рядом.")),
+			"Меню остаётся на экране у выбранного края и не закрывается.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.category = u"look"_q,
-		.sectionIcon = u"hide"_q,
+		.sectionIcon = u"palette"_q,
 	});
 	Settings::Register({
 		.key = QString::fromLatin1(kLockBackupKey),

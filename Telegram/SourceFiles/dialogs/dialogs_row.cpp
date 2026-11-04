@@ -339,9 +339,16 @@ void BasicRow::addRipple(
 		QSize size,
 		Fn<void()> updateCallback) {
 	if (!_ripple) {
+		// Mokagram: рябь по форме пилюли строки (отступы и радиус как при отрисовке
+		// выбранной строки), без обрезки на каждом кадре.
 		addRippleWithMask(
 			origin,
-			Ui::RippleAnimation::RectMask(size),
+			Ui::RippleAnimation::MaskByDrawer(size, false, [&](QPainter &p) {
+				p.drawRoundedRect(
+					QRect(2, 1, size.width() - 4, size.height() - 2),
+					18,
+					18);
+			}),
 			std::move(updateCallback));
 	} else {
 		_ripple->add(origin);
