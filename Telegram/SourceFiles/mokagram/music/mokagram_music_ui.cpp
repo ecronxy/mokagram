@@ -2273,7 +2273,7 @@ private:
 class HomeEdgeFade final : public Ui::RpWidget {
 public:
 	// Край, у которого фон гуще: слева, справа или сверху.
-	enum class Edge { Left, Right, Top };
+	enum class Edge { Left, Right, Top, Bottom };
 
 	HomeEdgeFade(QWidget *parent, Edge edge)
 	: RpWidget(parent)
@@ -2284,11 +2284,11 @@ public:
 protected:
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
-		auto from = QColor(st::windowBg->c);
+		auto from = QColor(0x1c, 0x1c, 0x1c);
 		auto to = from;
 		to.setAlpha(0);
-		const auto vertical = (_edge == Edge::Top);
-		const auto far = (_edge == Edge::Right);
+		const auto vertical = (_edge == Edge::Top || _edge == Edge::Bottom);
+		const auto far = (_edge == Edge::Right || _edge == Edge::Bottom);
 		auto gradient = QLinearGradient(
 			0, 0, vertical ? 0 : width(), vertical ? height() : 0);
 		gradient.setColorAt(0., far ? to : from);
@@ -2350,9 +2350,9 @@ protected:
 		p.scale(scale, scale);
 		p.translate(-rect().center());
 		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(QColor(0x30, 0x30, 0x30), QColor(0x48, 0x48, 0x48), over));
+		p.setBrush(anim::color(QColor(0, 0, 0, 150), QColor(0, 0, 0, 200), over));
 		p.drawEllipse(rect());
-		p.setPen(QPen(Qt::white, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.setPen(QPen(QColor(255, 255, 255, 220), s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 		const auto center = rect().center();
 		const auto sign = _forward ? 1 : -1;
 		p.drawPolyline(QPolygon({ center + QPoint(-sign * s(4), -s(8)),
@@ -4651,6 +4651,7 @@ public:
 		_seek->resize(_seek->width(), s(20));
 		_tabList = _tabScroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_tabScroll));
 		_topFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Top);
+		_bottomFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Bottom);
 		_homeMoreRetryTimer.setSingleShot(true);
 		connect(&_homeMoreRetryTimer, &QTimer::timeout, this, [=] {
 			scheduleHomeMoreIfNeeded();
@@ -5208,6 +5209,13 @@ protected:
 		_topFade->setGeometry(
 			_tabScroll->x(), _tabScroll->y(), _tabScroll->width(), s(28));
 		_topFade->raise();
+		_bottomFade->setVisible(_tab != Tab::Now);
+		_bottomFade->setGeometry(
+			_tabScroll->x(),
+			_tabScroll->y() + _tabScroll->height() - s(36),
+			_tabScroll->width(),
+			s(36));
+		_bottomFade->raise();
 
 		// Навигация: ряд пилюль сверху по центру.
 		{
@@ -6314,6 +6322,7 @@ private:
 	const not_null<SeekBar*> _volume;
 	const not_null<Ui::ScrollArea*> _tabScroll;
 	HomeEdgeFade *_topFade = nullptr;
+	HomeEdgeFade *_bottomFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
 	std::array<NavItem*, 6> _nav = {};
 	QLineEdit *_searchField = nullptr;
