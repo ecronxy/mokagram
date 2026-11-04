@@ -222,6 +222,7 @@ void RegisterSettings() {
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Панель со словами справа от чата, текущая строка подсвечивается. Включается кнопкой в панели плеера.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
+		.hidden = true,
 	});
 	playerEntry({
 		.key = u"lyrics.plasma"_q,

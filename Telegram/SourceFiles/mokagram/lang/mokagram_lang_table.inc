@@ -551,6 +551,7 @@
 	{ "Текст ссылки показывает ", "The link text shows " },
 	{ "Текст уведомлений", "Notification text" },
 	{ "Текст этой песни не найден", "No lyrics for this track" },
+	{ "Сервис текста временно недоступен", "Lyrics service is temporarily unavailable" },
 	{ "Тень под карточкой", "Shadow under the card" },
 	{ "Тип", "Type" },
 	{ "Только ваши: в профиле, меню и настройках. Чужие имена в чатах не трогаем.", "Only yours: in the profile, menu and settings. Other people's names in chats are not touched." },

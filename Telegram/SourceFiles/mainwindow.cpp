@@ -55,10 +55,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QWindow>
 
-namespace Ui {
-[[nodiscard]] bool MainMenuOnRight();
-} // namespace Ui
-
 namespace {
 
 // Code for testing languages is F7-F6-F7-F8
@@ -824,7 +820,7 @@ void MainWindow::updateControlsGeometry() {
 				}
 			} else {
 				const auto skip = st::mainMenuWidth;
-				const auto right = Ui::MainMenuOnRight();
+				const auto right = (Mokagram::Settings::Int(u"look.menu_side"_q) == 1);
 				menu->setGeometry(
 					right ? (body.x() + body.width() - skip) : body.x(),
 					body.y(),

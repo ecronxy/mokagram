@@ -101,10 +101,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
 
-namespace Ui {
-[[nodiscard]] bool MainMenuOnRight();
-} // namespace Ui
-
 namespace Main {
 class Session;
 } // namespace Main
@@ -1659,7 +1655,7 @@ void MainMenu::paintEvent(QPaintEvent *e) {
 
 	// Mokagram: углы меню у внутреннего края скруглены, как у профиля.
 	constexpr auto kRadius = 32;
-	const auto shape = Ui::MainMenuOnRight()
+	const auto shape = (Mokagram::Settings::Int(u"look.menu_side"_q) == 1)
 		? QRectF(0, 0, width() + kRadius, height())
 		: QRectF(-kRadius, 0, width() + kRadius, height());
 	auto hq = PainterHighQualityEnabler(p);

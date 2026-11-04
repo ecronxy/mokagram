@@ -52,10 +52,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QtEvents>
 
-namespace Ui {
-[[nodiscard]] bool MainMenuOnRight();
-} // namespace Ui
-
 namespace Window {
 namespace {
 

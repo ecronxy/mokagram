@@ -602,7 +602,7 @@ void RegisterMotionSettings() {
 			QString::fromUtf8(Lang::Tr("Эхо")),
 			QString::fromUtf8(Lang::Tr("Под водой")),
 			QString::fromUtf8(Lang::Tr("Телефон")),
-		} });
+		}, .hidden = true });
 	Settings::IntValue(u"player.audio_filter"_q) | rpl::on_next([](int preset) {
 		::Media::Audio::SetFilterPreset(preset);
 	}, AudioFilterLifetime);
@@ -615,7 +615,7 @@ void RegisterMotionSettings() {
 	add({ .key = u"player.motion_covers"_q,
 		.title = QString::fromUtf8(Lang::Tr("Живые обложки Apple Music")),
 		.description = QString::fromUtf8(Lang::Tr("Ищет обложку по названию и исполнителю в Apple Music и кэширует видео.")),
-		.kind = Settings::Kind::Bool, .defaultValue = false });
+		.kind = Settings::Kind::Bool, .defaultValue = false, .hidden = true });
 	add({ .key = u"player.public_canvas"_q,
 		.title = QString::fromUtf8(Lang::Tr("Canvas из публичного каталога")),
 		.description = QString::fromUtf8(Lang::Tr("Автоматически ищет видео по исполнителю и названию через Canvas Downloader; вход в Spotify не требуется.")),
@@ -623,7 +623,7 @@ void RegisterMotionSettings() {
 	add({ .key = u"player.spotify_canvas"_q,
 		.title = QString::fromUtf8(Lang::Tr("Видео Spotify Canvas")),
 		.description = QString::fromUtf8(Lang::Tr("Требует входа в Spotify. При отсутствии видео остаётся обычный фон.")),
-		.kind = Settings::Kind::Bool, .defaultValue = false });
+		.kind = Settings::Kind::Bool, .defaultValue = false, .hidden = true });
 	add({ .key = u"player.spotify_client_id"_q,
 		.title = QString::fromUtf8(Lang::Tr("Spotify Client ID")),
 		.description = QString::fromUtf8(Lang::Tr("Client ID приложения Spotify с Redirect URI http://127.0.0.1:8899/mokagram. Секрет приложения не нужен.")),
@@ -633,11 +633,11 @@ void RegisterMotionSettings() {
 		.title = QString::fromUtf8(Lang::Tr("Войти в Spotify")),
 		.description = QString::fromUtf8(Lang::Tr("Вход через браузер. Сеанс Spotify хранится в памяти до выхода из mokaGram.")),
 		.kind = Settings::Kind::String, .defaultValue = QString(),
-		.dependsOn = u"player.spotify_canvas"_q, .action = LoginSpotify });
+		.dependsOn = u"player.spotify_canvas"_q, .hidden = true, .action = LoginSpotify });
 	add({ .key = u"player.spotify_logout"_q,
 		.title = QString::fromUtf8(Lang::Tr("Отключить Spotify")),
 		.kind = Settings::Kind::String, .defaultValue = QString(),
-		.action = [] {
+		.hidden = true, .action = [] {
 			auto &session = Tokens();
 			++session.generation;
 			if (session.login) session.login->deleteLater();
