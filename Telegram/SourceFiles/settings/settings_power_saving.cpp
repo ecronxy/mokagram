@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_power_saving.h"
 #include "settings/settings_builder.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 
 #include "base/battery_saving.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
@@ -77,7 +78,7 @@ void PowerSavingBox(
 			tr::lng_settings_power_auto(),
 			st::powerSavingButtonNoIcon
 		))->toggleOn(rpl::single(!ignore));
-		Mokagram::Plugins::MakePill(
+		Mokagram::BoxParts::MakePill(
 			automatic,
 			[] { return st::windowBg->c; });
 		container->add(
