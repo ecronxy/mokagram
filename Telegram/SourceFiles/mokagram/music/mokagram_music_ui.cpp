@@ -4,6 +4,7 @@
 // mokagram-id: 7b8dec14
 #include "mokagram/music/mokagram_music_ui.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/music/mokagram_music_canvas.h"
@@ -1480,7 +1481,7 @@ public:
 	: AbstractButton(parent)
 	, _track(std::move(track)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		const auto refresh = [=] {
 			const auto text = IsLiked(_track.id)
 				? "Убрать из избранного"
@@ -1510,34 +1511,59 @@ private:
 
 };
 
+// Плавное наведение: 0..1 за 160 мс, дёшево, без отдельных таймеров.
+struct HoverFade {
+	Ui::Animations::Simple animation;
+	bool on = false;
+
+	void set(bool now, Fn<void()> repaint) {
+		if (on == now) {
+			return;
+		}
+		on = now;
+		animation.start(std::move(repaint), now ? 0. : 1., now ? 1. : 0., 160, anim::easeOutCubic);
+	}
+	[[nodiscard]] double value() const {
+		return animation.value(on ? 1. : 0.);
+	}
+};
+
 [[nodiscard]] QRect HomeActionRect(const QRect &art) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
-	const auto size = std::min(s(44), std::max(art.width() - s(16), 0));
+	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
 	return QRect(art.right() - s(8) - size + 1,
 		art.bottom() - s(8) - size + 1, size, size);
 }
 
-void PaintHomeCardAction(QPainter &p, const QRect &art, bool album) {
+void PaintHomeCardAction(QPainter &p, const QRect &art, bool album, double shown = 1.) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
-	const auto size = std::min(s(44), std::max(art.width() - s(16), 0));
+	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
 	if (size < s(24)) {
+		return;
+	}
+	if (shown <= 0.) {
 		return;
 	}
 	const auto button = HomeActionRect(art);
 	p.save();
+	p.setOpacity(p.opacity() * shown);
+	p.translate(button.center());
+	p.scale(0.8 + 0.2 * shown, 0.8 + 0.2 * shown);
+	p.translate(-button.center());
 	p.setPen(Qt::NoPen);
-	p.setBrush(st::windowActiveTextFg);
+	p.setBrush(QColor(0, 0, 0, 120));
 	p.drawEllipse(button);
 	const auto center = button.center();
+	const auto glyph = QColor(255, 255, 255, 235);
 	if (album) {
-		p.setPen(QPen(QColor(0x12, 0x18, 0x20), s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.setPen(QPen(glyph, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 		p.setBrush(Qt::NoBrush);
-		p.drawPolyline(QPolygon({ center + QPoint(-s(4), -s(7)),
-			center + QPoint(s(3), 0), center + QPoint(-s(4), s(7)) }));
+		p.drawPolyline(QPolygon({ center + QPoint(-s(3), -s(6)),
+			center + QPoint(s(3), 0), center + QPoint(-s(3), s(6)) }));
 	} else {
-		p.setBrush(QColor(0x12, 0x18, 0x20));
-		p.drawPolygon(QPolygon({ center + QPoint(-s(5), -s(8)),
-			center + QPoint(s(8), 0), center + QPoint(-s(5), s(8)) }));
+		p.setBrush(glyph);
+		p.drawPolygon(QPolygon({ center + QPoint(-s(4), -s(7)),
+			center + QPoint(s(7), 0), center + QPoint(-s(4), s(7)) }));
 	}
 	p.restore();
 }
@@ -1546,6 +1572,10 @@ enum class RowMode { Results, Queue, Context, Home, Album };
 
 class Row final : public Ui::AbstractButton {
 public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+	}
+
 	Row(
 		QWidget *parent,
 		not_null<Window::SessionController*> controller,
@@ -1562,10 +1592,10 @@ public:
 	, _results(std::move(results)) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		const auto unavailable = _mode == RowMode::Album && _track.unavailable;
 		const auto unavailableText = QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"));
-		setAccessibleName(_track.title + u" — "_q + _track.artist
+		setAccessibleName(_track.title + u" - "_q + _track.artist
 			+ (unavailable ? u" · "_q + unavailableText : QString()));
 		if (unavailable) {
 			setDisabled(true);
@@ -1844,9 +1874,10 @@ private:
 		const auto artSize = std::max(width() - 2 * inset, 0);
 		const auto art = QRect(inset, inset, artSize, artSize);
 		p.setPen(Qt::NoPen);
-		p.setBrush((isOver() || isDown() || playing)
-			? QColor(0x30, 0x30, 0x30)
-			: QColor(0x24, 0x24, 0x24));
+		p.setBrush(anim::color(
+			QColor(0x24, 0x24, 0x24),
+			QColor(0x30, 0x30, 0x30),
+			playing ? 1. : _hoverFade.value()));
 		p.drawRoundedRect(rect(), s(8), s(8));
 		if (hasFocus()) {
 			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
@@ -1871,9 +1902,7 @@ private:
 			p.drawImage(art, _art);
 		}
 		p.restore();
-		if (isOver() || isDown() || hasFocus()) {
-			PaintHomeCardAction(p, art, false);
-		}
+		PaintHomeCardAction(p, art, false, hasFocus() ? 1. : _hoverFade.value());
 		const auto textWidth = std::max(width() - 2 * inset - s(28), 0);
 		p.setFont(st::semiboldFont);
 		p.setPen(playing ? st::windowActiveTextFg : st::windowFg);
@@ -1902,6 +1931,8 @@ private:
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	Ui::Animations::Simple _likeAnimation;
 
+	HoverFade _hoverFade;
+
 };
 
 class HomeSectionHeader final : public Ui::AbstractButton {
@@ -1912,7 +1943,7 @@ public:
 	, _back(back) {
 		resize(width(), style::ConvertScale(56));
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(_back
 			? QString::fromUtf8(Mokagram::Lang::Tr("Назад")) + u": "_q + _title
 			: QString::fromUtf8(Mokagram::Lang::Tr("Показать все")) + u": "_q + _title);
@@ -2000,9 +2031,9 @@ public:
 	, _album(album) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Альбом"))
-			+ u": "_q + _album.title + u" — "_q + _album.artist);
+			+ u": "_q + _album.title + u" - "_q + _album.artist);
 		setClickedCallback(std::move(open));
 		LoadImage(ArtUrl(album.artworkUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
@@ -2076,13 +2107,17 @@ private:
 
 class HomeAlbumCard final : public Ui::AbstractButton {
 public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+	}
+
 	HomeAlbumCard(QWidget *parent, Album album, Fn<void()> open)
 	: AbstractButton(parent)
 	, _album(std::move(album)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Альбом"))
-			+ u": "_q + _album.title + u" — "_q + _album.artist);
+			+ u": "_q + _album.title + u" - "_q + _album.artist);
 		setClickedCallback(std::move(open));
 		LoadImage(ArtUrl(_album.artworkUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
@@ -2099,7 +2134,7 @@ protected:
 		const auto side = std::max(width() - 2 * inset, 0);
 		const auto art = QRect(inset, inset, side, side);
 		p.setPen(Qt::NoPen);
-		p.setBrush(isOver() || isDown() ? QColor(0x30, 0x30, 0x30) : QColor(0x24, 0x24, 0x24));
+		p.setBrush(anim::color(QColor(0x24, 0x24, 0x24), QColor(0x30, 0x30, 0x30), _hoverFade.value()));
 		p.drawRoundedRect(rect(), s(8), s(8));
 		if (hasFocus()) {
 			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
@@ -2116,9 +2151,7 @@ protected:
 			p.drawImage(art, _art);
 		}
 		p.restore();
-		if (isOver() || isDown() || hasFocus()) {
-			PaintHomeCardAction(p, art, true);
-		}
+		PaintHomeCardAction(p, art, true, hasFocus() ? 1. : _hoverFade.value());
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
 		p.drawText(QRect(inset, art.bottom() + s(8), side, s(22)),
@@ -2134,20 +2167,26 @@ private:
 	Album _album;
 	QImage _art;
 
+	HoverFade _hoverFade;
+
 };
 
 class HomeRecentTile final : public Ui::AbstractButton {
 public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+	}
+
 	HomeRecentTile(QWidget *parent, RecentItem item, Fn<void()> activate, Fn<void()> play)
 	: AbstractButton(parent)
 	, _item(std::move(item)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		const auto title = _item.isAlbum ? _item.album.title : _item.track.title;
 		const auto artist = _item.isAlbum ? _item.album.artist : _item.track.artist;
 		setAccessibleName((_item.isAlbum
 			? QString::fromUtf8(Mokagram::Lang::Tr("Альбом")) + u": "_q
-			: QString()) + title + u" — "_q + artist);
+			: QString()) + title + u" - "_q + artist);
 		setClickedCallback([=] {
 			const auto s = [](int v) { return style::ConvertScale(v); };
 			const auto button = QRect(width() - s(56), (height() - s(44)) / 2, s(44), s(44));
@@ -2170,7 +2209,7 @@ protected:
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		p.setPen(Qt::NoPen);
-		p.setBrush(isOver() || isDown() ? QColor(0x35, 0x35, 0x35) : QColor(0x29, 0x29, 0x29));
+		p.setBrush(anim::color(QColor(0x29, 0x29, 0x29), QColor(0x35, 0x35, 0x35), _hoverFade.value()));
 		p.drawRoundedRect(rect(), s(6), s(6));
 		const auto art = QRect(0, 0, std::min(height(), width()), height());
 		p.save();
@@ -2185,9 +2224,9 @@ protected:
 		p.restore();
 		const auto left = art.right() + s(13);
 		const auto available = std::max(width() - left - s(64), 0);
-		if (isOver() || isDown() || hasFocus()) {
+		{
 			const auto art = QRect(width() - s(64), (height() - s(60)) / 2, s(60), s(60));
-			PaintHomeCardAction(p, art, false);
+			PaintHomeCardAction(p, art, false, hasFocus() ? 1. : _hoverFade.value());
 		}
 		const auto title = _item.isAlbum ? _item.album.title : _item.track.title;
 		p.setFont(st::semiboldFont);
@@ -2204,6 +2243,8 @@ protected:
 private:
 	RecentItem _item;
 	QImage _art;
+
+	HoverFade _hoverFade;
 
 };
 
@@ -2268,40 +2309,107 @@ private:
 
 };
 
+// Затухание по краю карусели: карточки уходят в фон, а не обрываются.
+class HomeEdgeFade final : public Ui::RpWidget {
+public:
+	// Край, у которого фон гуще: слева, справа или сверху.
+	enum class Edge { Left, Right, Top, Bottom };
+
+	HomeEdgeFade(QWidget *parent, Edge edge)
+	: RpWidget(parent)
+	, _edge(edge) {
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+	}
+
+	// Цвет фона под краем, если он не просто #1c1c1c (например, тонировка альбома).
+	void setColor(Fn<QColor()> color) {
+		_color = std::move(color);
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto from = _color ? _color() : QColor(0x1c, 0x1c, 0x1c);
+		auto to = from;
+		to.setAlpha(0);
+		const auto vertical = (_edge == Edge::Top || _edge == Edge::Bottom);
+		const auto far = (_edge == Edge::Right || _edge == Edge::Bottom);
+		auto gradient = QLinearGradient(
+			0, 0, vertical ? 0 : width(), vertical ? height() : 0);
+		gradient.setColorAt(0., far ? to : from);
+		gradient.setColorAt(1., far ? from : to);
+		p.fillRect(rect(), gradient);
+	}
+
+private:
+	const Edge _edge = Edge::Left;
+	Fn<QColor()> _color;
+
+};
+
 class HomeCarouselArrow final : public Ui::AbstractButton {
 public:
 	HomeCarouselArrow(QWidget *parent, bool forward, Fn<void()> action)
 	: AbstractButton(parent)
 	, _forward(forward) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::NoFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr(
 			forward ? "Вперёд" : "Назад")));
 		setClickedCallback(std::move(action));
 	}
 
+	// Появляется и пропадает плавно, а не щёлкает.
+	void toggle(bool shown) {
+		if (_shown == shown) {
+			return;
+		}
+		_shown = shown;
+		if (shown) {
+			show();
+		}
+		_fade.start([=] {
+			update();
+			if (!_shown && !_fade.animating()) {
+				hide();
+			}
+		}, shown ? 0. : 1., shown ? 1. : 0., 180, anim::easeOutCubic);
+	}
+
 protected:
+	void onStateChanged(State was, StateChangeSource source) override {
+		const auto now = isOver();
+		if (now != bool(was & StateFlag::Over)) {
+			_hover.start([=] { update(); },
+				now ? 0. : 1., now ? 1. : 0., 140, anim::easeOutCubic);
+		}
+	}
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto visible = _fade.value(_shown ? 1. : 0.);
+		const auto over = _hover.value(isOver() ? 1. : 0.);
+		p.setOpacity(visible);
+		const auto scale = 0.85 + 0.15 * visible;
+		p.translate(rect().center());
+		p.scale(scale, scale);
+		p.translate(-rect().center());
 		p.setPen(Qt::NoPen);
-		p.setBrush(isOver() ? QColor(0x48, 0x48, 0x48) : QColor(0x30, 0x30, 0x30));
+		p.setBrush(anim::color(QColor(0, 0, 0, 150), QColor(0, 0, 0, 200), over));
 		p.drawEllipse(rect());
-		p.setPen(QPen(Qt::white, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.setPen(QPen(QColor(255, 255, 255, 220), s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 		const auto center = rect().center();
 		const auto sign = _forward ? 1 : -1;
-		p.drawPolyline(QPolygon({ center + QPoint(-sign * s(3), -s(6)),
-			center + QPoint(sign * s(3), 0), center + QPoint(-sign * s(3), s(6)) }));
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawEllipse(rect().adjusted(s(1), s(1), -s(1), -s(1)));
-		}
+		p.drawPolyline(QPolygon({ center + QPoint(-sign * s(4), -s(8)),
+			center + QPoint(sign * s(4), 0), center + QPoint(-sign * s(4), s(8)) }));
 	}
 
 private:
 	bool _forward = false;
+	bool _shown = false;
+	Ui::Animations::Simple _fade;
+	Ui::Animations::Simple _hover;
 
 };
 
@@ -2336,12 +2444,21 @@ public:
 				if (!_restoring && _offset) *_offset = _scroll->scrollLeft();
 				updateArrows();
 			}, lifetime());
+			const auto slide = [=](int delta) {
+				const auto from = _scroll->scrollLeft();
+				const auto to = std::clamp(from + delta, 0, _scroll->scrollLeftMax());
+				_slide.start([=](float64 value) {
+					_scroll->scrollToX(int(base::SafeRound(value)));
+				}, from, to, 320, anim::easeOutCubic);
+			};
 			_previous = Ui::CreateChild<HomeCarouselArrow>(this, false, [=] {
-				_scroll->scrollToX(_scroll->scrollLeft() - _scroll->width() * 3 / 4);
+				slide(-_scroll->width() * 3 / 4);
 			});
 			_next = Ui::CreateChild<HomeCarouselArrow>(this, true, [=] {
-				_scroll->scrollToX(_scroll->scrollLeft() + _scroll->width() * 3 / 4);
+				slide(_scroll->width() * 3 / 4);
 			});
+			_fadeLeft = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Left);
+			_fadeRight = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Right);
 		} else {
 			_content = this;
 		}
@@ -2386,7 +2503,12 @@ protected:
 		for (auto i = 0; i != int(_items.size()); ++i) {
 			_items[i]->setGeometry(gap + i * (cardWidth + gap), 0, cardWidth, cardHeight);
 		}
-		const auto arrow = s(36);
+		const auto arrow = s(48);
+		const auto fade = s(72);
+		_fadeLeft->setGeometry(0, 0, fade, cardHeight + gap);
+		_fadeRight->setGeometry(std::max(newWidth - fade, 0), 0, fade, cardHeight + gap);
+		_fadeLeft->raise();
+		_fadeRight->raise();
 		_previous->setGeometry(gap, (cardWidth - arrow) / 2, arrow, arrow);
 		_next->setGeometry(std::max(newWidth - gap - arrow, 0), (cardWidth - arrow) / 2, arrow, arrow);
 		_previous->raise();
@@ -2406,8 +2528,12 @@ protected:
 private:
 	void updateArrows() {
 		if (!_scroll || !_previous || !_next) return;
-		_previous->setVisible(_scroll->scrollLeft() > 0);
-		_next->setVisible(_scroll->scrollLeft() < _scroll->scrollLeftMax());
+		const auto canBack = _scroll->scrollLeft() > 0;
+		const auto canForward = _scroll->scrollLeft() < _scroll->scrollLeftMax();
+		_previous->toggle(canBack);
+		_next->toggle(canForward);
+		_fadeLeft->setVisible(canBack);
+		_fadeRight->setVisible(canForward);
 	}
 
 	bool _expanded = false;
@@ -2418,6 +2544,9 @@ private:
 	Ui::RpWidget *_content = nullptr;
 	HomeCarouselArrow *_previous = nullptr;
 	HomeCarouselArrow *_next = nullptr;
+	HomeEdgeFade *_fadeLeft = nullptr;
+	HomeEdgeFade *_fadeRight = nullptr;
+	Ui::Animations::Simple _slide;
 	std::vector<Ui::RpWidget*> _items;
 
 };
@@ -2503,7 +2632,7 @@ public:
 	, _isTrack(isTrack)
 	, _showCover(std::move(showCover)) {
 		setMouseTracking(true);
-		setToolTip(_album.title + u" — "_q + _album.artist);
+		setToolTip(_album.title + u" - "_q + _album.artist);
 		LoadImage(ArtUrl(_album.artworkUrl, u"t500x500"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
 			update();
@@ -2602,7 +2731,7 @@ public:
 	, _image(std::move(image))
 	, _source(source) {
 		setGeometry(parent->rect());
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		parent->installEventFilter(this);
 		show();
 		raise();
@@ -2690,7 +2819,7 @@ public:
 	: AbstractButton(parent)
 	, _message(std::move(message)) {
 		setPointerCursor(true);
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Попробовать снова")));
 		setClickedCallback(std::move(retry));
 	}
@@ -3332,7 +3461,7 @@ private:
 		p.setPen(Qt::NoPen);
 		// Play: тёмный полупрозрачный круг с белым значком, как кнопки в шапке.
 		p.setBrush(play
-			? QColor(255, 255, 255, int(235 + 20 * over))
+			? QColor(255, 255, 255, int(36 + 20 * over))
 			: dark
 			? QColor(0, 0, 0, int(80 + 50 * over))
 			: QColor(255, 255, 255, int(40 * over)));
@@ -3536,11 +3665,11 @@ private:
 			return;
 		}
 		if (_glyph == Glyph::Play) {
-			p.setBrush(isOver()
-				? QColor(st::windowFg->c).darker(110)
-				: st::windowFg->c);
+			auto fill = QColor(st::windowFg->c);
+			fill.setAlpha(isOver() ? 56 : 38);
+			p.setBrush(fill);
 			p.drawEllipse(r.adjusted(2, 2, -2, -2));
-			p.setBrush(st::windowBg);
+			p.setBrush(st::windowFg);
 			const auto u = r.width() / 100.;
 			if (_playing) {
 				p.drawRoundedRect(QRectF(c.x() - 14 * u, c.y() - 17 * u, 10 * u, 34 * u), 3 * u, 3 * u);
@@ -4550,7 +4679,7 @@ public:
 	, _canvas(this, [=] {
 		update(computeLayout().cover);
 	}) {
-		setFocusPolicy(Qt::StrongFocus);
+		setFocusPolicy(Qt::TabFocus);
 		setMouseTracking(true);
 		_view->setBig(true);
 		_view->setBackground([=](QPainter &p, QRect area) {
@@ -4609,11 +4738,17 @@ public:
 		_repeat->resize(s(36), s(36));
 		_seek->resize(_seek->width(), s(20));
 		_tabList = _tabScroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_tabScroll));
+		_topFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Top);
+		_topFade->setColor([=] { return pageBackgroundAt(_topFade->y()); });
+		_bottomFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Bottom);
+		_bottomFade->setColor([=] { return pageBackgroundAt(_bottomFade->y() + _bottomFade->height()); });
 		_homeMoreRetryTimer.setSingleShot(true);
 		connect(&_homeMoreRetryTimer, &QTimer::timeout, this, [=] {
 			scheduleHomeMoreIfNeeded();
 		});
 		_tabScroll->scrollTopChanges() | rpl::on_next([=](int) {
+			_topFade->update();
+			_bottomFade->update();
 			if (_tab == Tab::Home && _homeAlbumOpen) {
 				update();
 			}
@@ -5179,6 +5314,17 @@ protected:
 			layout.center.width(),
 			std::max(layout.center.y() + layout.center.height() - layout.scrollTop - s(12), 0));
 		_tabList->resizeToWidth(_tabScroll->width());
+		_topFade->setVisible(_tab != Tab::Now);
+		_topFade->setGeometry(
+			_tabScroll->x(), _tabScroll->y(), _tabScroll->width(), s(28));
+		_topFade->raise();
+		_bottomFade->setVisible(_tab != Tab::Now);
+		_bottomFade->setGeometry(
+			_tabScroll->x(),
+			_tabScroll->y() + _tabScroll->height() - s(36),
+			_tabScroll->width(),
+			s(36));
+		_bottomFade->raise();
 
 		// Навигация: ряд пилюль сверху по центру.
 		{
@@ -6032,8 +6178,11 @@ protected:
 
 		// Полоса управления внизу.
 		p.setPen(QPen(QColor(255, 255, 255, 16), s(1)));
+		// «Сейчас играет»: панель под цвет обложки, на остальных вкладках серая.
+		auto tinted = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+		tinted.setAlpha(230);
 		p.setBrush(anim::color(
-			QColor(42, 49, 53, 170),
+			tinted,
 			QColor(0x28, 0x28, 0x28),
 			_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
 		p.drawRoundedRect(layout.bar, s(22), s(22));
@@ -6212,6 +6361,15 @@ private:
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
 			_accent = CurrentCoverAccent();
+			// Полоса управления плавно перекрашивается под обложку трека.
+			{
+				const auto now = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+				_barFrom = now;
+				_barTo = _accent.isValid()
+					? _accent.darker(180)
+					: QColor(0x28, 0x28, 0x28);
+				_barAnim.start([=] { update(); }, 0., 1., 600, anim::easeOutCubic);
+			}
 			_seek->setFillColor(QColor(0xb7, 0xce, 0xd8));
 			_shuffle->setAccent(_accent);
 			_repeat->setAccent(_accent);
@@ -6301,6 +6459,34 @@ private:
 	const not_null<RoundGlyph*> _queueToggle;
 	const not_null<SeekBar*> _volume;
 	const not_null<Ui::ScrollArea*> _tabScroll;
+	// Цвет фона страницы на высоте y: плоский или градиент тонировки альбома.
+	[[nodiscard]] QColor pageBackgroundAt(int y) const {
+		const auto base = QColor(0x1c, 0x1c, 0x1c);
+		if (_tab != Tab::Home || !_homeAlbumOpen) {
+			return base;
+		}
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto headerWidth = std::max(_tabScroll->width() - s(24), 0);
+		const auto headerHeight = (headerWidth < s(480))
+			? std::min(std::max(headerWidth - s(48), 0), s(224)) + s(160)
+			: s(288);
+		const auto top = _tabScroll->y() - _tabScroll->scrollTop();
+		const auto bottom = top + s(56) + headerHeight;
+		const auto tint = _homeAccent.isValid()
+			? _homeAccent.darker(150)
+			: QColor(0x32, 0x32, 0x32);
+		const auto t = std::clamp(
+			double(y - top) / std::max(bottom - top, 1),
+			0.,
+			1.);
+		return QColor::fromRgbF(
+			tint.redF() + (base.redF() - tint.redF()) * t,
+			tint.greenF() + (base.greenF() - tint.greenF()) * t,
+			tint.blueF() + (base.blueF() - tint.blueF()) * t);
+	}
+
+	HomeEdgeFade *_topFade = nullptr;
+	HomeEdgeFade *_bottomFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
 	std::array<NavItem*, 6> _nav = {};
 	QLineEdit *_searchField = nullptr;
@@ -6374,6 +6560,9 @@ private:
 	Ui::Animations::Simple _coverClosing;
 	QRect _morphFrom;
 	Ui::Animations::Simple _plainAnim;
+	Ui::Animations::Simple _barAnim;
+	QColor _barFrom = QColor(0x28, 0x28, 0x28);
+	QColor _barTo = QColor(0x28, 0x28, 0x28);
 	Ui::Animations::Simple _colorAnim;
 	Ui::Animations::Simple _infoFade;
 	QPixmap _cover;
@@ -6496,7 +6685,7 @@ void RefreshAvailability() {
 				state.changes.fire({});
 			}
 		});
-	// У трека из чата обложка — мелкая миниатюра документа: ищем ту же
+	// У трека из чата обложка - мелкая миниатюра документа: ищем ту же
 	// обложку в высоком качестве тем же поиском, что и текст.
 	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
 	const auto document = current.audio();
@@ -6771,20 +6960,258 @@ bool CurrentTrackInfo(QString &title, QString &artist) {
 	return true;
 }
 
+// ---- Слушать вместе: хозяин пишет состояние плеера в комнату бота, гости его читают ----
+
+struct Together {
+	QString code;
+	bool host = false;
+	int lastVer = -1;
+	QString lastKey;
+	base::Timer timer;
+	bool busy = false;
+};
+
+[[nodiscard]] Together &TogetherState() {
+	static auto result = Together();
+	return result;
+}
+
+[[nodiscard]] bool TogetherActive() {
+	return !TogetherState().code.isEmpty();
+}
+
+void TogetherStop() {
+	auto &t = TogetherState();
+	t.timer.cancel();
+	t.code.clear();
+	t.host = false;
+	t.lastVer = -1;
+	t.lastKey.clear();
+	t.busy = false;
+}
+
+// Что сейчас играет у нас: ключ трека, позиция мс, играет ли. false: слать нечего.
+[[nodiscard]] bool TogetherLocalState(QString &key, qint64 &position, bool &playing) {
+	const auto &track = QueueState().current;
+	if (track.id.isEmpty() || IsTelegramTrack(track)) {
+		return false;
+	}
+	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+	key = track.id;
+	position = state.position * 1000 / std::max<int64>(state.frequency, 1);
+	playing = !Media::Player::IsPausedOrPausing(state.state)
+		&& !Media::Player::IsStoppedOrStopping(state.state);
+	return true;
+}
+
+void TogetherHostTick() {
+	auto &t = TogetherState();
+	QString key;
+	qint64 position = 0;
+	bool playing = false;
+	if (!TogetherActive() || !t.host || t.busy
+		|| !TogetherLocalState(key, position, playing)) {
+		return;
+	}
+	t.busy = true;
+	const auto code = t.code;
+	Mokagram::Bot::Ask(
+		u"room:put:%1:%2|%3|%4"_q.arg(code).arg(key).arg(position).arg(playing ? 1 : 0),
+		[=](Mokagram::Bot::Results) { TogetherState().busy = false; },
+		[=] { TogetherState().busy = false; });
+}
+
+void TogetherGuestApply(const QString &reply, qint64 roundTripMs) {
+	auto &t = TogetherState();
+	const auto parts = reply.split('|');
+	if (parts.size() < 5) {
+		return;
+	}
+	const auto key = parts[1];
+	auto position = parts[2].toLongLong();
+	const auto playing = (parts[3] == u"1"_q);
+	if (playing) {
+		position += roundTripMs / 2;
+	}
+	auto &queue = QueueState();
+	if (key.isEmpty() || key.startsWith(u"telegram:"_q)) {
+		return;
+	}
+	const auto instance = Media::Player::instance();
+	if (queue.currentId != key) {
+		// Другой трек: запускаем его у себя, подстроимся на следующем шаге.
+		if (t.lastKey == key) {
+			return;
+		}
+		t.lastKey = key;
+		auto track = Track();
+		track.id = key;
+		PlayAll({ track });
+		return;
+	}
+	const auto state = instance->getState(AudioMsgId::Type::Song);
+	const auto ours = state.position * 1000 / std::max<int64>(state.frequency, 1);
+	const auto weArePlaying = !Media::Player::IsPausedOrPausing(state.state)
+		&& !Media::Player::IsStoppedOrStopping(state.state);
+	if (playing && !weArePlaying && !Media::Player::IsStoppedOrStopping(state.state)) {
+		instance->play(AudioMsgId::Type::Song);
+	} else if (!playing && weArePlaying) {
+		instance->pause(AudioMsgId::Type::Song);
+	}
+	// Расхождение больше секунды: перематываем к позиции хозяина.
+	if (state.length > 0 && std::abs(ours - position) > 1000) {
+		const auto total = state.length * 1000 / std::max<int64>(state.frequency, 1);
+		if (total > 0) {
+			instance->finishSeeking(
+				AudioMsgId::Type::Song,
+				std::clamp(position / float64(total), 0., 1.));
+		}
+	}
+}
+
+void TogetherGuestTick() {
+	auto &t = TogetherState();
+	if (!TogetherActive() || t.host || t.busy) {
+		return;
+	}
+	t.busy = true;
+	const auto code = t.code;
+	const auto sentAt = crl::now();
+	Mokagram::Bot::Ask(
+		u"room:get:%1"_q.arg(code),
+		[=](Mokagram::Bot::Results results) {
+			auto &t = TogetherState();
+			t.busy = false;
+			if (!TogetherActive() || t.code != code) {
+				return;
+			}
+			if (results.empty() || results.front().title == u"no"_q) {
+				if (const auto controller = QueueState().controller.get()) {
+					controller->showToast(QString::fromUtf8(
+						Mokagram::Lang::Tr("Комната закрыта")));
+				}
+				TogetherStop();
+				return;
+			}
+			TogetherGuestApply(results.front().title, crl::now() - sentAt);
+		},
+		[=] { TogetherState().busy = false; });
+}
+
+void TogetherStart(not_null<Window::SessionController*> controller, QString code, bool host) {
+	BindController(controller);
+	Subscribe();
+	TogetherStop();
+	auto &t = TogetherState();
+	t.code = code;
+	t.host = host;
+	t.timer.setCallback([] {
+		if (TogetherState().host) {
+			TogetherHostTick();
+		} else {
+			TogetherGuestTick();
+		}
+	});
+	t.timer.callEach(2000);
+	if (host) {
+		TogetherHostTick();
+	} else {
+		TogetherGuestTick();
+	}
+}
+
+void TogetherCreate(not_null<Window::SessionController*> controller) {
+	const auto weak = base::make_weak(controller);
+	Mokagram::Bot::Ask(u"room:new"_q, [=](Mokagram::Bot::Results results) {
+		const auto strong = weak.get();
+		if (!strong || results.empty() || results.front().title.size() != 6) {
+			if (strong) {
+				strong->showToast(QString::fromUtf8(
+					Mokagram::Lang::Tr("Не удалось создать комнату")));
+			}
+			return;
+		}
+		const auto code = results.front().title;
+		TogetherStart(strong, code, true);
+		QGuiApplication::clipboard()->setText(code);
+		strong->showToast(QString::fromUtf8(
+			Mokagram::Lang::Tr("Код комнаты скопирован: ")) + code);
+	}, [=] {
+		if (const auto strong = weak.get()) {
+			strong->showToast(QString::fromUtf8(
+				Mokagram::Lang::Tr("Не удалось создать комнату")));
+		}
+	});
+}
+
+void TogetherJoinBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(QString::fromUtf8(
+			Mokagram::Lang::Tr("Войти в комнату"))));
+		const auto input = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Код комнаты")))));
+		box->setFocusCallback([=] { input->setFocusFast(); });
+		const auto submit = [=] {
+			const auto code = input->getLastText().trimmed().toUpper();
+			if (code.size() != 6) {
+				input->showError();
+				return;
+			}
+			TogetherStart(controller, code, false);
+			box->closeBox();
+		};
+		input->submits() | rpl::on_next(submit, input->lifetime());
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Войти"))),
+			submit);
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отмена"))),
+			[=] { box->closeBox(); });
+	}));
+}
+
+void AddTogetherActions(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<Window::SessionController*> controller) {
+	const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
+		menu->addAction(text, std::move(callback), icon);
+	};
+	if (TogetherActive()) {
+		const auto code = TogetherState().code;
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Выйти из комнаты ")) + code, [=] {
+			TogetherStop();
+			controller->showToast(QString::fromUtf8(
+				Mokagram::Lang::Tr("Вы вышли из комнаты")));
+		}, &st::menuIconDelete);
+		return;
+	}
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Слушать вместе: создать комнату")), [=] {
+		TogetherCreate(controller);
+	}, &st::menuIconAdd);
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Слушать вместе: войти по коду")), [=] {
+		TogetherJoinBox(controller);
+	}, &st::menuIconProfile);
+}
+
 void ShowCurrentTrackMenu(
 		not_null<Window::SessionController*> controller,
 		QPoint globalPosition) {
 	BindController(controller);
 	const auto track = PlayingTrack();
-	if (track.id.isEmpty()) {
-		return;
-	}
 	QueueState().controller = base::make_weak(controller);
 	static auto menu = base::unique_qptr<Ui::PopupMenu>();
 	QWidget *parent = controller->widget().get();
 	menu = base::make_unique_q<Ui::PopupMenu>(
 		parent,
 		st::popupMenuWithIcons);
+	if (track.id.isEmpty()) {
+		// Ничего не играет: в меню только вход в комнату.
+		AddTogetherActions(menu.get(), controller);
+		menu->popup(globalPosition);
+		return;
+	}
 	const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
 		menu->addAction(text, std::move(callback), icon);
 	};
@@ -6831,6 +7258,8 @@ void ShowCurrentTrackMenu(
 	menu->addSeparator();
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Поиск музыки")), [=] { ShowMusicBox(controller); }, &st::menuIconSearch);
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Очередь")), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
+	menu->addSeparator();
+	AddTogetherActions(menu.get(), controller);
 	menu->popup(globalPosition);
 }
 
@@ -6839,7 +7268,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		Mokagram::Plugins::RoundedWindow(box);
 		const auto content = box->verticalLayout();
-		content->setFocusPolicy(Qt::StrongFocus);
+		content->setFocusPolicy(Qt::TabFocus);
 		const auto instance = Media::Player::instance();
 		content->events(
 		) | rpl::filter([](not_null<QEvent*> e) {

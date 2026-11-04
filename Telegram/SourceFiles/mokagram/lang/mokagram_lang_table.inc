@@ -325,7 +325,7 @@
 	{ "Обновление уже скачивается.", "The update is already downloading." },
 	{ "Обновление уже установлено, перезапустите mokaGram.", "The update is already installed, restart mokaGram." },
 	{ "Обновления", "Updates" },
-	{ "Обновления приходят из github.com/ecronxy/mokagram и ставятся, только если подпись совпала.", "Updates come from github.com/ecronxy/mokagram and are installed only if the signature matches." },
+	{ "Обновления приходят из github.com/mokagram/mokagram и ставятся, только если подпись совпала.", "Updates come from github.com/mokagram/mokagram and are installed only if the signature matches." },
 	{ "Овал вертикальный", "Vertical oval" },
 	{ "Овал горизонтальный", "Horizontal oval" },
 	{ "Океан", "Ocean" },

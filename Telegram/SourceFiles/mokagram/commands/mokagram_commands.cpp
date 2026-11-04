@@ -1235,7 +1235,10 @@ struct QuoteStage {
 	QString text;
 	QRect hit;
 	QPointer<QProcess> player;
+	crl::time started = 0;
 };
+
+constexpr auto kQuoteAppearMs = crl::time(800);
 
 [[nodiscard]] QuoteStage &Stage() {
 	static auto result = QuoteStage();
@@ -1248,6 +1251,11 @@ void QuoteStageReset() {
 	Stage().fresh = true;
 }
 
+bool QuoteStageAnimating() {
+	const auto &st = Stage();
+	return st.started && (crl::now() - st.started < kQuoteAppearMs);
+}
+
 bool PaintQuoteStage(QPainter &p, QRect area, QColor textColor) {
 	if (!QuoteDataAvailable()) {
 		return false;
@@ -1255,6 +1263,7 @@ bool PaintQuoteStage(QPainter &p, QRect area, QColor textColor) {
 	auto &st = Stage();
 	if (st.fresh) {
 		st.fresh = false;
+		st.started = crl::now();
 		st.frame = QPixmap();
 		const auto frames = QDir(QuoteDir() + u"/frames"_q).entryList(
 			QStringList{ u"*.png"_q },
@@ -1294,11 +1303,23 @@ bool PaintQuoteStage(QPainter &p, QRect area, QColor textColor) {
 		top,
 		size,
 		size);
+	// Появление: аватарка проявляется с лёгким увеличением и подъёмом, реплика чуть позже.
+	const auto elapsed = double(crl::now() - st.started) / kQuoteAppearMs;
+	const auto ease = [](double t) {
+		t = std::clamp(t, 0., 1.);
+		return 1. - std::pow(1. - t, 3.);
+	};
+	const auto picture = ease(elapsed / 0.65);
+	const auto words = ease((elapsed - 0.3) / 0.7);
 	p.setRenderHint(QPainter::SmoothPixmapTransform);
 	p.setRenderHint(QPainter::Antialiasing);
 	auto clip = QPainterPath();
 	clip.addRoundedRect(frame, 26, 26);
 	p.save();
+	p.setOpacity(picture);
+	p.translate(frame.center() + QPointF(0, 14 * (1. - picture)));
+	p.scale(0.92 + 0.08 * picture, 0.92 + 0.08 * picture);
+	p.translate(-frame.center());
 	p.setClipPath(clip);
 	p.drawPixmap(frame, st.frame);
 	p.restore();
@@ -1307,8 +1328,12 @@ bool PaintQuoteStage(QPainter &p, QRect area, QColor textColor) {
 		frame.bottom() + gap,
 		textWidth,
 		textBox.height());
+	p.save();
+	p.setOpacity(words);
+	p.translate(0, 10 * (1. - words));
 	p.setPen(textColor);
 	p.drawText(text, Qt::AlignHCenter | Qt::TextWordWrap, st.text);
+	p.restore();
 	st.hit = text.adjusted(-8, -6, 8, 6);
 	return true;
 }

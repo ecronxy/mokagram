@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_key_modifiers.h"
 #include "base/timer_rpl.h"
 #include "base/unixtime.h"
+#include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/misc/mokagram_datereg.h"
 #include "mokagram/notes/mokagram_notes.h"
 #include "mokagram/streamer/mokagram_streamer.h"
@@ -1934,7 +1935,11 @@ Section DetailsFiller::makeInfo() {
 					: [&] {
 						const auto &d = user->userpicLocation().file().data;
 						const auto loc = std::get_if<StorageFileLocation>(&d);
-						return loc ? int(loc->dcId()) : 0;
+						const auto now = loc ? int(loc->dcId()) : 0;
+						// Фото нет (например, аккаунт удалён): берём ДЦ, что видели раньше.
+						return now
+							? now
+							: Mokagram::Misc::RememberedUserDc(peerToUser(user->id).bare);
 					}();
 				const auto places = std::array<const char*, 6>{
 					"", Mokagram::Lang::Tr("Майами"), Mokagram::Lang::Tr("Амстердам"), Mokagram::Lang::Tr("Майами"), Mokagram::Lang::Tr("Амстердам"),

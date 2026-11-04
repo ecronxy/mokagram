@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/section_widget.h"
+#include "mokagram/effects/mokagram_effects.h"
 
 #include "mainwidget.h"
 #include "mainwindow.h"
@@ -377,6 +378,7 @@ void SectionWidget::PaintBackground(
 		int fromy,
 		QRect clip,
 		bool paused) {
+	Mokagram::Effects::WallpaperAttach(widget);
 	auto p = QPainter(widget);
 	if (fromy) {
 		p.translate(0, fromy);
@@ -392,6 +394,9 @@ void SectionWidget::PaintBackground(
 		QSize fill,
 		QRect clip,
 		bool paused) {
+	if (Mokagram::Effects::PaintWallpaper(p, fill, clip, paused)) {
+		return;
+	}
 	const auto &background = theme->background();
 	if (background.colorForFill) {
 		p.fillRect(clip, *background.colorForFill);

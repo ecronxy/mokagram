@@ -487,7 +487,8 @@ void PaintRow(
 		p.translate(swipeMirrored ? swipeTranslation : -swipeTranslation, 0);
 	}
 	// Mokagram: выбранная и активная строка списка — скруглённая пилюля.
-	if ((context.active || context.selected) && !swipeTranslation) {
+	// При зажатии строка начинает смещаться как при свайпе: пилюля остаётся пилюлей.
+	if (context.active || context.selected) {
 		p.fillRect(geometry, context.currentBg);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
@@ -501,22 +502,8 @@ void PaintRow(
 		auto ripple = context.active
 			? st::dialogsRippleBgActive
 			: st::dialogsRippleBg;
-		// Mokagram: рябь не должна выходить за скруглённую пилюлю.
-		const auto pill = (context.active || context.selected)
-			&& !swipeTranslation;
-		if (pill) {
-			auto path = QPainterPath();
-			path.addRoundedRect(
-				QRectF(geometry.marginsRemoved({ 2, 1, 2, 1 })),
-				18,
-				18);
-			p.save();
-			p.setClipPath(path, Qt::IntersectClip);
-		}
+		// Mokagram: маска ряби уже скруглена по форме пилюли (см. dialogs_inner_widget).
 		row->paintRipple(p, 0, 0, context.width, &ripple->c);
-		if (pill) {
-			p.restore();
-		}
 	}
 
 	if (flags & Flag::SavedMessages) {

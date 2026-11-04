@@ -8,6 +8,9 @@
 #include "mokagram/plugins/mokagram_plugin_store.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/misc/mokagram_misc.h"
+#include "ui/widgets/menu/menu_action.h"
+#include "ui/widgets/menu/menu_common.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
 #include "ui/power_saving.h"
@@ -102,6 +105,63 @@
 
 namespace Mokagram::Settings {
 namespace {
+// Список выбора без значков: ширина по самому длинному пункту, отступы слева и справа равны.
+[[nodiscard]] const style::PopupMenu &CompactChoiceMenuStyle() {
+	static const auto result = [] {
+		auto menu = st::defaultPopupMenu;
+		menu.menu.widthMin = style::ConvertScale(96);
+		menu.menu.itemRightSkip = 0;
+		return menu;
+	}();
+	return result;
+}
+
+// Строка выбора иконки приложения: слева круглая миниатюра варианта.
+class AppIconMenuItem final : public Ui::Menu::Action {
+public:
+	AppIconMenuItem(
+		not_null<Ui::Menu::Menu*> menu,
+		const style::Menu &st,
+		not_null<QAction*> action,
+		QImage image)
+	: Action(menu, st, action, nullptr, nullptr)
+	, _image(std::move(image)) {
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto selected = isSelected();
+		paintBackground(p, selected);
+		RippleButton::paintRipple(p, 0, 0);
+		const auto &menu = st();
+		const auto size = style::ConvertScale(26);
+		const auto thumb = QRect(
+			menu.itemIconPosition.x(),
+			(height() - size) / 2,
+			size,
+			size);
+		auto path = QPainterPath();
+		path.addEllipse(thumb);
+		p.save();
+		p.setClipPath(path);
+		p.drawImage(thumb, _image);
+		p.restore();
+		p.setFont(menu.itemStyle.font);
+		p.setPen(selected ? menu.itemFgOver : menu.itemFg);
+		const auto left = menu.itemPadding.left();
+		p.drawText(
+			QRect(left, 0, width() - left - menu.itemPadding.right(), height()),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			action()->text());
+	}
+
+	QImage _image;
+
+};
+
+
 
 QString PendingQuery;
 
@@ -705,6 +765,7 @@ private:
 			{ u"filter"_q, QString::fromUtf8("📑") },
 			{ u"block"_q, QString::fromUtf8("🚫") },
 			{ u"storage"_q, QString::fromUtf8("📁") },
+			{ u"download"_q, QString::fromUtf8("🔽") },
 			{ u"calendar"_q, QString::fromUtf8("🗓") },
 			{ u"accounts"_q, QString::fromUtf8("👥") },
 			{ u"palette"_q, QString::fromUtf8("🖼") },
@@ -1102,14 +1163,27 @@ void ShowColorBox(const QString &title, const QString &key) {
 		const auto menu = row->lifetime().make_state<
 			base::unique_qptr<Ui::PopupMenu>>();
 		row->setClickedCallback([=] {
+			// Без значков слева нет пустого места под них: обычный стиль меню.
 			*menu = base::make_unique_q<Ui::PopupMenu>(
 				row,
-				st::popupMenuWithIcons);
+				(key == u"look.app_icon"_q)
+					? st::popupMenuWithIcons
+					: CompactChoiceMenuStyle());
 			for (auto i = 0; i != int(entry.choices.size()); ++i) {
-				(*menu)->addAction(entry.choices[i], [=] {
+				const auto choose = [=] {
 					SetInt(key, i);
 					afterChange();
-				});
+				};
+				if (key == u"look.app_icon"_q) {
+					const auto raw = (*menu)->menu();
+					(*menu)->addAction(base::make_unique_q<AppIconMenuItem>(
+						raw,
+						raw->st(),
+						Ui::Menu::CreateAction(raw, entry.choices[i], Fn<void()>(choose)),
+						Mokagram::Misc::AppIconImage(i)));
+					continue;
+				}
+				(*menu)->addAction(entry.choices[i], choose);
 			}
 			(*menu)->popup(QCursor::pos());
 		});
@@ -1528,7 +1602,7 @@ void AskForRestart() {
 		}
 		return false;
 	};
-	if (starts({ "streamer.", "ghost.", "filters." })) {
+	if (starts({ "streamer.", "ghost.", "filters.", "privacy." })) {
 		return u"privacy"_q;
 	} else if (starts({ "scam.", "guard." })) {
 		return u"security"_q;
@@ -1536,9 +1610,11 @@ void AskForRestart() {
 		return u"history"_q;
 	} else if (starts({ "player.", "lyrics." })) {
 		return u"music"_q;
-	} else if (starts({ "lag.", "misc.ping" })
+	} else if (starts({ "lag.", "misc.ping", "net." })
 		|| group.name == U(Mokagram::Lang::Tr("Аккаунты"))) {
 		return u"system"_q;
+	} else if (starts({ "fx.startup" })) {
+		return u"look"_q;
 	} else if (starts({ "chats.", "fx.", "inline.", "translation.", "documents." })) {
 		return u"chats"_q;
 	} else if (starts({ "misc.stars", "quote." })) {

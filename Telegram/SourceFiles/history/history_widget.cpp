@@ -11728,10 +11728,14 @@ void HistoryWidget::paintEvent(QPaintEvent *e) {
 				drawField(p, clip);
 			}
 		}
-	} else if (!Mokagram::Commands::PaintQuoteStage(
+	} else if (Mokagram::Commands::PaintQuoteStage(
 			p,
 			rect(),
 			controller()->chatStyle()->msgServiceFg()->c)) {
+		if (Mokagram::Commands::QuoteStageAnimating()) {
+			crl::on_main(this, [=] { update(); });
+		}
+	} else {
 		const auto w = 0
 			+ st::msgServiceFont->width(tr::lng_willbe_history(tr::now))
 			+ st::msgPadding.left()

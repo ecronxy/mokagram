@@ -130,8 +130,8 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 			.append(Ui::Text::Link(u"@ecronx"_q, u"https://t.me/ecronx"_q))
 			.append(QString::fromUtf8(". Основано на Telegram Desktop. "))
 			.append(Ui::Text::Link(
-				u"github.com/ecronxy/mokagram"_q,
-				u"https://github.com/ecronxy/mokagram"_q))
+				u"github.com/mokagram/mokagram"_q,
+				u"https://github.com/mokagram/mokagram"_q))
 			.append(QString::fromUtf8("\n\nИсходники mokaGram можно использовать только с указанием авторства: автор @ecronx (t.me/ecronx) и ссылка на репозиторий должны остаться в README и в этом окне."))));
 	addText(Text1());
 	addText(Text2());

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_peer.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/avatar/mokagram_avatar_shape.h"
 
@@ -586,6 +587,10 @@ void PeerData::updateUserpic(
 		PhotoId photoId,
 		MTP::DcId dcId,
 		bool hasVideo) {
+	if (isUser()) {
+		// Запоминаем ДЦ, пока аккаунт жив: у удалённого фото уже не будет.
+		Mokagram::Misc::RememberUserDc(peerToUser(id).bare, int(dcId));
+	}
 	setUserpicChecked(
 		photoId,
 		ImageLocation(

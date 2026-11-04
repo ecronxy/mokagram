@@ -43,6 +43,8 @@ void SetAliases(const std::vector<std::pair<QString, QString>> &list);
 // Рисует только если набор есть, иначе возвращает false.
 void QuoteStageReset();
 [[nodiscard]] bool PaintQuoteStage(QPainter &p, QRect area, QColor textColor);
+// Сцена ещё появляется: окну нужно перерисоваться на следующем кадре.
+[[nodiscard]] bool QuoteStageAnimating();
 [[nodiscard]] bool QuoteStageClick(QPoint point);
 
 } // namespace Mokagram::Commands

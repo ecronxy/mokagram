@@ -11,6 +11,8 @@
 #include <memory>
 #include <vector>
 #include <QtCore/QString>
+#include <QtGui/QIcon>
+#include <QtGui/QImage>
 
 class PhotoData;
 class PeerData;
@@ -28,6 +30,17 @@ namespace Mokagram::Misc {
 
 // Регистрирует настройки раздела «Аккаунты» (misc.max_accounts).
 void RegisterSettings();
+
+// Выбранная в настройках иконка приложения; пустая, если стоит стандартная.
+[[nodiscard]] QIcon CustomAppIcon();
+
+// Картинка варианта иконки для списка выбора: 0 стандартная, 1..5 свои.
+[[nodiscard]] QImage AppIconImage(int index);
+
+// ДЦ пользователя, запомненный по его аватарке, пока аккаунт был живой.
+// Нужен, когда аккаунт удалили или фото больше нет. 0 если не знаем.
+void RememberUserDc(uint64 userId, int dcId);
+[[nodiscard]] int RememberedUserDc(uint64 userId);
 
 // Кладёт в буфер «[дата время] автор: текст» для сообщения.
 void CopyWithAuthor(not_null<HistoryItem*> item);

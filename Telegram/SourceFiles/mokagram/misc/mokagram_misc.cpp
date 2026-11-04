@@ -27,7 +27,13 @@
 #include "api/api_blocked_peers.h"
 #include "api/api_user_privacy.h"
 #include "apiwrap.h"
+#include "base/flat_map.h"
+#include "base/timer.h"
 #include "main/main_domain.h"
+#include "window/main_window.h"
+#include <QtGui/QPixmap>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QWidget>
 #include "ui/power_saving.h"
 #include "storage/cache/storage_cache_database.h"
 #include "base/call_delayed.h"
@@ -81,6 +87,10 @@ void RegisterSettings();
 
 namespace Mokagram::Misc {
 namespace {
+
+#include "mokagram/misc/mokagram_app_icons.inc"
+
+constexpr auto kAppIconKey = "look.app_icon";
 
 constexpr auto kMaxAccountsKey = "misc.max_accounts";
 
@@ -308,6 +318,42 @@ void ShowPrivacyLockBox() {
 	}));
 }
 
+QIcon CustomAppIcon() {
+	const auto index = Settings::Int(QString::fromUtf8(kAppIconKey));
+	if (index <= 0 || index > 6) {
+		return QIcon();
+	}
+	auto pixmap = QPixmap();
+	pixmap.loadFromData(
+		kAppIcons[index - 1],
+		uint(kAppIconSizes[index - 1]),
+		"PNG");
+	return pixmap.isNull() ? QIcon() : QIcon(pixmap);
+}
+
+QImage AppIconImage(int index) {
+	if (index <= 0 || index > 6) {
+		return Window::Logo();
+	}
+	auto image = QImage();
+	image.loadFromData(
+		kAppIcons[index - 1],
+		uint(kAppIconSizes[index - 1]),
+		"PNG");
+	return image;
+}
+
+void ApplyAppIcon() {
+	const auto icon = CustomAppIcon();
+	if (icon.isNull()) {
+		return;
+	}
+	QGuiApplication::setWindowIcon(icon);
+	for (const auto widget : QApplication::topLevelWidgets()) {
+		widget->setWindowIcon(icon);
+	}
+}
+
 void RegisterSettings() {
 	Settings::Register({
 		.key = u"misc.welcome_shown"_q,
@@ -510,19 +556,19 @@ void RegisterSettings() {
 	Settings::Register({
 		.key = u"look.menu_side"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
-		.title = QString::fromUtf8(Mokagram::Lang::Tr("С какой стороны открывать меню")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сторона меню")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr(
-			"Меню с аккаунтами, контактами и настройками выезжает с выбранного края окна.")),
+			"Откуда выезжает меню. Сверху и снизу это панель, она работает при закреплении.")),
 		.kind = Settings::Kind::Choice,
 		.defaultValue = 0,
 		.choices = {
 			QString::fromUtf8(Mokagram::Lang::Tr("Слева")),
 			QString::fromUtf8(Mokagram::Lang::Tr("Справа")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Сверху (панелью, при закреплении)")),
-			QString::fromUtf8(Mokagram::Lang::Tr("Снизу (панелью, при закреплении)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Сверху")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Снизу")),
 		},
 		.category = u"look"_q,
-		.sectionIcon = u"hide"_q,
+		.sectionIcon = u"palette"_q,
 	});
 	Settings::Register({
 		.key = u"privacy.lock_all"_q,
@@ -533,7 +579,7 @@ void RegisterSettings() {
 		.kind = Settings::Kind::String,
 		.defaultValue = QString::fromUtf8(Mokagram::Lang::Tr("Открыть")),
 		.category = u"privacy"_q,
-		.sectionIcon = u"hide"_q,
+		.sectionIcon = u"lock"_q,
 		.action = [] { ShowPrivacyLockBox(); },
 	});
 	Settings::Register({
@@ -546,13 +592,13 @@ void RegisterSettings() {
 	Settings::Register({
 		.key = u"look.menu_pinned"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
-		.title = QString::fromUtf8(Mokagram::Lang::Tr("Закрепить меню колонкой")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Закрепить меню")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr(
-			"Меню остаётся открытым у выбранного края окна, как правая панель, и не закрывается по клику рядом.")),
+			"Меню остаётся на экране у выбранного края и не закрывается.")),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.category = u"look"_q,
-		.sectionIcon = u"hide"_q,
+		.sectionIcon = u"palette"_q,
 	});
 	Settings::Register({
 		.key = QString::fromLatin1(kLockBackupKey),
@@ -561,6 +607,46 @@ void RegisterSettings() {
 		.defaultValue = QString(),
 		.hidden = true,
 	});
+	Settings::Register({
+		.key = QString::fromUtf8(kAppIconKey),
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Иконка приложения")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Иконка")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Значок mokaGram в панели задач и в окне. Применяется сразу.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Mokagram::Lang::Tr("Стандартная")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Классика")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Заливка")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Контур")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Чёрная")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Белая")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Стикер")),
+		},
+		.category = u"look"_q,
+		.sectionIcon = u"palette"_q,
+	});
+	Settings::IntValue(QString::fromUtf8(kAppIconKey)) | rpl::on_next([] {
+		ApplyAppIcon();
+	}, MenuSideLifetime);
+	Settings::Register({
+		.key = u"net.fast_download"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Загрузка файлов")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Быстрая загрузка")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Больше кусков файла запрашивается одновременно. Работает на новых загрузках.")),
+		.kind = Settings::Kind::Choice,
+		.defaultValue = 0,
+		.choices = {
+			QString::fromUtf8(Mokagram::Lang::Tr("Выключено")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Быстрая")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Максимум")),
+		},
+		.category = u"other"_q,
+		.sectionIcon = u"download"_q,
+	});
+	Settings::IntValue(u"look.menu_side"_q) | rpl::on_next([](int side) {
+		Ui::SetMainMenuOnRight(side == 1);
+	}, MenuSideLifetime);
 }
 
 void CopyWithAuthor(not_null<HistoryItem*> item) {
@@ -664,6 +750,84 @@ QByteArray BrandRewrite(const QByteArray &value) {
 	return result;
 }
 
+
+namespace {
+
+struct DcCache {
+	base::flat_map<uint64, int> values;
+	bool loaded = false;
+	bool saveQueued = false;
+};
+
+[[nodiscard]] DcCache &UserDcCache() {
+	static auto result = DcCache();
+	return result;
+}
+
+[[nodiscard]] QString DcCachePath() {
+	return cWorkingDir() + u"tdata/moka_dc_cache.json"_q;
+}
+
+void LoadDcCache() {
+	auto &cache = UserDcCache();
+	if (cache.loaded) {
+		return;
+	}
+	cache.loaded = true;
+	auto file = QFile(DcCachePath());
+	if (!file.open(QIODevice::ReadOnly)) {
+		return;
+	}
+	const auto object = QJsonDocument::fromJson(file.readAll()).object();
+	for (auto i = object.begin(); i != object.end(); ++i) {
+		cache.values.emplace(i.key().toULongLong(), i.value().toInt());
+	}
+}
+
+void SaveDcCache() {
+	auto &cache = UserDcCache();
+	if (cache.saveQueued) {
+		return;
+	}
+	cache.saveQueued = true;
+	// Пишем не на каждое изменение, а раз в несколько секунд.
+	base::call_delayed(3000, qApp, [] {
+		auto &cache = UserDcCache();
+		cache.saveQueued = false;
+		auto object = QJsonObject();
+		for (const auto &[id, dc] : cache.values) {
+			object.insert(QString::number(id), dc);
+		}
+		auto file = QFile(DcCachePath());
+		if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+			file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+		}
+	});
+}
+
+} // namespace
+
+void RememberUserDc(uint64 userId, int dcId) {
+	if (!userId || dcId < 1 || dcId > 5) {
+		return;
+	}
+	LoadDcCache();
+	auto &values = UserDcCache().values;
+	const auto i = values.find(userId);
+	if (i != values.end() && i->second == dcId) {
+		return;
+	}
+	values[userId] = dcId;
+	SaveDcCache();
+}
+
+int RememberedUserDc(uint64 userId) {
+	LoadDcCache();
+	const auto &values = UserDcCache().values;
+	const auto i = values.find(userId);
+	return (i != values.end()) ? i->second : 0;
+}
+
 } // namespace Mokagram::Misc
 
 namespace Mokagram::Bot {
@@ -756,7 +920,7 @@ struct State {
 // его обновляет бот командой /publish.
 constexpr const char *kBadgesUrls[] = {
 	"http://93.123.84.219:8088/badges.json",
-	"https://raw.githubusercontent.com/ecronxy/mokagram/badges/badges.json",
+	"https://raw.githubusercontent.com/mokagram/mokagram/badges/badges.json",
 };
 
 [[nodiscard]] State &Data() {
