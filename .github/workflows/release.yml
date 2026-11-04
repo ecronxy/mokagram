@@ -232,7 +232,7 @@ jobs:
           section: net
           maintainer: ecronx <noreply@github.com>
           description: mokaGram, клиент Telegram с плагинами
-          homepage: https://github.com/ecronxy/mokagram
+          homepage: https://github.com/mokagram/mokagram
           license: GPL-3.0-or-later
           contents:
             - src: bin/Telegram

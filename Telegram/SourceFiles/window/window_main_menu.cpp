@@ -790,7 +790,7 @@ MainMenu::MainMenu(
 
 	_telegram->setMarkedText(tr::link(
 		u"mokaGram Desktop"_q,
-		u"https://github.com/ecronxy/mokagram"_q));
+		u"https://github.com/mokagram/mokagram"_q));
 	_telegram->setLinksTrusted();
 	// The canary version is too long for the "Version {version}" form.
 	_version->setMarkedText(

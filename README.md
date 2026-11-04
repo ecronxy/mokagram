@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mokagram/mokagram/releases/latest"><img src="https://img.shields.io/github/v/release/mokagram/mokagram?style=for-the-badge&label=релиз&color=0a84ff&labelColor=282828" alt="Релиз"></a>
+  <a href="https://github.com/mokagram/mokagram/releases"><img src="https://img.shields.io/github/v/release/mokagram/mokagram?include_prereleases&style=for-the-badge&label=релиз&color=0a84ff&labelColor=282828" alt="Релиз"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/лицензия-GPLv3-8e8e93?style=for-the-badge&labelColor=282828" alt="GPLv3"></a>
   <a href="https://t.me/ecronx"><img src="https://img.shields.io/badge/автор-@ecronx-8e8e93?style=for-the-badge&labelColor=282828&logo=telegram&logoColor=white" alt="@ecronx"></a>
 </p>
@@ -40,12 +40,12 @@
 
 ## Скачать
 
-Последняя сборка: **[v0.1.1](https://github.com/mokagram/mokagram/releases/latest)**
+Последняя сборка: **[v0.1.3](https://github.com/mokagram/mokagram/releases)**
 
 | Система | Файл |
 |---|---|
-| **Windows** | [mokagram-win-x64.zip](https://github.com/mokagram/mokagram/releases/download/v0.1.1/mokagram-win-x64.zip) |
-| **Linux** | [AppImage](https://github.com/mokagram/mokagram/releases/download/v0.1.1/mokagram-x86_64.AppImage) · [.deb](https://github.com/mokagram/mokagram/releases/download/v0.1.1/mokagram_0.1.1_amd64.deb) · [.rpm](https://github.com/mokagram/mokagram/releases/download/v0.1.1/mokagram-0.1.1-1.x86_64.rpm) · [pacman](https://github.com/mokagram/mokagram/releases/download/v0.1.1/mokagram-0.1.1-1-x86_64.pkg.tar.zst) · [tar.xz](https://github.com/mokagram/mokagram/releases/download/v0.1.1/mokagram-linux-x64.tar.xz) |
+| **Windows** | [mokagram-win-x64.zip](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-win-x64.zip) |
+| **Linux** | [AppImage](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-x86_64.AppImage) · [.deb](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram_0.1.3_amd64.deb) · [.rpm](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-0.1.3-1.x86_64.rpm) · [pacman](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-0.1.3-1-x86_64.pkg.tar.zst) · [tar.xz](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-linux-x64.tar.xz) |
 
 Сборка для Windows без подписи разработчика, система может предупредить при первом запуске.
 

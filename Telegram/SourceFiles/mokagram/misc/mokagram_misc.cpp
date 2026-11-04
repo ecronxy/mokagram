@@ -765,7 +765,7 @@ struct State {
 // его обновляет бот командой /publish.
 constexpr const char *kBadgesUrls[] = {
 	"http://93.123.84.219:8088/badges.json",
-	"https://raw.githubusercontent.com/ecronxy/mokagram/badges/badges.json",
+	"https://raw.githubusercontent.com/mokagram/mokagram/badges/badges.json",
 };
 
 [[nodiscard]] State &Data() {
