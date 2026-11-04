@@ -4,6 +4,7 @@
 // mokagram-id: 7b8dec14
 #include "mokagram/music/mokagram_music_ui.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/music/mokagram_music_canvas.h"
@@ -6882,20 +6883,258 @@ bool CurrentTrackInfo(QString &title, QString &artist) {
 	return true;
 }
 
+// ---- Слушать вместе: хозяин пишет состояние плеера в комнату бота, гости его читают ----
+
+struct Together {
+	QString code;
+	bool host = false;
+	int lastVer = -1;
+	QString lastKey;
+	base::Timer timer;
+	bool busy = false;
+};
+
+[[nodiscard]] Together &TogetherState() {
+	static auto result = Together();
+	return result;
+}
+
+[[nodiscard]] bool TogetherActive() {
+	return !TogetherState().code.isEmpty();
+}
+
+void TogetherStop() {
+	auto &t = TogetherState();
+	t.timer.cancel();
+	t.code.clear();
+	t.host = false;
+	t.lastVer = -1;
+	t.lastKey.clear();
+	t.busy = false;
+}
+
+// Что сейчас играет у нас: ключ трека, позиция мс, играет ли. false: слать нечего.
+[[nodiscard]] bool TogetherLocalState(QString &key, qint64 &position, bool &playing) {
+	const auto &track = QueueState().current;
+	if (track.id.isEmpty() || IsTelegramTrack(track)) {
+		return false;
+	}
+	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+	key = track.id;
+	position = state.position * 1000 / std::max<int64>(state.frequency, 1);
+	playing = !Media::Player::IsPausedOrPausing(state.state)
+		&& !Media::Player::IsStoppedOrStopping(state.state);
+	return true;
+}
+
+void TogetherHostTick() {
+	auto &t = TogetherState();
+	QString key;
+	qint64 position = 0;
+	bool playing = false;
+	if (!TogetherActive() || !t.host || t.busy
+		|| !TogetherLocalState(key, position, playing)) {
+		return;
+	}
+	t.busy = true;
+	const auto code = t.code;
+	Mokagram::Bot::Ask(
+		u"room:put:%1:%2|%3|%4"_q.arg(code).arg(key).arg(position).arg(playing ? 1 : 0),
+		[=](Mokagram::Bot::Results) { TogetherState().busy = false; },
+		[=] { TogetherState().busy = false; });
+}
+
+void TogetherGuestApply(const QString &reply, qint64 roundTripMs) {
+	auto &t = TogetherState();
+	const auto parts = reply.split('|');
+	if (parts.size() < 5) {
+		return;
+	}
+	const auto key = parts[1];
+	auto position = parts[2].toLongLong();
+	const auto playing = (parts[3] == u"1"_q);
+	if (playing) {
+		position += roundTripMs / 2;
+	}
+	auto &queue = QueueState();
+	if (key.isEmpty() || key.startsWith(u"telegram:"_q)) {
+		return;
+	}
+	const auto instance = Media::Player::instance();
+	if (queue.currentId != key) {
+		// Другой трек: запускаем его у себя, подстроимся на следующем шаге.
+		if (t.lastKey == key) {
+			return;
+		}
+		t.lastKey = key;
+		auto track = Track();
+		track.id = key;
+		PlayAll({ track });
+		return;
+	}
+	const auto state = instance->getState(AudioMsgId::Type::Song);
+	const auto ours = state.position * 1000 / std::max<int64>(state.frequency, 1);
+	const auto weArePlaying = !Media::Player::IsPausedOrPausing(state.state)
+		&& !Media::Player::IsStoppedOrStopping(state.state);
+	if (playing && !weArePlaying && !Media::Player::IsStoppedOrStopping(state.state)) {
+		instance->play(AudioMsgId::Type::Song);
+	} else if (!playing && weArePlaying) {
+		instance->pause(AudioMsgId::Type::Song);
+	}
+	// Расхождение больше секунды: перематываем к позиции хозяина.
+	if (state.length > 0 && std::abs(ours - position) > 1000) {
+		const auto total = state.length * 1000 / std::max<int64>(state.frequency, 1);
+		if (total > 0) {
+			instance->finishSeeking(
+				AudioMsgId::Type::Song,
+				std::clamp(position / float64(total), 0., 1.));
+		}
+	}
+}
+
+void TogetherGuestTick() {
+	auto &t = TogetherState();
+	if (!TogetherActive() || t.host || t.busy) {
+		return;
+	}
+	t.busy = true;
+	const auto code = t.code;
+	const auto sentAt = crl::now();
+	Mokagram::Bot::Ask(
+		u"room:get:%1"_q.arg(code),
+		[=](Mokagram::Bot::Results results) {
+			auto &t = TogetherState();
+			t.busy = false;
+			if (!TogetherActive() || t.code != code) {
+				return;
+			}
+			if (results.empty() || results.front().title == u"no"_q) {
+				if (const auto controller = QueueState().controller.get()) {
+					controller->showToast(QString::fromUtf8(
+						Mokagram::Lang::Tr("Комната закрыта")));
+				}
+				TogetherStop();
+				return;
+			}
+			TogetherGuestApply(results.front().title, crl::now() - sentAt);
+		},
+		[=] { TogetherState().busy = false; });
+}
+
+void TogetherStart(not_null<Window::SessionController*> controller, QString code, bool host) {
+	BindController(controller);
+	Subscribe();
+	TogetherStop();
+	auto &t = TogetherState();
+	t.code = code;
+	t.host = host;
+	t.timer.setCallback([] {
+		if (TogetherState().host) {
+			TogetherHostTick();
+		} else {
+			TogetherGuestTick();
+		}
+	});
+	t.timer.callEach(2000);
+	if (host) {
+		TogetherHostTick();
+	} else {
+		TogetherGuestTick();
+	}
+}
+
+void TogetherCreate(not_null<Window::SessionController*> controller) {
+	const auto weak = base::make_weak(controller);
+	Mokagram::Bot::Ask(u"room:new"_q, [=](Mokagram::Bot::Results results) {
+		const auto strong = weak.get();
+		if (!strong || results.empty() || results.front().title.size() != 6) {
+			if (strong) {
+				strong->showToast(QString::fromUtf8(
+					Mokagram::Lang::Tr("Не удалось создать комнату")));
+			}
+			return;
+		}
+		const auto code = results.front().title;
+		TogetherStart(strong, code, true);
+		QGuiApplication::clipboard()->setText(code);
+		strong->showToast(QString::fromUtf8(
+			Mokagram::Lang::Tr("Код комнаты скопирован: ")) + code);
+	}, [=] {
+		if (const auto strong = weak.get()) {
+			strong->showToast(QString::fromUtf8(
+				Mokagram::Lang::Tr("Не удалось создать комнату")));
+		}
+	});
+}
+
+void TogetherJoinBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(QString::fromUtf8(
+			Mokagram::Lang::Tr("Войти в комнату"))));
+		const auto input = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Код комнаты")))));
+		box->setFocusCallback([=] { input->setFocusFast(); });
+		const auto submit = [=] {
+			const auto code = input->getLastText().trimmed().toUpper();
+			if (code.size() != 6) {
+				input->showError();
+				return;
+			}
+			TogetherStart(controller, code, false);
+			box->closeBox();
+		};
+		input->submits() | rpl::on_next(submit, input->lifetime());
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Войти"))),
+			submit);
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отмена"))),
+			[=] { box->closeBox(); });
+	}));
+}
+
+void AddTogetherActions(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<Window::SessionController*> controller) {
+	const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
+		menu->addAction(text, std::move(callback), icon);
+	};
+	if (TogetherActive()) {
+		const auto code = TogetherState().code;
+		add(QString::fromUtf8(Mokagram::Lang::Tr("Выйти из комнаты ")) + code, [=] {
+			TogetherStop();
+			controller->showToast(QString::fromUtf8(
+				Mokagram::Lang::Tr("Вы вышли из комнаты")));
+		}, &st::menuIconDelete);
+		return;
+	}
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Слушать вместе: создать комнату")), [=] {
+		TogetherCreate(controller);
+	}, &st::menuIconAdd);
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Слушать вместе: войти по коду")), [=] {
+		TogetherJoinBox(controller);
+	}, &st::menuIconProfile);
+}
+
 void ShowCurrentTrackMenu(
 		not_null<Window::SessionController*> controller,
 		QPoint globalPosition) {
 	BindController(controller);
 	const auto track = PlayingTrack();
-	if (track.id.isEmpty()) {
-		return;
-	}
 	QueueState().controller = base::make_weak(controller);
 	static auto menu = base::unique_qptr<Ui::PopupMenu>();
 	QWidget *parent = controller->widget().get();
 	menu = base::make_unique_q<Ui::PopupMenu>(
 		parent,
 		st::popupMenuWithIcons);
+	if (track.id.isEmpty()) {
+		// Ничего не играет: в меню только вход в комнату.
+		AddTogetherActions(menu.get(), controller);
+		menu->popup(globalPosition);
+		return;
+	}
 	const auto add = [&](const QString &text, Fn<void()> callback, const style::icon *icon) {
 		menu->addAction(text, std::move(callback), icon);
 	};
@@ -6942,6 +7181,8 @@ void ShowCurrentTrackMenu(
 	menu->addSeparator();
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Поиск музыки")), [=] { ShowMusicBox(controller); }, &st::menuIconSearch);
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Очередь")), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
+	menu->addSeparator();
+	AddTogetherActions(menu.get(), controller);
 	menu->popup(globalPosition);
 }
 
