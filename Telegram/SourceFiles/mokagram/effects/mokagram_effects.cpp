@@ -804,6 +804,10 @@ protected:
 		p.translate(rect().center());
 		p.scale(scale, scale);
 		p.setOpacity(fade * appear);
+		// Знак круглый, как аватарка.
+		auto circle = QPainterPath();
+		circle.addEllipse(QRect(-size / 2, -size / 2, size, size));
+		p.setClipPath(circle);
 		p.drawPixmap(
 			QRect(-size / 2, -size / 2, size, size),
 			_logo);
