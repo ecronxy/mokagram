@@ -30,6 +30,7 @@ struct Track {
 	bool unavailable = false;
 	// Для рекомендаций.
 	QString artistId;
+	QString artistArtworkUrl;
 	QString genre;
 	QStringList tags;
 	qint64 playbackCount = 0;
