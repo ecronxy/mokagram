@@ -91,9 +91,82 @@ struct State {
 	return QRegularExpression(pattern, options);
 }
 
+// Верхняя граница длины склеенного шаблона: при превышении фильтры
+// компилируются по одному.
+constexpr auto kMaxCombinedPattern = 8192;
+
+// Эвристика против катастрофического бэктрекинга (ReDoS): квантификатор
+// сразу после группы, в теле которой уже есть квантификатор — классический
+// опасный случай вида «(a+)+». Проверка намеренно консервативная и может
+// отклонить часть безопасных шаблонов; пропусков у неё почти нет.
+[[nodiscard]] bool DangerousNestedQuantifiers(const QString &pattern) {
+	auto opens = std::vector<int>();
+	auto quantified = std::vector<bool>(); // Тело группы содержит квантификатор.
+	auto inClass = false;
+	for (auto i = 0; i != pattern.size(); ++i) {
+		const auto ch = pattern.at(i);
+		if (inClass) {
+			if (ch == u']') {
+				inClass = false;
+			} else if (ch == '\\') {
+				++i;
+			}
+			continue;
+		}
+		switch (ch.unicode()) {
+		case '\\':
+			++i;
+			break;
+		case '[':
+			inClass = true;
+			break;
+		case '(':
+			opens.push_back(i);
+			quantified.push_back(false);
+			break;
+		case ')': {
+			if (opens.empty()) {
+				// Несбалансированная скобка: отбракует isValid().
+				return false;
+			}
+			const auto bodyHas = quantified.back();
+			opens.pop_back();
+			quantified.pop_back();
+			auto j = i + 1;
+			while (j != pattern.size() && pattern.at(j).isSpace()) {
+				++j;
+			}
+			const auto outer = (j != pattern.size())
+				&& (pattern.at(j) == u'*'
+					|| pattern.at(j) == u'+'
+					|| pattern.at(j) == u'{');
+			if (bodyHas && outer) {
+				return true;
+			} else if (outer && !quantified.empty()) {
+				// Квантифицированная группа сама становится повторяемым
+				// элементом родительской группы.
+				quantified.back() = true;
+			}
+			break;
+		}
+		case '*':
+		case '+':
+		case '{':
+			if (!quantified.empty()) {
+				quantified.back() = true;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	return false;
+}
+
 [[nodiscard]] bool Usable(const Filter &filter) {
 	return !filter.pattern.isEmpty()
 		&& filter.pattern.size() <= kFilterMaxPattern
+		&& !DangerousNestedQuantifiers(filter.pattern)
 		&& Make(filter.pattern, filter.ignoreCase).isValid();
 }
 
@@ -130,7 +203,17 @@ void Compile(State &data) {
 		if (list.isEmpty()) {
 			return;
 		}
-		auto regex = Make(list.join('|'), ignoreCase);
+		const auto combined = list.join('|');
+		if (combined.size() > kMaxCombinedPattern) {
+			// Слишком длинная склейка: компилируем по одному, каждый шаблон
+			// и так ограничен kFilterMaxPattern.
+			for (const auto &single : list) {
+				auto &item = set->items.emplace_back();
+				item.regex = Make(single, ignoreCase);
+			}
+			return;
+		}
+		auto regex = Make(combined, ignoreCase);
 		if (!regex.isValid()) {
 			// Склейка сломалась (например, нумерация групп): по одному.
 			for (const auto &single : list) {
@@ -278,6 +361,9 @@ QString ValidateFilter(const QString &pattern, bool ignoreCase) {
 		return QString::fromUtf8(Mokagram::Lang::Tr("Пустой шаблон"));
 	} else if (pattern.size() > kFilterMaxPattern) {
 		return QString::fromUtf8(Mokagram::Lang::Tr("Слишком длинный шаблон"));
+	} else if (DangerousNestedQuantifiers(pattern)) {
+		return QString::fromUtf8(Mokagram::Lang::Tr(
+			"Опасный шаблон: квантификатор внутри квантифицированной группы"));
 	}
 	const auto regex = Make(pattern, ignoreCase);
 	return regex.isValid() ? QString() : regex.errorString();

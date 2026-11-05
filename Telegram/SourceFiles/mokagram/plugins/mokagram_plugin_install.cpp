@@ -316,6 +316,7 @@ void FillInstallBox(
 		Window::SessionController *controller,
 		const Info &info,
 		const QString &installed,
+		bool unverifiedSource,
 		Fn<void()> install) {
 	// Своих кнопок у окна нет: убираем зарезервированное под них место.
 	static const auto clear = style::owned_color(QColor(0, 0, 0, 0));
@@ -440,6 +441,24 @@ void FillInstallBox(
 			QMargins(24, 10, 24, 0));
 	}
 
+	// Главное, что нужно знать перед установкой. Статический анализ и список
+	// прав ниже — справка, а не гарантия: без песочницы плагин может всё.
+	content->add(object_ptr<Ui::FlatLabel>(
+		content,
+		U(Mokagram::Lang::Tr(
+			"Плагин — это программа. Он получает полный доступ к вашей системе "
+			"и аккаунту Telegram и может делать с ними всё. Устанавливайте только "
+			"то, чему доверяете.")),
+		st::boxLabel), st::boxPadding);
+	if (unverifiedSource) {
+		content->add(object_ptr<Ui::FlatLabel>(
+			content,
+			U(Mokagram::Lang::Tr(
+				"Источник этого файла не подписан mokaGram: по пути к вам он мог "
+				"быть подменён. Проверьте, откуда вы его взяли.")),
+			st::boxLabel), st::boxPadding);
+	}
+
 
 	auto analysis = QStringList();
 	analysis.push_back(U(Mokagram::Lang::Tr("Анализ кода перед установкой")));
@@ -528,7 +547,8 @@ void Install(
 void ShowInstallBox(
 		Window::SessionController *controller,
 		const QByteArray &bytes,
-		Fn<void()> installed = nullptr) {
+		Fn<void()> installed = nullptr,
+		bool unverifiedSource = false) {
 	const auto info = ParseInfo(bytes);
 	if (!info.error.isEmpty() || info.id.isEmpty()) {
 		controller->uiShow()->show(Ui::MakeInformBox(
@@ -549,7 +569,7 @@ void ShowInstallBox(
 	}
 	const auto weak = base::make_weak(controller);
 	controller->uiShow()->show(Box([=](not_null<Ui::GenericBox*> box) {
-		FillInstallBox(box, weak.get(), info, version, [=] {
+		FillInstallBox(box, weak.get(), info, version, unverifiedSource, [=] {
 			Install(weak.get(), info, bytes);
 			// Бот считает установки: один человек один раз на плагин.
 			if (QRegularExpression(u"^[a-z0-9_.-]{1,48}$"_q).match(info.id).hasMatch()) {
@@ -567,8 +587,9 @@ void ShowInstallBox(
 void InstallFromBytes(
 		Window::SessionController *controller,
 		const QByteArray &bytes,
-		Fn<void()> installed) {
-	ShowInstallBox(controller, bytes, std::move(installed));
+		Fn<void()> installed,
+		bool unverifiedSource) {
+	ShowInstallBox(controller, bytes, std::move(installed), unverifiedSource);
 }
 
 bool IsPluginDocument(not_null<DocumentData*> document) {
@@ -607,7 +628,8 @@ void OpenPluginDocument(
 			strong->showToast(U(Mokagram::Lang::Tr("Не удалось прочитать файл плагина")));
 			return;
 		}
-		ShowInstallBox(strong, bytes);
+		// Файл из чата: источник не подписан, окно установки предупредит.
+		ShowInstallBox(strong, bytes, nullptr, true);
 	};
 	if (media->loaded(true)) {
 		finish();

@@ -32,11 +32,34 @@ namespace {
 constexpr auto kApi = "https://api-v2.soundcloud.com";
 constexpr auto kHome = "https://soundcloud.com/";
 constexpr auto kPageSize = 20;
+constexpr auto kMaxAudioBytes = 200 * 1024 * 1024; // предел на размер трека
+constexpr auto kMaxImageBytes = 32 * 1024 * 1024;  // предел на размер обложки
+constexpr auto kMaxHlsSegments = 512;              // предел числа сегментов HLS
 constexpr auto kUserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
 
 QNetworkAccessManager &Net() {
 	static auto manager = new QNetworkAccessManager();
 	return *manager;
+}
+
+// Разрешаем только https на известных хостах: ответы API не должны уводить загрузку
+// на file:// или чужой сервер. sndcdn.com и soundcloud.cloud — домены самого SoundCloud.
+[[nodiscard]] bool SafeMediaUrl(const QUrl &url) {
+	const auto host = url.host();
+	return url.isValid()
+		&& url.scheme() == u"https"_q
+		&& url.userInfo().isEmpty()
+		&& url.port(-1) == -1
+		&& (host == u"api-v2.soundcloud.com"_q
+			|| host == u"soundcloud.com"_q
+			|| host.endsWith(u".sndcdn.com"_q)
+			|| host.endsWith(u".soundcloud.cloud"_q));
+}
+
+// id трека — каноничное положительное число: всё остальное могло прийти из чужого ответа.
+[[nodiscard]] bool ValidTrackId(const QString &id) {
+	const auto number = id.toULongLong();
+	return number != 0 && QString::number(number) == id;
 }
 
 [[nodiscard]] QString ClientIdFile() {
@@ -53,14 +76,25 @@ QString &ClientId() {
 	return id;
 }
 
-QNetworkReply *Get(const QUrl &url) {
+QNetworkReply *Get(const QUrl &url, qint64 limit = 0) {
 	auto request = QNetworkRequest(url);
 	request.setRawHeader("User-Agent", kUserAgent);
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::NoLessSafeRedirectPolicy);
 	request.setTransferTimeout(20000);
-	return Net().get(request);
+	const auto reply = Net().get(request);
+	if (limit > 0) {
+		// Слишком большие ответы обрываем: readAll() не должен собирать гигабайты.
+		reply->setReadBufferSize(limit + 1);
+		QObject::connect(reply, &QNetworkReply::downloadProgress, reply,
+			[=](qint64 received, qint64 total) {
+				if (received > limit || total > limit) {
+					reply->abort();
+				}
+			});
+	}
+	return reply;
 }
 
 // Ищет client_id в скриптах главной страницы (в последних скриптах он обычно есть).
@@ -85,6 +119,11 @@ void FetchClientId(Fn<void(QString)> done) {
 		*next = [=](int index) {
 			if (index >= scripts.size()) {
 				done({});
+				return;
+			}
+			// Ссылки на скрипты вытащены из HTML главной: проверяем перед загрузкой.
+			if (!SafeMediaUrl(QUrl(scripts[index]))) {
+				(*next)(index + 1);
 				return;
 			}
 			const auto reply = Get(QUrl(scripts[index]));
@@ -241,6 +280,10 @@ void ApiGet(
 }
 
 [[nodiscard]] QString CachePath(const Track &track) {
+	// id попадает в путь к файлу: нечисловой id не пропускаем.
+	if (!ValidTrackId(track.id)) {
+		return QString();
+	}
 	return CacheDir() + '/' + track.id + '.' + track.extension;
 }
 
@@ -266,7 +309,7 @@ void DownloadHls(
 		const QString &playlistUrl,
 		const QString &path,
 		Fn<void(const QString &, const QString &)> done) {
-	const auto reply = Get(QUrl(playlistUrl));
+	const auto reply = Get(QUrl(playlistUrl), kMaxAudioBytes);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		const auto text = QString::fromUtf8(reply->readAll());
 		const auto base = reply->url();
@@ -294,6 +337,17 @@ void DownloadHls(
 			done({}, QString::fromUtf8(Mokagram::Lang::Tr("пустой плейлист")));
 			return;
 		}
+		// Ссылки в плейлисте могли указать куда угодно: проверяем каждую.
+		for (const auto &part : parts) {
+			if (!SafeMediaUrl(QUrl(part))) {
+				done({}, QString::fromUtf8(Mokagram::Lang::Tr("плейлист ведёт на чужой сервер")));
+				return;
+			}
+		}
+		if (parts.size() > kMaxHlsSegments) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("слишком большой плейлист")));
+			return;
+		}
 		const auto buffer = std::make_shared<QByteArray>();
 		const auto next = std::make_shared<Fn<void(int)>>();
 		*next = [=](int index) {
@@ -301,14 +355,15 @@ void DownloadHls(
 				FinishFile(path, *buffer, done);
 				return;
 			}
-			const auto segment = Get(QUrl(parts[index]));
+			const auto segment = Get(QUrl(parts[index]), kMaxAudioBytes);
 			QObject::connect(segment, &QNetworkReply::finished, [=] {
 				const auto ok = (segment->error() == QNetworkReply::NoError);
 				if (ok) {
 					buffer->append(segment->readAll());
 				}
 				segment->deleteLater();
-				if (!ok) {
+				// Общий размер склейки ограничен так же, как обычная загрузка.
+				if (!ok || buffer->size() > kMaxAudioBytes) {
 					done({}, QString::fromUtf8(Mokagram::Lang::Tr("сбой загрузки сегмента")));
 					return;
 				}
@@ -332,7 +387,12 @@ void LoadImage(const QString &url, Fn<void(QImage)> done) {
 		done(QImage());
 		return;
 	}
-	const auto reply = Get(QUrl(url));
+	// Ссылка пришла из ответа API: проверяем перед загрузкой.
+	if (!SafeMediaUrl(QUrl(url))) {
+		done(QImage());
+		return;
+	}
+	const auto reply = Get(QUrl(url), kMaxImageBytes);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		auto image = QImage::fromData(reply->readAll());
 		reply->deleteLater();
@@ -374,7 +434,12 @@ rpl::producer<> CoversChanged() {
 }
 
 uint64 DocumentIdForTrack(const QString &trackId) {
-	return 0x4D4F4B0000000000ULL + trackId.toULongLong();
+	const auto id = trackId.toULongLong();
+	// Префикс занимает старшие биты: слишком длинный id переполнит сумму.
+	if (id >= (1ULL << 56)) {
+		return 0;
+	}
+	return 0x4D4F4B0000000000ULL + id;
 }
 
 namespace {
@@ -406,6 +471,11 @@ void CollectionRequest(
 void Resolve(
 		const Track &track,
 		Fn<void(Track, const QString &error)> done) {
+	// id попадает в URL запроса: нечисловой id мог бы подменить путь.
+	if (!ValidTrackId(track.id)) {
+		done(track, QString::fromUtf8(Mokagram::Lang::Tr("некорректный id трека")));
+		return;
+	}
 	ApiGet(
 		QString::fromLatin1(kApi) + u"/tracks/"_q + track.id,
 		QUrlQuery(),
@@ -696,6 +766,10 @@ void Download(
 		const Track &track,
 		Fn<void(const QString &path, const QString &error)> done) {
 	const auto path = CachePath(track);
+	if (path.isEmpty()) {
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("некорректный id трека")));
+		return;
+	}
 	if (QFile::exists(path)) {
 		done(path, QString());
 		return;
@@ -703,6 +777,11 @@ void Download(
 	auto q = QUrlQuery();
 	if (!track.authorization.isEmpty()) {
 		q.addQueryItem(u"track_authorization"_q, track.authorization);
+	}
+	// Ссылка на транскодинг пришла из ответа API: проверяем перед загрузкой.
+	if (!SafeMediaUrl(QUrl(track.transcodingUrl))) {
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("сервер вернул недопустимую ссылку")));
+		return;
 	}
 	ApiGet(track.transcodingUrl, q, [=](QByteArray data, QString error) {
 		if (!error.isEmpty()) {
@@ -715,11 +794,15 @@ void Download(
 			done({}, QString::fromUtf8(Mokagram::Lang::Tr("нет ссылки на поток")));
 			return;
 		}
+		if (!SafeMediaUrl(QUrl(url))) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("сервер вернул недопустимую ссылку")));
+			return;
+		}
 		if (track.hls) {
 			DownloadHls(url, path, done);
 			return;
 		}
-		const auto reply = Get(QUrl(url));
+		const auto reply = Get(QUrl(url), kMaxAudioBytes);
 		QObject::connect(reply, &QNetworkReply::finished, [=] {
 			const auto bytes = reply->readAll();
 			const auto failed = (reply->error() != QNetworkReply::NoError);

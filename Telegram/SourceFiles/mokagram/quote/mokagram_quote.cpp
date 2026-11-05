@@ -1057,6 +1057,15 @@ void ShowCustomBg(Fn<void()> refresh) {
 	}));
 }
 
+// Отладочные дампы пишем в per-user TempLocation, а не в общий /tmp,
+// куда посторонний процесс может подложить свой файл или symlink.
+[[nodiscard]] QString DebugDumpPath(const QString &name) {
+	const auto dir = QStandardPaths::writableLocation(
+		QStandardPaths::TempLocation);
+	QDir().mkpath(dir);
+	return dir + '/' + name;
+}
+
 void ShowQuoteBoxNow(
 		not_null<Window::SessionController*> controller,
 		std::shared_ptr<Shot> shot,
@@ -1072,7 +1081,7 @@ void ShowQuoteBoxNow(
 			auto fresh = StackRows({ RenderShot(*shot, ratio) });
 			if (!fresh.isNull()) {
 				if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
-					fresh.save(QString(u"/tmp/moka_quote_%1.png"_q).arg(delay), "PNG");
+					fresh.save(DebugDumpPath(u"moka_quote_%1.png"_q.arg(delay)), "PNG");
 				}
 				*content = std::move(fresh);
 				if (*onUpdate) {
@@ -1082,7 +1091,7 @@ void ShowQuoteBoxNow(
 		});
 	}
 	if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
-		content->save(u"/tmp/moka_quote_content.png"_q, "PNG");
+		content->save(DebugDumpPath(u"moka_quote_content.png"_q), "PNG");
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(U(Mokagram::Lang::Tr("Скриншот сообщений"))));

@@ -2,6 +2,7 @@
 # Выполняется в тех же глобалах, что и host.py (видит _plugins, _say, _hook_error и т.д.).
 import asyncio
 import concurrent.futures
+import secrets
 import shlex
 import threading
 
@@ -468,13 +469,12 @@ def _fw_start():
 # =====================================================================================
 
 _fw_cbs = {}
-_fw_cb_n = [0]
 
 
 def _fw_cb(fn):
     """Колбэк самого каркаса (pid '_fw'), приходит через _moka_invoke."""
-    _fw_cb_n[0] += 1
-    token = 'f%d' % _fw_cb_n[0]
+    # Непредсказуемый токен: последовательный 'f%d' угадывался чужим плагином.
+    token = 'f' + secrets.token_hex(8)
     _fw_cbs[token] = fn
     return token
 
@@ -1217,6 +1217,19 @@ def _fw_cmd_backup(ctx):
                 for fn in _FW_BACKUP_CLIENT:
                     full = os.path.join(cdir, fn)
                     if cdir and os.path.isfile(full):
+                        if fn == 'moka_settings.json':
+                            # Настройки приватности (ghost.*) в бэкап не пишем:
+                            # тихое их изменение через восстановление — вектор атаки.
+                            try:
+                                with open(full, encoding='utf8') as f:
+                                    values = json.load(f).get('values', {})
+                                values = {k: v for k, v in values.items()
+                                          if not k.startswith('ghost.')}
+                                z.writestr('client/' + fn, json.dumps(
+                                    {'values': values}, ensure_ascii=False))
+                                continue
+                            except Exception:
+                                pass
                         z.write(full, 'client/' + fn)
             me = json.loads(_moka_native('get_me', '{}'))
             if not me.get('ok'):
@@ -1263,6 +1276,18 @@ def _moka_restore(path):
                     continue
                 if n.startswith('client/') and n[7:] in _FW_BACKUP_CLIENT:
                     target = os.path.join(stage, n[7:])
+                    if n[7:] == 'moka_settings.json':
+                        # Старые бэкапы могут нести ghost.*: приватность тихо не выключаем.
+                        try:
+                            values = json.loads(z.read(n)).get('values', {})
+                            values = {k: v for k, v in values.items()
+                                      if not k.startswith('ghost.')}
+                            os.makedirs(os.path.dirname(target), exist_ok=True)
+                            with open(target, 'w', encoding='utf8') as f:
+                                json.dump({'values': values}, f, ensure_ascii=False)
+                            continue
+                        except Exception:
+                            pass
                 elif n.startswith('plugin_data/') and not n.endswith(('secrets.enc', 'secrets.key')):
                     target = os.path.join(stage, n)
                 else:

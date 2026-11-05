@@ -21,6 +21,7 @@
 #include "ui/chat/attach/attach_prepare.h"
 #include "storage/localimageloader.h"
 #include "ui/layers/generic_box.h"
+#include "ui/layers/layer_widget.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
@@ -95,6 +96,8 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QFileInfo>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QtEndian>
@@ -130,6 +133,55 @@ rpl::lifetime BridgeLifetime;
 
 [[nodiscard]] bool IsMainThread() {
 	return QThread::currentThread() == QCoreApplication::instance()->thread();
+}
+
+// Путь, куда плагину можно писать и откуда читать: его папка данных, временная
+// или стандартные пользовательские папки для медиа. Python-слой обходится
+// (import __main__), поэтому мост проверяет сам: ~/.ssh, tdata, ~/.config — нельзя.
+[[nodiscard]] QString PluginDataDir(const QString &pid) {
+	static const auto bad = QRegularExpression("[^A-Za-z0-9_.-]");
+	const auto safe = QString(pid).replace(bad, "_");
+	return QDir::cleanPath(
+		QString::fromStdString(PluginsDir())
+		+ u"/../plugin_data/"_q
+		+ (safe.isEmpty() ? u"."_q : safe));
+}
+
+[[nodiscard]] bool InsideDir(const QString &base, const QString &candidate) {
+	return candidate == base || candidate.startsWith(base + u'/');
+}
+
+[[nodiscard]] bool PluginPathAllowed(const QString &pid, const QString &path) {
+	if (path.isEmpty()) {
+		return false;
+	}
+	const auto absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+	if (QFileInfo(absolute).isSymLink()) {
+		return false;
+	}
+	// Канонизируем ближайший существующий каталог: свежие подпапки ещё не на диске.
+	auto dir = QFileInfo(absolute).dir();
+	auto canonical = dir.canonicalPath();
+	while (canonical.isEmpty() && dir.cdUp()) {
+		canonical = dir.canonicalPath();
+	}
+	if (canonical.isEmpty()) {
+		return false;
+	}
+	const auto candidates = {
+		PluginDataDir(pid),
+		QStandardPaths::writableLocation(QStandardPaths::TempLocation),
+		QStandardPaths::writableLocation(QStandardPaths::DownloadLocation),
+		QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
+		QStandardPaths::writableLocation(QStandardPaths::MusicLocation),
+		QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+	};
+	for (const auto &base : candidates) {
+		if (!base.isEmpty() && InsideDir(QDir::cleanPath(base), canonical)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 [[nodiscard]] Main::Session *ActiveSession() {
@@ -1131,6 +1183,10 @@ std::string SendFile(const QJsonObject &args) {
 	if (!peerId || !info.isFile() || info.size() <= 0 || info.size() > (qint64(2000) << 20)) {
 		return Reply(false, U("файл не найден или слишком большой"));
 	}
+	// Мост сам валидирует путь: SDK-проверки в Python обходятся через import __main__.
+	if (!PluginPathAllowed(QString(), path)) {
+		return Reply(false, U("файл вне разрешённых папок"));
+	}
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		const auto history = session ? session->data().historyLoaded(peerId) : nullptr;
@@ -1410,6 +1466,10 @@ std::string SendAlbum(const QJsonObject &args) {
 		if (!info.isFile() || info.size() <= 0 || info.size() > (qint64(2000) << 20)) {
 			return Reply(false, U("файл не найден или слишком большой"));
 		}
+		// Как в SendFile: валидация на стороне моста, Python-слой обходится.
+		if (!PluginPathAllowed(QString(), info.absoluteFilePath())) {
+			return Reply(false, U("файл вне разрешённых папок"));
+		}
 		paths.push_back(info.absoluteFilePath());
 	}
 	if (!peerId || paths.size() < 2 || paths.size() > 10) {
@@ -1455,6 +1515,11 @@ std::string DownloadMedia(const QJsonObject &args) {
 	const auto path = args.value("path").toString();
 	if (path.isEmpty()) {
 		return Reply(false, U("нет пути"));
+	}
+	// Мост сам валидирует путь: без этого плагин мог сохранить скачанное
+	// поверх любого файла пользователя (~/.ssh/authorized_keys и т.п.).
+	if (!PluginPathAllowed(pid, path)) {
+		return Reply(false, U("путь вне разрешённых папок"));
 	}
 	return OnMain([=]() -> std::string {
 		const auto item = FindItem(args);
@@ -1543,7 +1608,7 @@ std::string InstallPluginFile(const QJsonObject &args) {
 		if (!controller) {
 			return Reply(false, U("нет открытого окна"));
 		}
-		InstallFromBytes(controller, bytes, [] {});
+		InstallFromBytes(controller, bytes, [] {}, true);
 		return Reply(true);
 	});
 }
@@ -2431,6 +2496,18 @@ std::string UiElements() {
 	});
 }
 
+// Кнопки внутри диалогов прятать нельзя: это кнопки подтверждений безопасности —
+// окна установки плагинов, подтверждений чувствительных запросов. Боксы живут
+// внутри LayerStackWidget окна (LayerWidget — это отдельные standalone-окна).
+[[nodiscard]] bool InsideLayer(const QWidget *widget) {
+	for (auto parent = widget->parentWidget(); parent; parent = parent->parentWidget()) {
+		if (dynamic_cast<const Ui::LayerStackWidget*>(parent) != nullptr) {
+			return true;
+		}
+	}
+	return false;
+}
+
 std::string UiSetHidden(const QJsonObject &args, bool hidden) {
 	return OnMain([=]() -> std::string {
 		const auto index = args.value("element").toInt(-1);
@@ -2438,6 +2515,9 @@ std::string UiSetHidden(const QJsonObject &args, bool hidden) {
 			return Reply(false, u"нет такого элемента, обнови список elements()"_q);
 		}
 		const auto widget = UiElementList[index].data();
+		if (InsideLayer(widget)) {
+			return Reply(false, u"кнопки диалогов прятать нельзя"_q);
+		}
 		if (hidden) {
 			if (!widget->graphicsEffect()) {
 				const auto effect = new QGraphicsOpacityEffect(widget);

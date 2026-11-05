@@ -146,11 +146,16 @@ void HardenRequest(QNetworkRequest &request, int timeout) {
 }
 
 [[nodiscard]] QByteArray SignedMessage(const Manifest &manifest) {
+	// Подписываем всё, что клиент показывает и использует: не только хеш
+	// и размер, но и имя файла, заголовок и примечания релиза.
 	return "mokagram-update\n"
 		+ QByteArray(kPlatform) + '\n'
 		+ QByteArray::number(manifest.version) + '\n'
 		+ manifest.sha256.toHex() + '\n'
-		+ QByteArray::number(manifest.size) + '\n';
+		+ QByteArray::number(manifest.size) + '\n'
+		+ manifest.file.toUtf8() + '\n'
+		+ manifest.title.toUtf8() + '\n'
+		+ manifest.notes.toUtf8() + '\n';
 }
 
 #endif // !_WIN32

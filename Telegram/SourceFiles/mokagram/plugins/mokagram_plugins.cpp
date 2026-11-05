@@ -42,8 +42,9 @@ namespace {
 #include "mokagram/plugins/py/fw.inc"
 #include "mokagram/plugins/py/tl_schema.inc"
 
-constexpr auto kQueueLimit = size_t(256);
-constexpr auto kMaxHookBytes = size_t(1024 * 1024);
+constexpr auto kQueueLimit = size_t(64);
+constexpr auto kMaxHookBytes = size_t(256 * 1024);
+// Потолок памяти очереди: 64 * 256 КБ = 16 МБ. Спамящий канал не должен надувать RSS.
 constexpr auto kAuditLimit = std::uintmax_t(5 * 1024 * 1024);
 constexpr auto kHookKinds = 4;
 constexpr const char *kKindNames[kHookKinds] = {
@@ -459,6 +460,14 @@ std::string ListJson() {
 	const auto gil = Gil();
 	const auto json = CallStr("_moka_list", {});
 	return json.empty() ? "[]" : json;
+}
+
+std::string EffectiveGrantsJson(const std::string &pid) {
+	if (!_started) {
+		return "[]";
+	}
+	const auto gil = Gil();
+	return CallStr("_moka_effective_grants", { pid });
 }
 
 bool EngineEnabled() {

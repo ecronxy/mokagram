@@ -98,6 +98,8 @@
 
 #include <QtCore/QFile>
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
+#include <QtCore/QStandardPaths>
 #include <QtGui/QPainterPath>
 
 #include <algorithm>
@@ -106,6 +108,13 @@
 
 namespace Mokagram::Settings {
 namespace {
+// Отладочные файлы складываем в per-user каталог (XDG_RUNTIME_DIR), а не в
+// общий /tmp: чужой процесс не может туда ни писать, ни подкладывать symlinks.
+[[nodiscard]] QString DebugFilePath(const QString &name) {
+	return QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation)
+		+ '/' + name;
+}
+
 // Список выбора без значков: ширина по самому длинному пункту, отступы слева и справа равны.
 [[nodiscard]] const style::PopupMenu &CompactChoiceMenuStyle() {
 	static const auto result = [] {
@@ -800,8 +809,8 @@ void PaintPlate(
 			}
 		}
 		if (qEnvironmentVariableIsSet("MOKAGRAM_DEBUG_CMD")) {
-			image.save(u"/tmp/moka_icon_%1.png"_q.arg(
-				QString::fromLatin1(alt.toUtf8().toHex())));
+			image.save(DebugFilePath(u"moka_icon_%1.png"_q.arg(
+				QString::fromLatin1(alt.toUtf8().toHex()))));
 		}
 		if (bounds.width() > 4 && bounds.height() > 4) {
 			// Плашки квадратные: если видимая часть заметно не квадрат, кадр
@@ -2443,13 +2452,24 @@ void StartDebugCommands() {
 	}
 	const auto timer = new QTimer(qApp);
 	QObject::connect(timer, &QTimer::timeout, [] {
-		auto file = QFile(u"/tmp/mokagram_cmd"_q);
+		const auto path = DebugFilePath(u"mokagram_cmd"_q);
+		// Подложенный symlink не читаем и не удаляем по ссылке: снимаем саму
+		// ссылку (unlink не ходит по symlink) и создаём на её месте обычный файл.
+		if (QFileInfo(path).isSymLink()) {
+			QFile::remove(path);
+			QFile recreate(path);
+			if (recreate.open(QIODevice::WriteOnly)) {
+				recreate.close();
+			}
+			return;
+		}
+		auto file = QFile(path);
 		if (!file.open(QIODevice::ReadOnly)) {
 			return;
 		}
 		const auto cmd = QString::fromUtf8(file.readAll()).trimmed();
 		file.close();
-		QFile::remove(u"/tmp/mokagram_cmd"_q);
+		QFile::remove(path);
 		const auto window = Core::App().activePrimaryWindow();
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {

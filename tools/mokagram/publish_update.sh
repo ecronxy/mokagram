@@ -48,7 +48,11 @@ xz -T0 -9 -c "$work/binary" > "$work/repo/$file"
 size=$(stat -c %s "$work/repo/$file")
 sha256=$(sha256sum "$work/repo/$file" | cut -d' ' -f1)
 
-printf 'mokagram-update\n%s\n%s\n%s\n%s\n' "$platform" "$version" "$sha256" "$size" > "$work/message"
+# Сообщение должно совпадать байт-в-байт с SignedMessage() в
+# Telegram/SourceFiles/mokagram/update/mokagram_update.cpp:
+# платформа, версия, sha256, размер, файл, заголовок, примечания.
+printf 'mokagram-update\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+	"$platform" "$version" "$sha256" "$size" "$file" "$title" "$notes" > "$work/message"
 openssl pkeyutl -sign -rawin -inkey "$key" -in "$work/message" -out "$work/signature"
 signature=$(base64 -w0 "$work/signature")
 

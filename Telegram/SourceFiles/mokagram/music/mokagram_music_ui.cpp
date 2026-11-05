@@ -422,8 +422,8 @@ void ChatMusicSearch::searchMore() {
 		MTPstring()));
 	attributes.push_back(MTP_documentAttributeFilename(
 		MTP_string(track.title + '.' + track.extension)));
-	const auto id = DocumentId(0x4D4F4B0000000000ULL
-		+ uint64(track.id.toULongLong()));
+	// Тот же маппинг, что и в DocumentIdForTrack: слишком длинный id не переполнит префикс.
+	const auto id = DocumentId(DocumentIdForTrack(track.id));
 	const auto document = session->data().document(
 		id,
 		0,
@@ -8131,6 +8131,12 @@ void TogetherGuestApply(const QString &reply, qint64 roundTripMs) {
 		t.followKey = key;
 		t.followId.clear();
 		if (!key.startsWith(u"m:"_q)) {
+			// Ключ комнаты превращается в id трека: берём только числа,
+			// всё остальное могло прийти от чужого бота.
+			const auto trackId = key.toULongLong();
+			if (trackId == 0 || QString::number(trackId) != key) {
+				return;
+			}
 			t.followId = key;
 			auto track = Track();
 			track.id = key;

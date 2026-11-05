@@ -199,7 +199,9 @@ void InstallSource(
 			strong->showToast(U(Mokagram::Lang::Tr("Не удалось загрузить плагин из источника")));
 			return;
 		}
-		InstallFromBytes(strong, bytes, changed);
+		// Хеш есть только у каталогов: файлы из дерева репозитория/по прямой
+		// ссылке помечаем как непроверенный источник — окно установки предупредит.
+		InstallFromBytes(strong, bytes, changed, expectedHash.isEmpty());
 	});
 }
 
@@ -735,16 +737,12 @@ namespace {
 }
 
 [[nodiscard]] QStringList InstalledPermissions(const QString &id) {
+	// Сверяем с фактически выданными правами (plugin_grants.json), а не с
+	// декларацией в метаданных: декларация могла включать никогда не выданное.
 	auto result = QStringList();
-	const auto list = QJsonDocument::fromJson(
-		QByteArray::fromStdString(ListJson())).array();
-	for (const auto &value : list) {
-		const auto object = value.toObject();
-		if (object.value("id").toString() == id) {
-			for (const auto &item : object.value("permissions").toArray()) {
-				result.push_back(item.toString());
-			}
-		}
+	for (const auto &value : QJsonDocument::fromJson(
+		QByteArray::fromStdString(EffectiveGrantsJson(id.toStdString()))).array()) {
+		result.push_back(value.toString());
 	}
 	return result;
 }

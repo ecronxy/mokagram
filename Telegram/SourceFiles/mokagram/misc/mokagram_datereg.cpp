@@ -28,14 +28,16 @@ namespace Mokagram::Misc {
 namespace {
 
 
-#if __has_include("mokagram/misc/mokagram_datereg_key.h")
-#include "mokagram/misc/mokagram_datereg_key.h"
-#else
-constexpr auto kMokagramDateRegDefaultKey = "";
+// Ключ DateReg в исходниках больше не хранится: он передаётся при сборке
+// через макрос MOKAGRAM_DATEREG_KEY (см. Telegram/CMakeLists.txt — файл
+// build/keys/datereg.key или переменная окружения MOKAGRAM_DATEREG_KEY).
+// Пустой ключ отключает функцию: DateRegEnabled() вернёт false.
+#ifndef MOKAGRAM_DATEREG_KEY
+#define MOKAGRAM_DATEREG_KEY ""
 #endif
 
 QString Key() {
-	return QString::fromUtf8(kMokagramDateRegDefaultKey);
+	return QString::fromUtf8(MOKAGRAM_DATEREG_KEY);
 }
 
 QNetworkAccessManager &Net() {
@@ -112,7 +114,8 @@ std::set<quint64> &Pending() {
 
 void Fetch(quint64 userId);
 void Fetch(quint64 userId) {
-	if (!Pending().insert(userId).second) {
+	// Без ключа API бесполезен: не ходим в сеть с пустым токеном.
+	if (Key().isEmpty() || !Pending().insert(userId).second) {
 		return;
 	}
 	auto url = QUrl(u"https://api.datereg.pro/api/v1/users/getCreationDateSmart"_q);

@@ -1007,6 +1007,8 @@ void RunDeleteMine(std::shared_ptr<DeleteMineState> state) {
 				message.match([&](const MTPDmessage &data) {
 					const auto id = data.vid().v;
 					lowest = lowest ? std::min(lowest, id) : id;
+					// В личке сносим всю переписку, включая сообщения собеседника:
+					// это осознанное «выжженная земля» у кнопки удаления.
 					if (data.is_out() || !isUserChat) {
 						state->ids.push_back(MTP_int(id));
 						++state->found;

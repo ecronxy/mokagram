@@ -36,6 +36,9 @@ std::string LoadFile(const std::string &fileName, LogFn log);
 // name, description, author, version, icon, permissions.
 std::string ListJson();
 
+// JSON-массив фактически выданных прав плагина (не декларированных).
+std::string EffectiveGrantsJson(const std::string &pid);
+
 // Общий выключатель системы плагинов (выгружает все плагины / загружает обратно).
 bool EngineEnabled();
 bool SetEngineEnabled(bool enabled, LogFn log);

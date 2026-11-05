@@ -31,6 +31,36 @@ QNetworkAccessManager &Net() {
 	return *manager;
 }
 
+constexpr auto kMaxTextBytes = 4 * 1024 * 1024;     // json/html-ответы источников
+constexpr auto kMaxArtworkBytes = 32 * 1024 * 1024; // картинки обложек
+
+// Разрешаем только https на известных хостах: ответы API не должны уводить загрузку
+// на file:// или чужой сервер. mzstatic.com и dzcdn.net — каталоги обложек iTunes и Deezer.
+[[nodiscard]] bool SafeMediaUrl(const QUrl &url) {
+	const auto host = url.host();
+	return url.isValid()
+		&& url.scheme() == u"https"_q
+		&& url.userInfo().isEmpty()
+		&& url.port(-1) == -1
+		&& (host == u"lrclib.net"_q
+			|| host == u"genius.com"_q
+			|| host == u"itunes.apple.com"_q
+			|| host == u"api.deezer.com"_q
+			|| host.endsWith(u".mzstatic.com"_q)
+			|| host.endsWith(u".dzcdn.net"_q));
+}
+
+// Слишком большие ответы обрываем: readAll() не должен собирать гигабайты.
+void LimitReply(QNetworkReply *reply, qint64 limit) {
+	reply->setReadBufferSize(limit + 1);
+	QObject::connect(reply, &QNetworkReply::downloadProgress, reply,
+		[=](qint64 received, qint64 total) {
+			if (received > limit || total > limit) {
+				reply->abort();
+			}
+		});
+}
+
 std::map<QString, Lyrics> &Cache() {
 	static auto result = std::map<QString, Lyrics>();
 	return result;
@@ -152,9 +182,8 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 	if (bestScore < -1e8) {
 		return {};
 	}
-	LOG(("[lyrics] lrclib picked: %1 - %2 (%3 s)")
-		.arg(best.value("artistName").toString())
-		.arg(best.value("trackName").toString())
+	// Названия в лог не пишем: запросы могут быть личными.
+	LOG(("[lyrics] lrclib picked a variant (%1 s)")
 		.arg(best.value("duration").toDouble()));
 	if (bestSynced) {
 		auto result = ParseLrc(best.value("syncedLyrics").toString());
@@ -182,13 +211,20 @@ void Request(
 		parts.push_back(key + u"="_q + QString::fromLatin1(QUrl::toPercentEncoding(value)));
 	}
 	auto url = QUrl(u"https://lrclib.net/api/search?"_q + parts.join('&'));
+	if (!SafeMediaUrl(url)) {
+		done(Lyrics{ .unavailable = true });
+		return;
+	}
 	auto request = QNetworkRequest(url);
 	request.setRawHeader("User-Agent", "mokaGram (https://github.com/ecronx/mokagram)");
+	request.setTransferTimeout(15000);
 	const auto reply = Net().get(request);
+	LimitReply(reply, kMaxTextBytes);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
 		auto result = Lyrics();
-		LOG(("[lyrics] %1: error %2").arg(url.toString()).arg(reply->errorString()));
+		// В лог идёт только хост: полный URL содержит название трека.
+		LOG(("[lyrics] %1: error %2").arg(url.host()).arg(reply->errorString()));
 		if (reply->error() == QNetworkReply::NoError) {
 			const auto doc = QJsonDocument::fromJson(reply->readAll());
 			if (doc.isArray()) {
@@ -659,7 +695,9 @@ void RequestGenius(
 		+ QString::fromLatin1(QUrl::toPercentEncoding(split.artistName + u" "_q + name));
 	auto request = QNetworkRequest(QUrl(search));
 	request.setRawHeader("User-Agent", "mokaGram");
+	request.setTransferTimeout(15000);
 	const auto reply = Net().get(request);
+	LimitReply(reply, kMaxTextBytes);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
 		auto page = QString();
@@ -695,9 +733,16 @@ void RequestGenius(
 			done({});
 			return;
 		}
+		// Ссылка на страницу пришла из ответа поиска: проверяем перед загрузкой.
+		if (!SafeMediaUrl(QUrl(page))) {
+			done({});
+			return;
+		}
 		auto pageRequest = QNetworkRequest(QUrl(page));
 		pageRequest.setRawHeader("User-Agent", "mokaGram");
+		pageRequest.setTransferTimeout(15000);
 		const auto pageReply = Net().get(pageRequest);
+		LimitReply(pageReply, kMaxTextBytes);
 		QObject::connect(pageReply, &QNetworkReply::finished, [=] {
 			pageReply->deleteLater();
 			if (pageReply->error() != QNetworkReply::NoError) {
@@ -729,9 +774,16 @@ void LoadArtwork(const QString &url, Fn<void(QImage)> done) {
 		done(QImage());
 		return;
 	}
+	// Ссылка пришла из ответа каталога: проверяем перед загрузкой.
+	if (!SafeMediaUrl(QUrl(url))) {
+		done(QImage());
+		return;
+	}
 	auto request = QNetworkRequest(QUrl(url));
 	request.setRawHeader("User-Agent", "Mozilla/5.0");
+	request.setTransferTimeout(15000);
 	const auto reply = Net().get(request);
+	LimitReply(reply, kMaxArtworkBytes);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
 		if (reply->error() != QNetworkReply::NoError) {
@@ -757,7 +809,9 @@ void SearchDeezer(
 	auto request = QNetworkRequest(QUrl(u"https://api.deezer.com/search?limit=10&q="_q
 		+ QString::fromLatin1(QUrl::toPercentEncoding(query))));
 	request.setRawHeader("User-Agent", "Mozilla/5.0");
+	request.setTransferTimeout(15000);
 	const auto reply = Net().get(request);
+	LimitReply(reply, kMaxTextBytes);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
 		const auto doc = QJsonDocument::fromJson(reply->readAll());
@@ -788,7 +842,9 @@ void SearchArtwork(
 		+ QString::fromLatin1(QUrl::toPercentEncoding(
 			wanted.artistName + u" "_q + wanted.trackName))));
 	request.setRawHeader("User-Agent", "Mozilla/5.0");
+	request.setTransferTimeout(15000);
 	const auto reply = Net().get(request);
+	LimitReply(reply, kMaxTextBytes);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
 		const auto doc = QJsonDocument::fromJson(reply->readAll());

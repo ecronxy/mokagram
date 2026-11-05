@@ -2896,11 +2896,22 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/Telegram PREFIX Resources FILES ${
 
 target_include_directories(Telegram PRIVATE ${src_loc})
 
+# mokagram: ключ DateReg не хранится в репозитории (утёкший ключ = расход баланса).
+# Положи его в Telegram/build/keys/datereg.key (в .gitignore) или задай MOKAGRAM_DATEREG_KEY.
+set(MOKAGRAM_DATEREG_KEY_VALUE "")
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/build/keys/datereg.key")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/build/keys/datereg.key" MOKAGRAM_DATEREG_KEY_VALUE)
+    string(STRIP "${MOKAGRAM_DATEREG_KEY_VALUE}" MOKAGRAM_DATEREG_KEY_VALUE)
+elseif (DEFINED ENV{MOKAGRAM_DATEREG_KEY})
+    set(MOKAGRAM_DATEREG_KEY_VALUE "$ENV{MOKAGRAM_DATEREG_KEY}")
+endif()
+
 target_compile_definitions(Telegram
 PRIVATE
     TDESKTOP_API_ID=${TDESKTOP_API_ID}
     TDESKTOP_API_HASH=${TDESKTOP_API_HASH}
     G_LOG_DOMAIN="Telegram"
+    MOKAGRAM_DATEREG_KEY="${MOKAGRAM_DATEREG_KEY_VALUE}"
 )
 
 get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)

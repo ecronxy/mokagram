@@ -3,7 +3,7 @@
 Читает метаданные без запуска кода, загружает/выгружает плагины с изоляцией ошибок,
 раздаёт хуки по цепочке. С C++ общается через строки JSON.
 """
-import ast, collections, hashlib, json, os, re, sys, time, types, traceback
+import ast, collections, hashlib, json, os, re, secrets, sys, time, types, traceback
 
 _MOKA_CAPS = {
     'network': {'requests', 'urllib', 'urllib3', 'http', 'socket', 'aiohttp', 'httpx', 'websocket', 'ssl', 'ftplib', 'smtplib'},
@@ -689,14 +689,12 @@ def _moka_event(name, payload_json):
 
 # ---- обратные вызовы клиента в плагин: диалоги, тосты с кнопкой, кнопки интерфейса ----
 
-_cb_counter = [0]
-
-
 def _register_cb(entry, fn, once=False):
     if not callable(fn):
         return ''
-    _cb_counter[0] += 1
-    token = 'c%d' % _cb_counter[0]
+    # Токены непредсказуемые: последовательный счётчик позволял чужому плагину
+    # нацелить Invoke на чужой колбэк (pid + угаданный номер).
+    token = 'c' + secrets.token_hex(8)
     entry.setdefault('cbs', {})[token] = (fn, bool(once))
     return token
 
@@ -788,10 +786,13 @@ def _moka_load_file(name):
         digest = _sha256(raw)
         rec = _grants.get(pid)
         if rec is None:
-            # Плагин поставлен до появления защиты: верим текущему файлу и запоминаем хеш.
+            # Файл, о котором клиент ничего не знает (подкинут в папку или остался
+            # от старой версии): не запускаем без явного подтверждения пользователем.
             _record(name, raw, meta)
-            _say('[%s] хеш записан впервые: %s' % (pid, digest[:12]))
-            _activate(entry, source)
+            entry['state'] = 'needs_review'
+            entry['error'] = None
+            _say('[%s] плагин неизвестного происхождения, не запущен до подтверждения' % pid)
+            _audit(entry, 'load', '', 'needs_review')
         elif rec.get('hash') != digest and _DEV:
             _record(name, raw, meta)
             _say('[dev] %s: файл изменён, хеш обновлён автоматически' % pid)
@@ -813,6 +814,11 @@ def _moka_install_tl(source, schema):
     sys.modules['mokagram_sdk.tl'] = mod
     sys.modules['mokagram_sdk'].tl = mod
     return mod
+
+
+def _moka_effective_grants(pid):
+    """Фактически выданные права плагина (для молчаливых обновлений: сверяются они)."""
+    return json.dumps(_grants.get(pid, {}).get('grants', []))
 
 
 def _moka_init(folder, sdk_source, api_source, tl_source='', tl_schema=''):

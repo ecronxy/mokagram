@@ -35,10 +35,13 @@ class PeerData;
 namespace Mokagram::Plugins {
 
 // Разбирает файл плагина и показывает окно установки (права, версия).
+// unverifiedSource: файл пришёл из источника без подписи mokaGram — в окне
+// будет явное предупреждение, что он мог быть подменён по пути.
 void InstallFromBytes(
 	Window::SessionController *controller,
 	const QByteArray &bytes,
-	Fn<void()> installed);
+	Fn<void()> installed,
+	bool unverifiedSource = false);
 
 [[nodiscard]] bool IsPluginDocument(not_null<DocumentData*> document);
 

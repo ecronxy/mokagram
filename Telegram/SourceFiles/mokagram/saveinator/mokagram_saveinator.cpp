@@ -50,10 +50,12 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QPointer>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
@@ -201,7 +203,10 @@ auto SendingAsText = false;
 }
 
 [[nodiscard]] QString Root() {
-	return QDir::tempPath() + u"/mokagram-saveinator"_q;
+	// Каталог внутри кеша пользователя, а не в общем /tmp: только владелец
+	// процесса может туда писать, symlink-атака между пользователями исключена.
+	return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+		+ u"/saveinator"_q;
 }
 
 [[nodiscard]] QString ErrorText(const QString &code) {
@@ -647,6 +652,13 @@ void Ready(const std::shared_ptr<Job> &job, const QJsonObject &object) {
 		return;
 	}
 	job->directory = Root() + '/' + job->id;
+	// На месте каталога задания или самого корня symlink — отказываемся
+	// от задания, чтобы не писать за пределами нашего кеша.
+	if (QFileInfo(job->directory).isSymLink()
+		|| QFileInfo(Root()).isSymLink()) {
+		Finish(job, u"failed"_q);
+		return;
+	}
 	if (!QDir().mkpath(job->directory)) {
 		Finish(job, u"failed"_q);
 		return;
@@ -1399,7 +1411,18 @@ void RegisterSettings() {
 }
 
 void Start() {
-	QDir(Root()).removeRecursively();
+	const auto root = Root();
+	// Если на месте корневого каталога символическая ссылка — не трогаем её.
+	if (QFileInfo(root).isSymLink()) {
+		return;
+	}
+	QDir(root).removeRecursively();
+	if (QDir().mkpath(root)) {
+		// 0700: каталог читает и пишет только владелец.
+		QFile::setPermissions(
+			root,
+			QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+	}
 }
 
 QString FindLink(not_null<HistoryItem*> item) {

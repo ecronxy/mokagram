@@ -109,6 +109,12 @@ struct Library {
 [[nodiscard]] Track FromJson(const QJsonObject &o) {
 	auto t = Track();
 	t.id = o.value("id").toString();
+	// id из файла может быть мусором: оставляем только числа и telegram-треки.
+	const auto numeric = t.id.toULongLong();
+	if (!t.id.startsWith(u"telegram:"_q)
+		&& (numeric == 0 || QString::number(numeric) != t.id)) {
+		t.id = QString();
+	}
 	t.title = o.value("title").toString();
 	t.artist = o.value("artist").toString();
 	t.artworkUrl = o.value("art").toString();
@@ -254,7 +260,9 @@ Library &Lib() {
 			}
 			for (const auto &v : root.value("liked").toArray()) {
 				const auto o = v.toObject();
-				library.liked.push_back({ FromJson(o), qint64(o.value("at").toDouble()) });
+				auto track = FromJson(o);
+				if (track.id.isEmpty()) continue;
+				library.liked.push_back({ std::move(track), qint64(o.value("at").toDouble()) });
 			}
 			for (const auto &v : root.value("history").toArray()) {
 				const auto o = v.toObject();
@@ -274,7 +282,9 @@ Library &Lib() {
 			}
 			for (const auto &v : root.value("boosted").toArray()) {
 				const auto o = v.toObject();
-				library.boosted.push_back({ FromJson(o), qint64(o.value("at").toDouble()) });
+				auto track = FromJson(o);
+				if (track.id.isEmpty()) continue;
+				library.boosted.push_back({ std::move(track), qint64(o.value("at").toDouble()) });
 			}
 			for (const auto &v : root.value("blocked").toArray()) {
 				const auto o = v.toObject();

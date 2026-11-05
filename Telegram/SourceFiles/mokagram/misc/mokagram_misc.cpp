@@ -916,9 +916,9 @@ struct State {
 };
 
 // Список выданных галочек лежит в репозитории, ветка badges, файл badges.json;
-// его обновляет бот командой /publish.
+// его обновляет бот командой /publish. Только https: plain HTTP с фиксированным
+// IP позволял MITM в той же сети назначить «верификацию» любому аккаунту.
 constexpr const char *kBadgesUrls[] = {
-	"http://93.123.84.219:8088/badges.json",
 	"https://raw.githubusercontent.com/mokagram/mokagram/badges/badges.json",
 };
 
