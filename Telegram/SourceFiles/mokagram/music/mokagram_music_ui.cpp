@@ -6957,7 +6957,7 @@ void ShowFullscreenPlayer(not_null<Window::SessionController*> controller) {
 		return;
 	}
 	instance = Ui::CreateChild<FullscreenPlayer>(
-		controller->widget()->body(),
+		controller->widget()->bodyWidget(),
 		controller);
 	controller->widget()->fixOrder();
 }
