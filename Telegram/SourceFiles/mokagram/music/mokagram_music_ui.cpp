@@ -1644,6 +1644,123 @@ protected:
 	}
 };
 
+[[nodiscard]] QString PlaylistText(const char *text) {
+	return QString::fromUtf8(Mokagram::Lang::Tr(text));
+}
+
+void PlaylistNameBox(
+		not_null<Window::SessionController*> controller,
+		const QString &title,
+		const QString &initial,
+		Fn<void(QString)> done) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		Mokagram::Plugins::RoundedKeepButtons(box, st::defaultBox);
+		box->setTitle(rpl::single(title));
+		const auto input = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			rpl::single(PlaylistText("Название плейлиста"))));
+		input->setText(initial);
+		box->setFocusCallback([=] { input->setFocusFast(); });
+		const auto submit = [=] {
+			const auto name = input->getLastText().trimmed();
+			if (name.isEmpty()) {
+				input->showError();
+				return;
+			}
+			done(name);
+			box->closeBox();
+		};
+		input->submits() | rpl::on_next(submit, input->lifetime());
+		box->addButton(rpl::single(PlaylistText("Сохранить")), submit);
+		box->addButton(rpl::single(PlaylistText("Отмена")), [=] { box->closeBox(); });
+	}));
+}
+
+void AddPlaylistDestinationMenu(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<Window::SessionController*> controller,
+		Fn<void(QString)> add) {
+	auto submenu = std::make_unique<Ui::PopupMenu>(menu.get(), st::popupMenuWithIcons);
+	submenu->addAction(PlaylistText("Создать плейлист…"), [=] {
+		PlaylistNameBox(controller, PlaylistText("Создать плейлист"), {}, [=](QString name) {
+			const auto id = CreatePlaylist(name);
+			if (!id.isEmpty()) add(id);
+		});
+	}, &st::menuIconAdd);
+	const auto playlists = Playlists();
+	if (!playlists.empty()) submenu->addSeparator();
+	for (const auto &playlist : playlists) {
+		const auto id = playlist.id;
+		submenu->addAction(playlist.name, [=] { add(id); }, nullptr);
+	}
+	menu->addAction(PlaylistText("Добавить в плейлист"), std::move(submenu), &st::menuIconAdd);
+}
+
+void AddToPlaylistMenu(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<Window::SessionController*> controller,
+		const Track &track) {
+	if (track.id.isEmpty() || IsTelegramTrack(track)) return;
+	AddPlaylistDestinationMenu(menu, controller, [=](QString id) { AddPlaylistTrack(id, track); });
+}
+
+void AddAlbumToPlaylistMenu(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<Window::SessionController*> controller,
+		const Album &album) {
+	if (album.id.isEmpty()) return;
+	AddPlaylistDestinationMenu(menu, controller, [=](QString id) {
+		AlbumTracks(album.id, crl::guard(controller, [=](std::vector<Track> tracks, QString error) {
+			if (!error.isEmpty()) {
+				controller->showToast(error);
+				return;
+			}
+			std::erase_if(tracks, [](const Track &track) { return track.unavailable || track.id.isEmpty() || IsTelegramTrack(track); });
+			if (tracks.empty()) {
+				controller->showToast(PlaylistText("В альбоме нет доступных треков"));
+				return;
+			}
+			for (auto &track : tracks) {
+				if (track.artworkUrl.isEmpty()) track.artworkUrl = album.artworkUrl;
+			}
+			AddPlaylistTracks(id, tracks);
+			controller->showToast(PlaylistText("Альбом добавлен в плейлист"));
+		}));
+	});
+}
+
+void InstallMusicContextMenu(
+		not_null<Ui::RpWidget*> widget,
+		Fn<void(not_null<Ui::PopupMenu*>)> populate) {
+	const auto menu = widget->lifetime().make_state<base::unique_qptr<Ui::PopupMenu>>();
+	widget->events() | rpl::filter([](not_null<QEvent*> event) {
+		if (event->type() == QEvent::ContextMenu) return true;
+		if (event->type() != QEvent::KeyPress) return false;
+		const auto key = static_cast<QKeyEvent*>(event.get());
+		return key->key() == Qt::Key_Menu
+			|| (key->key() == Qt::Key_F10 && key->modifiers() == Qt::ShiftModifier);
+	}) | rpl::on_next([=](not_null<QEvent*> event) {
+		event->accept();
+		*menu = base::make_unique_q<Ui::PopupMenu>(widget, st::popupMenuWithIcons);
+		populate(menu->get());
+		const auto position = event->type() == QEvent::ContextMenu
+			&& static_cast<QContextMenuEvent*>(event.get())->reason() != QContextMenuEvent::Keyboard
+			? static_cast<QContextMenuEvent*>(event.get())->globalPos()
+			: widget->mapToGlobal(widget->rect().center());
+		(*menu)->popup(position);
+	}, widget->lifetime());
+}
+
+void InstallAlbumContextMenu(
+		not_null<Ui::RpWidget*> widget,
+		not_null<Window::SessionController*> controller,
+		Album album) {
+	InstallMusicContextMenu(widget, [=](not_null<Ui::PopupMenu*> menu) {
+		AddAlbumToPlaylistMenu(menu, controller, album);
+	});
+}
+
 enum class RowMode { Results, Queue, Context, Home, Album };
 
 class Row final : public Ui::AbstractButton {
@@ -1660,12 +1777,14 @@ public:
 		RowMode mode = RowMode::Results,
 		std::shared_ptr<std::vector<Track>> results = nullptr,
 		int resultIndex = -1,
-		Fn<void(Track)> open = nullptr)
+		Fn<void(Track)> open = nullptr,
+		QString playlistId = {})
 	: AbstractButton(parent)
 	, _track(track)
 	, _mode(mode)
 	, _index(index)
-	, _results(std::move(results)) {
+	, _results(std::move(results))
+	, _playlistId(std::move(playlistId)) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
@@ -1700,7 +1819,7 @@ public:
 		connect(qApp, &QGuiApplication::applicationStateChanged, this, [=] {
 			updateAnimation();
 		});
-		if (_mode != RowMode::Album) {
+		{
 			if (const auto item = TrackMessage(track)) {
 				const auto document = item->media()->document();
 				_media = document->createMediaView();
@@ -1829,6 +1948,12 @@ private:
 				SetLiked(track, !IsLiked(track.id));
 			}, &st::menuIconFave);
 		}
+		AddToPlaylistMenu(_menu.get(), controller, track);
+		if (!_playlistId.isEmpty()) {
+			add(PlaylistText("Убрать из плейлиста"), [=] {
+				RemovePlaylistTrack(_playlistId, track.id);
+			}, &st::menuIconDelete);
+		}
 		if (_mode == RowMode::Results || _mode == RowMode::Home || _mode == RowMode::Album) {
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Играть следующим")), [=] { EnqueueNext(track); controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Добавлено в очередь"))); }, &st::menuIconAbove);
 			add(QString::fromUtf8(Mokagram::Lang::Tr("В конец очереди")), [=] { EnqueueLast(track); controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Добавлено в очередь"))); }, &st::menuIconBelow);
@@ -1883,47 +2008,41 @@ private:
 			p.drawRoundedRect(rect().adjusted(8, 4, -8, -4), 8, 8);
 		}
 		const auto art = QRect(20, (height() - kArtSize) / 2, kArtSize, kArtSize);
-		if (_mode == RowMode::Album) {
-			p.setFont(st::normalFont);
-			p.setPen(playing ? st::windowActiveTextFg : st::windowSubTextFg);
-			p.drawText(art, Qt::AlignCenter, QString::number(_index + 1));
-		} else {
-			if (_media) {
-				if (const auto image = _media->thumbnail()) {
-					_art = image->original();
-				} else if (const auto image = _media->thumbnailInline()) {
-					_art = image->original();
-				}
+		if (_media) {
+			if (const auto image = _media->thumbnail()) {
+				_art = image->original();
+			} else if (const auto image = _media->thumbnailInline()) {
+				_art = image->original();
 			}
-			auto path = QPainterPath();
-			path.addRoundedRect(art, 8, 8);
-			if (!_art.isNull()) {
-				p.save();
-				p.setClipPath(path);
-				p.drawImage(art, _art);
-				if (playing) {
-					p.fillRect(art, QColor(0, 0, 0, 120));
-				}
-				p.restore();
-			} else {
-				p.setPen(Qt::NoPen);
-				p.setBrush(st::windowBgOver);
-				p.drawPath(path);
-			}
+		}
+		auto path = QPainterPath();
+		path.addRoundedRect(art, 8, 8);
+		if (!_art.isNull()) {
+			p.save();
+			p.setClipPath(path);
+			p.drawImage(art, _art);
 			if (playing) {
-				// Три столбика «играет».
-				p.setPen(Qt::NoPen);
-				p.setBrush(Qt::white);
-				const auto base = art.center().y() + 9;
-				const auto left = art.center().x() - 10;
-				for (auto i = 0; i != 3; ++i) {
-					const auto wave = std::sin(_equalizerPhase * (5. + i) + i * 2.1);
-					const auto barHeight = 6. + 7. * (wave + 1.);
-					p.drawRoundedRect(
-						QRectF(left + i * 8, base - barHeight, 4, barHeight),
-						2,
-						2);
-				}
+				p.fillRect(art, QColor(0, 0, 0, 120));
+			}
+			p.restore();
+		} else {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawPath(path);
+		}
+		if (playing) {
+			// Три столбика «играет».
+			p.setPen(Qt::NoPen);
+			p.setBrush(Qt::white);
+			const auto base = art.center().y() + 9;
+			const auto left = art.center().x() - 10;
+			for (auto i = 0; i != 3; ++i) {
+				const auto wave = std::sin(_equalizerPhase * (5. + i) + i * 2.1);
+				const auto barHeight = 6. + 7. * (wave + 1.);
+				p.drawRoundedRect(
+					QRectF(left + i * 8, base - barHeight, 4, barHeight),
+					2,
+					2);
 			}
 		}
 		const auto left = art.right() + 16;
@@ -2021,6 +2140,7 @@ private:
 	QImage _art;
 	std::shared_ptr<Data::DocumentMedia> _media;
 	base::unique_qptr<Ui::PopupMenu> _menu;
+	QString _playlistId;
 	Ui::Animations::Simple _likeAnimation;
 
 	HoverFade _hoverFade;
@@ -2029,14 +2149,15 @@ private:
 
 class HomeSectionHeader final : public Ui::AbstractButton {
 public:
-	HomeSectionHeader(QWidget *parent, QString title, bool back, Fn<void()> action)
+	HomeSectionHeader(QWidget *parent, QString title, bool back, Fn<void()> action, bool create = false)
 	: AbstractButton(parent)
 	, _title(std::move(title))
-	, _back(back) {
+	, _back(back)
+	, _create(create) {
 		resize(width(), style::ConvertScale(56));
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
-		setAccessibleName(_back
+		setAccessibleName(_create ? _title : _back
 			? QString::fromUtf8(Mokagram::Lang::Tr("Назад")) + u": "_q + _title
 			: QString::fromUtf8(Mokagram::Lang::Tr("Показать все")) + u": "_q + _title);
 		setClickedCallback(std::move(action));
@@ -2052,10 +2173,18 @@ public:
 				p.drawRoundedRect(rect().adjusted(s(2), s(2), -s(2), -s(2)), s(6), s(6));
 			}
 			p.setPen(st::windowFg);
-			const auto title = _back ? u"‹  "_q + _title : _title;
+			const auto title = _create ? u"+  "_q + _title : _back ? u"‹  "_q + _title : _title;
+			p.save();
+			if (_back) {
+				const auto scale = 1. - 0.03 * _press.value(_pressed ? 1. : 0.);
+				p.translate(s(12), height() / 2.);
+				p.scale(scale, scale);
+				p.translate(-s(12), -height() / 2.);
+			}
 			p.drawText(QRect(s(12), 0, std::max(width() - s(140), 0), height()),
 				Qt::AlignVCenter | Qt::AlignLeft,
 				QFontMetrics(font).elidedText(title, Qt::ElideRight, std::max(width() - s(140), 0)));
+			p.restore();
 			if (!_back) {
 				p.setFont(st::normalFont);
 				p.setPen(isOver() ? st::windowFg : st::windowSubTextFg);
@@ -2066,10 +2195,209 @@ public:
 		}, lifetime());
 	}
 
+protected:
+	void mousePressEvent(QMouseEvent *event) override {
+		_pointerPress = true;
+		AbstractButton::mousePressEvent(event);
+	}
+	void mouseReleaseEvent(QMouseEvent *event) override {
+		_pointerPress = false;
+		AbstractButton::mouseReleaseEvent(event);
+	}
+	void onStateChanged(State was, StateChangeSource source) override {
+		AbstractButton::onStateChanged(was, source);
+		if (!_back || !((was ^ state()) & StateFlag::Down)) {
+			return;
+		}
+		const auto pressed = isDown() && _pointerPress;
+		if (pressed == _pressed) {
+			return;
+		}
+		const auto from = _press.value(_pressed ? 1. : 0.);
+		_pressed = pressed;
+		if (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
+			_press.stop();
+			update();
+		} else {
+			_press.start([=] { update(); }, from, pressed ? 1. : 0., 140, anim::easeOutQuint);
+		}
+	}
+
 private:
 	QString _title;
 	bool _back = false;
+	bool _create = false;
+	bool _pointerPress = false;
+	bool _pressed = false;
+	Ui::Animations::Simple _press;
 
+};
+
+class PlaylistRow final : public Ui::AbstractButton {
+public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		const auto active = isOver() || isDown();
+		if (active == _hoverTarget) return;
+		const auto from = _hover.value(_hoverTarget ? 1. : 0.);
+		_hoverTarget = active;
+		if (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
+			_hover.stop();
+			update();
+		} else {
+			_hover.start([=] { update(); }, from, active ? 1. : 0., 160, anim::easeOutCubic);
+		}
+	}
+	PlaylistRow(QWidget *parent, not_null<Window::SessionController*> controller, Playlist playlist, Fn<void(QString)> open)
+	: AbstractButton(parent), _controller(controller), _playlist(std::move(playlist)) {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		resize(width(), s(92));
+		setPointerCursor(true);
+		setFocusPolicy(Qt::TabFocus);
+		setAccessibleName(_playlist.name);
+		setClickedCallback([=] { open(_playlist.id); });
+		_menuButton = new TrackMenuButton(this);
+		_menuButton->setAccessibleName(PlaylistText("Действия с плейлистом"));
+		_menuButton->setToolTip(PlaylistText("Действия с плейлистом"));
+		connect(_menuButton, &QToolButton::clicked, this, [=] {
+			showMenu(_menuButton->mapToGlobal(_menuButton->rect().bottomLeft()));
+		});
+		for (const auto &track : _playlist.tracks) {
+			if (track.artworkUrl.isEmpty()) continue;
+			const auto url = ArtUrl(track.artworkUrl, u"t200x200"_q);
+			if (std::find(_urls.begin(), _urls.end(), url) != _urls.end()) continue;
+			const auto index = int(_urls.size());
+			_urls.push_back(url);
+			LoadImage(url, crl::guard(this, [=](QImage image) {
+				_art[index] = std::move(image);
+				if (!_art[index].isNull() && isVisible() && !anim::Disabled()
+					&& !PowerSaving::On(PowerSaving::kAnimations)) {
+					_artFade[index].start([=] { update(); }, 0., 1., 220, anim::easeOutCubic);
+				}
+				update();
+			}));
+			if (_urls.size() == _art.size()) break;
+		}
+		paintRequest() | rpl::on_next([=](QRect) { paint(); }, lifetime());
+	}
+protected:
+	void resizeEvent(QResizeEvent *event) override {
+		AbstractButton::resizeEvent(event);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		_menuButton->setGeometry(width() - s(54), (height() - s(32)) / 2, s(32), s(32));
+	}
+	void contextMenuEvent(QContextMenuEvent *event) override {
+		showMenu(event->reason() == QContextMenuEvent::Keyboard
+			? mapToGlobal(rect().center()) : event->globalPos());
+		event->accept();
+	}
+	void keyPressEvent(QKeyEvent *event) override {
+		if (event->key() == Qt::Key_Menu
+			|| (event->key() == Qt::Key_F10 && event->modifiers() == Qt::ShiftModifier)) {
+			showMenu(mapToGlobal(rect().center()));
+			event->accept();
+		} else {
+			AbstractButton::keyPressEvent(event);
+		}
+	}
+private:
+	void paint() {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto card = rect().adjusted(s(8), s(4), -s(8), -s(4));
+		const auto hover = (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations))
+			? (isOver() || isDown() ? 1. : 0.)
+			: _hover.value(isOver() || isDown() ? 1. : 0.);
+		if (hover > 0.) {
+			p.save();
+			p.setOpacity(hover);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(card, s(12), s(12));
+			p.restore();
+		}
+		if (hasFocus()) {
+			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(card.adjusted(s(1), s(1), -s(1), -s(1)), s(12), s(12));
+		}
+		const auto side = s(68);
+		const auto cover = QRect(s(16), (height() - side) / 2, side, side);
+		auto path = QPainterPath();
+		path.addRoundedRect(cover, s(9), s(9));
+		p.save();
+		p.setClipPath(path);
+		p.fillRect(cover, QColor(49, 57, 70));
+		if (_urls.empty()) {
+			p.setPen(QColor(181, 199, 221));
+			auto font = st::semiboldFont->f;
+			font.setPixelSize(s(30));
+			p.setFont(font);
+			p.drawText(cover, Qt::AlignCenter, QString::fromUtf8("♫"));
+		} else {
+			const auto count = (_urls.size() == 1) ? 1 : 4;
+			for (auto i = 0; i != count; ++i) {
+				const auto &image = _art[i % _urls.size()];
+				const auto x = count == 1 ? 0 : i % 2;
+				const auto y = count == 1 ? 0 : i / 2;
+				const auto cell = count == 1 ? cover : QRect(
+					cover.x() + x * (side / 2), cover.y() + y * (side / 2),
+					x ? side - side / 2 : side / 2, y ? side - side / 2 : side / 2);
+				p.fillRect(cell, (i % 2) ? QColor(57, 65, 79) : QColor(68, 78, 94));
+				if (!image.isNull()) {
+					p.save();
+					p.setOpacity((anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations))
+						? 1. : _artFade[i % _urls.size()].value(1.));
+					const auto dimension = std::min(image.width(), image.height());
+					const auto source = QRect((image.width() - dimension) / 2,
+						(image.height() - dimension) / 2, dimension, dimension);
+					p.drawImage(cell, image, source);
+					p.restore();
+				}
+			}
+		}
+		p.restore();
+		const auto left = cover.right() + s(18);
+		const auto textWidth = std::max(width() - left - s(70), 0);
+		p.setFont(st::semiboldFont);
+		p.setPen(st::windowFg);
+		p.drawText(QRect(left, height() / 2 - s(21), textWidth, s(23)), Qt::AlignVCenter,
+			p.fontMetrics().elidedText(_playlist.name, Qt::ElideRight, textWidth));
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(QRect(left, height() / 2 + s(3), textWidth, s(20)), Qt::AlignVCenter,
+			PlaylistText("Треков: %1").arg(int(_playlist.tracks.size())));
+	}
+	void showMenu(QPoint position) {
+		_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
+		const auto id = _playlist.id;
+		const auto controller = _controller;
+		const auto name = _playlist.name;
+		_menu->addAction(PlaylistText("Переименовать"), [=] {
+			PlaylistNameBox(controller, PlaylistText("Переименовать плейлист"), name, [=](QString value) {
+				RenamePlaylist(id, value);
+			});
+		}, &st::menuIconEdit);
+		_menu->addAction(PlaylistText("Удалить плейлист"), [=] {
+			controller->show(Ui::MakeConfirmBox({
+				.text = TextWithEntities{ PlaylistText("Удалить плейлист «%1»?").arg(name) },
+				.confirmed = [=](Fn<void()> close) { close(); DeletePlaylist(id); },
+				.confirmText = PlaylistText("Удалить"),
+				.cancelText = PlaylistText("Отмена"),
+				.title = rpl::single(PlaylistText("Удалить плейлист")),
+			}));
+		}, &st::menuIconDelete);
+		_menu->popup(position);
+	}
+	const not_null<Window::SessionController*> _controller;
+	Playlist _playlist;
+	std::vector<QString> _urls;
+	std::array<QImage, 4> _art;
+	std::array<Ui::Animations::Simple, 4> _artFade;
+	Ui::Animations::Simple _hover;
+	bool _hoverTarget = false;
+	QToolButton *_menuButton = nullptr;
+	base::unique_qptr<Ui::PopupMenu> _menu;
 };
 
 void Row::updateAnimation() {
@@ -2118,7 +2446,7 @@ void Row::hideEvent(QHideEvent *e) {
 // Альбом в результатах поиска: обложка, название, исполнитель и число треков.
 class AlbumRow final : public Ui::AbstractButton {
 public:
-	AlbumRow(QWidget *parent, const Album &album, Fn<void()> open)
+	AlbumRow(QWidget *parent, not_null<Window::SessionController*> controller, const Album &album, Fn<void()> open)
 	: AbstractButton(parent)
 	, _album(album) {
 		resize(width(), kRowHeight);
@@ -2127,6 +2455,7 @@ public:
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Альбом"))
 			+ u": "_q + _album.title + u" - "_q + _album.artist);
 		setClickedCallback(std::move(open));
+		InstallAlbumContextMenu(this, controller, album);
 		LoadImage(ArtUrl(album.artworkUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
 			update();
@@ -2203,7 +2532,7 @@ public:
 		_hoverFade.set(isOver() || isDown(), [=] { update(); });
 	}
 
-	HomeAlbumCard(QWidget *parent, Album album, Fn<void()> open)
+	HomeAlbumCard(QWidget *parent, not_null<Window::SessionController*> controller, Album album, Fn<void()> open)
 	: AbstractButton(parent)
 	, _album(std::move(album)) {
 		setPointerCursor(true);
@@ -2211,6 +2540,7 @@ public:
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Альбом"))
 			+ u": "_q + _album.title + u" - "_q + _album.artist);
 		setClickedCallback(std::move(open));
+		InstallAlbumContextMenu(this, controller, _album);
 		LoadImage(ArtUrl(_album.artworkUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
 			update();
@@ -2269,7 +2599,7 @@ public:
 		_hoverFade.set(isOver() || isDown(), [=] { update(); });
 	}
 
-	HomeRecentTile(QWidget *parent, RecentItem item, Fn<void()> activate, Fn<void()> play)
+	HomeRecentTile(QWidget *parent, not_null<Window::SessionController*> controller, RecentItem item, Fn<void()> activate, Fn<void()> play)
 	: AbstractButton(parent)
 	, _item(std::move(item)) {
 		setPointerCursor(true);
@@ -2287,6 +2617,34 @@ public:
 			} else {
 				activate();
 			}
+		});
+		const auto recentItem = _item;
+		InstallMusicContextMenu(this, [=](not_null<Ui::PopupMenu*> menu) {
+			menu->addAction(PlaylistText("Воспроизвести"), play, &st::menuIconSoundOn);
+			if (recentItem.isAlbum) {
+				menu->addAction(PlaylistText("Открыть альбом"), activate, &st::menuIconSearch);
+				AddAlbumToPlaylistMenu(menu, controller, recentItem.album);
+				return;
+			}
+			const auto track = recentItem.track;
+			AddRadioAction(menu, controller, track);
+			menu->addAction(IsLiked(track.id) ? PlaylistText("Убрать из избранного") : PlaylistText("В избранное"), [=] {
+				SetLiked(track, !IsLiked(track.id));
+			}, &st::menuIconFave);
+			AddToPlaylistMenu(menu, controller, track);
+			menu->addAction(PlaylistText("Играть следующим"), [=] {
+				EnqueueNext(track); controller->showToast(PlaylistText("Добавлено в очередь"));
+			}, &st::menuIconAbove);
+			menu->addAction(PlaylistText("В конец очереди"), [=] {
+				EnqueueLast(track); controller->showToast(PlaylistText("Добавлено в очередь"));
+			}, &st::menuIconBelow);
+			if (CanForwardTrack(track)) menu->addAction(PlaylistText("Переслать"), [=] { ForwardTrack(controller, track); }, &st::menuIconForward);
+			menu->addAction(PlaylistText("Скачать"), [=] { SaveToDisk(track); }, &st::menuIconDownload);
+			menu->addAction(PlaylistText("Добавить в профиль"), [=] { AddToProfile(controller, track); }, &st::menuIconProfile);
+			menu->addAction(PlaylistText("Копировать ссылку"), [=] {
+				QGuiApplication::clipboard()->setText(track.permalink);
+				controller->showToast(PlaylistText("Ссылка скопирована"));
+			}, &st::menuIconLink);
 		});
 		const auto url = _item.isAlbum ? _item.album.artworkUrl : _item.track.artworkUrl;
 		LoadImage(ArtUrl(url, u"t200x200"_q), crl::guard(this, [=](QImage image) {
@@ -2340,6 +2698,77 @@ private:
 
 };
 
+class HomeArtistCard final : public Ui::AbstractButton {
+public:
+	void onStateChanged(State was, StateChangeSource source) override {
+		AbstractButton::onStateChanged(was, source);
+		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+	}
+
+	HomeArtistCard(QWidget *parent, Track track, Fn<void(Track)> open)
+	: AbstractButton(parent), _track(std::move(track)) {
+		setPointerCursor(true);
+		setFocusPolicy(Qt::TabFocus);
+		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Исполнитель")) + u": "_q + _track.artist);
+		setClickedCallback([=] { open(_track); });
+		const auto url = _track.artistArtworkUrl.isEmpty() ? _track.artworkUrl : _track.artistArtworkUrl;
+		LoadImage(ArtUrl(url, u"t500x500"_q), crl::guard(this, [=](QImage image) {
+			_art = std::move(image);
+			update();
+		}));
+	}
+protected:
+	void paintEvent(QPaintEvent *) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		p.setPen(Qt::NoPen);
+		p.setBrush(anim::color(QColor(0x24, 0x24, 0x24), QColor(0x30, 0x30, 0x30), _hoverFade.value()));
+		p.drawRoundedRect(rect(), s(8), s(8));
+		if (hasFocus()) {
+			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(rect().adjusted(s(1), s(1), -s(1), -s(1)), s(8), s(8));
+		}
+		const auto inset = s(12);
+		const auto art = QRect(inset, inset, width() - 2 * inset, width() - 2 * inset);
+		p.save();
+		auto clip = QPainterPath();
+		clip.addEllipse(art);
+		p.setClipPath(clip);
+		if (_art.isNull()) {
+			p.fillRect(art, st::windowBgOver->c);
+		} else {
+			const auto scaled = _art.scaled(art.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+			p.drawImage(art, scaled, QRect((scaled.width() - art.width()) / 2, (scaled.height() - art.height()) / 2, art.width(), art.height()));
+		}
+		p.restore();
+		p.setFont(st::semiboldFont);
+		p.setPen(st::windowFg);
+		p.drawText(QRect(inset, art.bottom() + s(8), width() - 2 * inset, s(22)), Qt::AlignVCenter, st::semiboldFont->elided(_track.artist, width() - 2 * inset));
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(QRect(inset, art.bottom() + s(30), width() - 2 * inset, s(22)), Qt::AlignVCenter, QString::fromUtf8(Mokagram::Lang::Tr("Исполнитель")));
+	}
+private:
+	Track _track;
+	QImage _art;
+	HoverFade _hoverFade;
+};
+
+[[nodiscard]] std::vector<Track> HomeRecommendationArtists(const std::vector<Track> &tracks) {
+	auto result = std::vector<Track>();
+	auto names = std::set<QString>();
+	for (const auto &track : tracks) {
+		const auto name = track.artist.trimmed();
+		if (!name.isEmpty() && !track.artistId.isEmpty() && track.artistId != u"0"_q
+			&& names.insert(name.toCaseFolded()).second) {
+			result.push_back(track);
+		}
+	}
+	return result;
+}
+
 class HomeRecentGrid final : public Ui::RpWidget {
 public:
 	HomeRecentGrid(
@@ -2358,7 +2787,7 @@ public:
 		for (auto i = 0; i != count; ++i) {
 			const auto item = recent[i];
 			if (item.isAlbum) {
-				_items.push_back(Ui::CreateChild<HomeRecentTile>(this, item,
+				_items.push_back(Ui::CreateChild<HomeRecentTile>(this, controller, item,
 					[=] { open(item.album); }, [=] {
 					AlbumTracks(item.album.id, crl::guard(controller, [=](std::vector<Track> tracks, QString error) {
 						if (!error.isEmpty()) {
@@ -2372,7 +2801,7 @@ public:
 				}));
 			} else {
 				const auto index = trackIndex++;
-				_items.push_back(Ui::CreateChild<HomeRecentTile>(this, item,
+				_items.push_back(Ui::CreateChild<HomeRecentTile>(this, controller, item,
 					[=] { openTrack(item.track); }, [=] {
 					QueueState().results = *tracks;
 					QueueState().custom = false;
@@ -2515,7 +2944,9 @@ public:
 		Fn<void(Album)> open,
 		Fn<void(Track)> openTrack,
 		bool expanded,
-		std::shared_ptr<int> offset)
+		std::shared_ptr<int> offset,
+		std::vector<Track> artists = {},
+		Fn<void(Track)> openArtist = nullptr)
 	: RpWidget(parent)
 	, _expanded(expanded)
 	, _offset(std::move(offset)) {
@@ -2557,18 +2988,27 @@ public:
 		const auto results = std::make_shared<std::vector<Track>>(tracks);
 		auto trackIndex = 0;
 		auto albumIndex = 0;
-		const auto limit = _expanded ? tracks.size() + albums.size() : size_t(12);
+		auto artistIndex = 0;
+		const auto limit = _expanded ? tracks.size() + albums.size() + artists.size() : size_t(12);
 		while (_items.size() < limit
-			&& (trackIndex < int(tracks.size()) || albumIndex < int(albums.size()))) {
-			if (albumIndex < int(albums.size())
-				&& ((_items.size() % 3) == 2 || trackIndex >= int(tracks.size()))) {
+			&& (trackIndex < int(tracks.size()) || albumIndex < int(albums.size()) || artistIndex < int(artists.size()))) {
+			if (artistIndex < int(artists.size()) && openArtist
+				&& ((_items.size() % 4) == 1 || (trackIndex >= int(tracks.size()) && albumIndex >= int(albums.size())))) {
+				_items.push_back(Ui::CreateChild<HomeArtistCard>(_content, artists[artistIndex++], openArtist));
+			} else if (albumIndex < int(albums.size())
+				&& ((_items.size() % 3) == 2 || (trackIndex >= int(tracks.size()) && artistIndex >= int(artists.size())))) {
 				const auto album = albums[albumIndex++];
 				_items.push_back(Ui::CreateChild<HomeAlbumCard>(
-					_content, album, [=] { open(album); }));
-			} else {
+					_content, controller, album, [=] { open(album); }));
+			} else if (trackIndex < int(tracks.size())) {
 				const auto index = trackIndex++;
 				_items.push_back(Ui::CreateChild<Row>(
 					_content, controller, tracks[index], index, RowMode::Home, results, -1, openTrack));
+			} else if (albumIndex < int(albums.size())) {
+				const auto album = albums[albumIndex++];
+				_items.push_back(Ui::CreateChild<HomeAlbumCard>(_content, controller, album, [=] { open(album); }));
+			} else {
+				break;
 			}
 		}
 	}
@@ -2734,11 +3174,13 @@ public:
 		Album album,
 		int count,
 		bool isTrack,
-		Fn<void(QImage, QRect)> showCover)
+		Fn<void(QImage, QRect)> showCover,
+		bool isArtist = false)
 	: RpWidget(parent)
 	, _album(std::move(album))
 	, _count(count)
 	, _isTrack(isTrack)
+	, _isArtist(isArtist)
 	, _showCover(std::move(showCover)) {
 		setMouseTracking(true);
 		setToolTip(_album.title + u" - "_q + _album.artist);
@@ -2777,7 +3219,8 @@ protected:
 		const auto margin = s(24);
 		const auto art = coverRect();
 		auto clip = QPainterPath();
-		clip.addRoundedRect(art, s(6), s(6));
+		if (_isArtist) clip.addEllipse(art);
+		else clip.addRoundedRect(art, s(6), s(6));
 		p.save();
 		p.setClipPath(clip);
 		if (_art.isNull()) {
@@ -2797,7 +3240,7 @@ protected:
 		p.setFont(label);
 		p.setPen(QColor(255, 255, 255, 190));
 		p.drawText(QRect(left, top, available, s(24)), Qt::AlignLeft | Qt::AlignVCenter,
-			QString::fromUtf8(Mokagram::Lang::Tr(_isTrack ? "Трек" : "Альбом")));
+			QString::fromUtf8(Mokagram::Lang::Tr(_isArtist ? "Исполнитель" : _isTrack ? "Трек" : "Альбом")));
 		auto title = st::semiboldFont->f;
 		title.setPixelSize(s(narrow ? 28 : 44));
 		p.setFont(title);
@@ -2828,6 +3271,7 @@ private:
 	Album _album;
 	int _count = 0;
 	bool _isTrack = false;
+	bool _isArtist = false;
 	QImage _art;
 	Fn<void(QImage, QRect)> _showCover;
 
@@ -4962,7 +5406,7 @@ public:
 			scheduleHomeMoreIfNeeded();
 		});
 		_tabScroll->scrollTopChanges() | rpl::on_next([=](int top) {
-			_topFade->setVisible(_tab != Tab::Now && _tab != Tab::Playlists
+			_topFade->setVisible(_tab != Tab::Now
 				&& ((_tab != Tab::Search && _tab != Tab::Library && _tab != Tab::Queue) || top > 0));
 			_topFade->update();
 			_bottomFade->update();
@@ -5139,6 +5583,11 @@ public:
 						rebuildTab();
 					}
 				});
+			}
+		}, lifetime());
+		PlaylistsChanged() | rpl::on_next([=] {
+			if (_tab == Tab::Playlists) {
+				QTimer::singleShot(0, this, [=] { if (_tab == Tab::Playlists) rebuildTab(); });
 			}
 		}, lifetime());
 		LikesChanged() | rpl::on_next([=] {
@@ -5448,7 +5897,7 @@ protected:
 		} else {
 			const auto contentWidth = std::max(width() - 2 * margin, 0);
 			result.center = QRect((width() - contentWidth) / 2, top, contentWidth, areaHeight);
-			result.scrollTop = result.center.y() + ((_tab == Tab::Home || _tab == Tab::Library || _tab == Tab::Queue)
+			result.scrollTop = result.center.y() + ((_tab == Tab::Home || _tab == Tab::Library || _tab == Tab::Queue || _tab == Tab::Playlists)
 				? 0
 				: (_tab == Tab::Search)
 				? ((!_searchChats && contentWidth < s(500)) ? s(172) : s(124))
@@ -5604,19 +6053,19 @@ protected:
 		_seek->setGeometry(layout.seek);
 		_view->setVisible(_tab == Tab::Now);
 		_view->setGeometry(layout.lyrics);
-		_tabScroll->setVisible(_tab != Tab::Now && _tab != Tab::Playlists);
+		_tabScroll->setVisible(_tab != Tab::Now);
 		_tabScroll->setGeometry(
 			layout.center.x(),
 			layout.scrollTop,
 			layout.center.width(),
 			std::max(layout.center.y() + layout.center.height() - layout.scrollTop - s(12), 0));
 		_tabList->resizeToWidth(_tabScroll->width());
-		_topFade->setVisible(_tab != Tab::Now && _tab != Tab::Playlists
+		_topFade->setVisible(_tab != Tab::Now
 			&& ((_tab != Tab::Search && _tab != Tab::Library && _tab != Tab::Queue) || _tabScroll->scrollTop() > 0));
 		_topFade->setGeometry(
 			_tabScroll->x(), _tabScroll->y(), _tabScroll->width(), s(28));
 		_topFade->raise();
-		_bottomFade->setVisible(_tab != Tab::Now && _tab != Tab::Playlists);
+		_bottomFade->setVisible(_tab != Tab::Now);
 		_bottomFade->setGeometry(
 			_tabScroll->x(),
 			_tabScroll->y() + _tabScroll->height() - s(36),
@@ -5736,7 +6185,7 @@ protected:
 			return;
 		}
 		for (const auto &album : _albums) {
-			_tabList->add(object_ptr<AlbumRow>(_tabList, album, crl::guard(this, [=] {
+			_tabList->add(object_ptr<AlbumRow>(_tabList, _controller, album, crl::guard(this, [=] {
 				_openedAlbum = true;
 				_albumTitle = album.title;
 				_albumTracks.clear();
@@ -5863,6 +6312,9 @@ protected:
 		update(computeLayout().nav);
 		_homeSection = 0;
 		_homeAlbumOpen = false;
+		_homeArtistOpen = false;
+		_homeReturnToArtist = false;
+		_nav[1]->setActiveColor(Qt::white);
 		++_homeAlbumGeneration;
 		for (auto i = 0; i != 6; ++i) {
 			_nav[i]->setActive(i == int(tab));
@@ -5918,12 +6370,15 @@ protected:
 
 	void loadHomeAccent(const QString &url, int generation) {
 		_homeAccent = QColor();
+		_nav[1]->setActiveColor(Qt::white);
 		update();
 		LoadImage(ArtUrl(url, u"t500x500"_q), crl::guard(this, [=](QImage image) {
 			if (generation != _homeAlbumGeneration) {
 				return;
 			}
 			_homeAccent = ComputeAccent(image);
+			_nav[1]->setActiveColor(Ui::CountContrast(_homeAccent, Qt::white) >= Ui::CountContrast(_homeAccent, Qt::black)
+				? QColor(Qt::white) : QColor(Qt::black));
 			update();
 		}));
 	}
@@ -5957,7 +6412,16 @@ protected:
 				if (generation != _homeAlbumGeneration) {
 					return;
 				}
-				std::erase_if(tracks, [&](const Track &other) { return other.id == trackId; });
+				std::erase_if(tracks, [&](const Track &other) {
+					return other.id == trackId || (_homeArtistOpen
+						&& other.artist.trimmed().compare(name.trimmed(), Qt::CaseInsensitive) != 0);
+				});
+				if (_homeArtistOpen) {
+					if (tracks.empty()) tracks.push_back(_homeArtistSeed);
+					std::stable_sort(tracks.begin(), tracks.end(), [](const Track &a, const Track &b) {
+						return a.playbackCount > b.playbackCount;
+					});
+				}
 				_homeArtistTracks = std::move(tracks);
 				if (_tab == Tab::Home && _homeAlbumOpen) {
 					rebuildTab();
@@ -5966,7 +6430,29 @@ protected:
 		}
 	}
 
+	void openHomeArtist(Track track) {
+		if (!_homeReturnToArtist) _homeArtistFeedScroll = _tabScroll->scrollTop();
+		_homeReturnToArtist = false;
+		_homeAlbumReturnScroll = _homeArtistFeedScroll;
+		_homeArtistOpen = true;
+		_homeAlbumOpen = true;
+		_homeAlbumIsTrack = false;
+		_homeArtistSeed = track;
+		const auto generation = ++_homeAlbumGeneration;
+		const auto art = track.artistArtworkUrl.isEmpty() ? track.artworkUrl : track.artistArtworkUrl;
+		_homeAlbum = { {}, track.artist, {}, art, 0 };
+		_homeAlbumTracks.clear();
+		_homeAlbumNote.clear();
+		_homeAlbumLoading = false;
+		loadHomeAccent(art, generation);
+		loadHomeArtist(track.artist, track.artistId, {}, {}, generation);
+		relayout();
+		rebuildTab();
+		_tabScroll->scrollToY(0);
+	}
+
 	void openHomeTrack(Track track) {
+		_homeArtistOpen = false;
 		_homeAlbumReturnScroll = _tabScroll->scrollTop();
 		_homeAlbumOpen = true;
 		_homeAlbumIsTrack = true;
@@ -5983,6 +6469,8 @@ protected:
 	}
 
 	void openHomeAlbum(Album album) {
+		_homeReturnToArtist = _homeArtistOpen;
+		_homeArtistOpen = false;
 		_homeAlbumIsTrack = false;
 		_homeAlbumReturnScroll = _tabScroll->scrollTop();
 		_homeAlbumOpen = true;
@@ -6006,6 +6494,9 @@ protected:
 				return;
 			}
 			_homeAlbumLoading = false;
+			for (auto &track : tracks) {
+				if (track.artworkUrl.isEmpty()) track.artworkUrl = _homeAlbum.artworkUrl;
+			}
 			_homeAlbumTracks = std::move(tracks);
 			if (!_homeAlbumTracks.empty() && !_homeAlbumTracks.front().artistId.isEmpty()) {
 				const auto artistId = _homeAlbumTracks.front().artistId;
@@ -6112,7 +6603,7 @@ protected:
 		const auto tr = [](const char *text) {
 			return QString::fromUtf8(Mokagram::Lang::Tr(text));
 		};
-		const auto addRows = [&](const std::vector<Track> &tracks, RowMode mode = RowMode::Results) {
+		const auto addRows = [&](const std::vector<Track> &tracks, RowMode mode = RowMode::Results, QString playlistId = {}) {
 			auto playable = std::make_shared<std::vector<Track>>();
 			for (const auto &track : tracks) {
 				if (!track.unavailable) {
@@ -6130,7 +6621,9 @@ protected:
 					i,
 					mode,
 					playable,
-					index));
+					index,
+					nullptr,
+					playlistId));
 			}
 		};
 		switch (_tab) {
@@ -6142,19 +6635,47 @@ protected:
 			if (_homeAlbumOpen) {
 				_tabList->add(object_ptr<HomeSectionHeader>(
 					_tabList, tr("Назад"), true, crl::guard(this, [=] {
+						if (_homeReturnToArtist) {
+							openHomeArtist(_homeArtistSeed);
+							return;
+						}
 						_homeAlbumOpen = false;
+						_homeArtistOpen = false;
+						_nav[1]->setActiveColor(Qt::white);
 						++_homeAlbumGeneration;
 						relayout();
 						rebuildTab();
 						_tabScroll->scrollToY(_homeAlbumReturnScroll);
 					})));
-				_tabList->add(object_ptr<HomeAlbumHeader>(
+				const auto albumHeader = _tabList->add(object_ptr<HomeAlbumHeader>(
 					_tabList, _homeAlbum, int(_homeAlbumTracks.size()), _homeAlbumIsTrack,
 					crl::guard(this, [=](QImage image, QRect source) {
 						source.moveTopLeft(mapFromGlobal(source.topLeft()));
 						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
-					})), QMargins(12, 0, 12, 8));
+					}), _homeArtistOpen), QMargins(12, 0, 12, 8));
+				if (!_homeAlbumIsTrack && !_homeArtistOpen) InstallAlbumContextMenu(albumHeader, _controller, _homeAlbum);
 
+				if (_homeArtistOpen) {
+					if (!_homeArtistTracks.empty()) {
+						_tabList->add(object_ptr<Ui::FlatLabel>(_tabList, tr("Популярное"), st::boxLabel), QMargins(20, 8, 20, 4));
+						addRows(_homeArtistTracks, RowMode::Album);
+					}
+					auto artistLikes = std::vector<Track>();
+					for (const auto &track : liked) {
+						if (track.artist.trimmed().compare(_homeArtistSeed.artist.trimmed(), Qt::CaseInsensitive) == 0) artistLikes.push_back(track);
+					}
+					if (!artistLikes.empty()) {
+						_tabList->add(object_ptr<Ui::FlatLabel>(_tabList, tr("Вам нравится"), st::boxLabel), QMargins(20, 28, 20, 8));
+						addRows(artistLikes, RowMode::Album);
+					}
+					if (!_homeArtistAlbums.empty()) {
+						_tabList->add(object_ptr<Ui::FlatLabel>(_tabList, tr("Дискография"), st::boxLabel), QMargins(20, 28, 20, 8));
+						_tabList->add(object_ptr<HomeMixedGrid>(_tabList, _controller, std::vector<Track>(), _homeArtistAlbums,
+							crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
+							crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }), false, std::make_shared<int>(0)));
+					}
+					break;
+				}
 				if (!_homeAlbumNote.isEmpty()) {
 					if (_homeAlbumLoading) {
 						_tabList->add(object_ptr<Ui::FlatLabel>(_tabList, _homeAlbumNote, st::boxLabel), QMargins(12, 8, 12, 8));
@@ -6205,7 +6726,9 @@ protected:
 						tracks, albums,
 						crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
 						crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
-						true, nullptr));
+						true, nullptr,
+						pageTracks ? HomeRecommendationArtists(tracks) : std::vector<Track>(),
+						crl::guard(this, [=](Track track) { openHomeArtist(std::move(track)); })));
 				}
 				break;
 			}
@@ -6249,7 +6772,8 @@ protected:
 					page.tracks, page.albums,
 					crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
 					crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
-					false, page.shelfOffset));
+					false, page.shelfOffset, HomeRecommendationArtists(page.tracks),
+					crl::guard(this, [=](Track track) { openHomeArtist(std::move(track)); })));
 				if (!i) section(tr("Избранное"), 2, liked);
 			}
 			if (_homePages.empty() && !_homeLoaded) {
@@ -6302,16 +6826,34 @@ protected:
 				addRows(liked);
 			}
 		} break;
-		case Tab::Playlists:
-			if (!_playlistsSticker) {
-				auto file = QFile(u":/animations/mokagram_playlists_empty.webm"_q);
-				if (file.open(QIODevice::ReadOnly)) {
-					_playlistsSticker = Media::Clip::MakeReader(
-						file.readAll(),
-						[=](Media::Clip::Notification) { update(); });
+		case Tab::Playlists: {
+			const auto playlists = Playlists();
+			const auto found = std::find_if(playlists.begin(), playlists.end(), [=](const Playlist &p) {
+				return p.id == _openedPlaylist;
+			});
+			if (found != playlists.end()) {
+				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, found->name, true, [=] {
+					_openedPlaylist.clear();
+					rebuildTab();
+				}));
+				if (found->tracks.empty()) _tabNote = tr("Добавь треки через их контекстное меню.");
+				else addRows(found->tracks, RowMode::Results, found->id);
+			} else {
+				_openedPlaylist.clear();
+				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, tr("Создать плейлист"), true, [=] {
+					PlaylistNameBox(_controller, tr("Создать плейлист"), {}, crl::guard(this, [=](QString name) {
+						_openedPlaylist = CreatePlaylist(name);
+					}));
+				}, true));
+				for (const auto &playlist : playlists) {
+					_tabList->add(object_ptr<PlaylistRow>(_tabList, _controller, playlist, [=](QString id) {
+						_openedPlaylist = std::move(id);
+						rebuildTab();
+					}));
 				}
+				if (playlists.empty()) _tabNote = tr("Создай плейлист или добавь трек через контекстное меню.");
 			}
-			break;
+		} break;
 		case Tab::Queue:
 			fillQueue();
 			break;
@@ -6410,7 +6952,9 @@ protected:
 		const auto layout = computeLayout();
 		// Одна общая дорожка и движущаяся пилюля вместо отдельных фонов вкладок.
 		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBgOver);
+		const auto homeColor = (_tab == Tab::Home && _homeAlbumOpen && _homeAccent.isValid())
+			? _homeAccent : QColor();
+		p.setBrush(homeColor.isValid() ? anim::color(st::windowBgOver->c, homeColor.darker(220), 0.65) : st::windowBgOver->c);
 		p.drawRoundedRect(layout.nav, layout.nav.height() / 2., layout.nav.height() / 2.);
 		const auto inset = s(4);
 		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(_nav.size());
@@ -6424,7 +6968,7 @@ protected:
 			? _accent
 			: st::windowActiveTextFg->c;
 		const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
-		p.setBrush(anim::color(coverColor, st::windowActiveTextFg->c, plain));
+		p.setBrush(homeColor.isValid() ? homeColor : anim::color(coverColor, st::windowActiveTextFg->c, plain));
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		const auto labelFont = [&](int size, bool bold) {
 			auto font = (bold ? st::semiboldFont : st::normalFont)->f;
@@ -6448,7 +6992,7 @@ protected:
 				p.setPen(st::windowSubTextFg);
 				const auto noteWidth = std::max(layout.center.width() - s(20), 0);
 				p.drawText(
-					QRect(layout.center.x() + s(10), layout.scrollTop + ((_tab == Tab::Search && _openedAlbum) ? s(40) : 0), noteWidth, s(80)),
+					QRect(layout.center.x() + s(10), layout.scrollTop + ((_tab == Tab::Playlists) ? s(64) : (_tab == Tab::Search && _openedAlbum) ? s(40) : 0), noteWidth, s(80)),
 					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
 					_tabNote);
 			}
@@ -6480,31 +7024,7 @@ protected:
 					Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
 					QString::fromUtf8(Mokagram::Lang::Tr("Кажется тут ничего нет.. напиши что нибудь в поиск")));
 			}
-			if (_tab == Tab::Playlists) {
-				const auto area = QRect(
-					layout.center.x(), layout.scrollTop,
-					layout.center.width(),
-					std::max(layout.center.bottom() - layout.scrollTop, 0));
-				const auto side = std::max(0, std::min({ s(180), area.width(), area.height() - s(50) }));
-				const auto top = area.y() + std::max((area.height() - side - s(42)) / 2, 0);
-				const auto sticker = QRect(area.center().x() - side / 2, top, side, side);
-				if (_playlistsSticker && _playlistsSticker->ready() && side > 0) {
-					const auto request = Media::Clip::FrameRequest{
-						.frame = sticker.size(),
-						.outer = sticker.size(),
-						.factor = style::DevicePixelRatio(),
-					};
-					if (!_playlistsSticker->started()) _playlistsSticker->start(request);
-					const auto animate = isVisible() && Mokagram::Perf::UserIsLooking()
-						&& !PowerSaving::On(PowerSaving::kAnimations);
-					p.drawImage(sticker, _playlistsSticker->current(request, animate ? crl::now() : 0));
-				}
-				p.setFont(labelFont(15, false));
-				p.setPen(st::windowSubTextFg);
-				p.drawText(QRect(area.x(), sticker.bottom() + s(12), area.width(), s(30)),
-					Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
-					QString::fromUtf8(Mokagram::Lang::Tr("Кажется, ты ещё ничего не добавил.")));
-			}
+
 		}
 
 		// Обложка: сжимается на паузе, при смене трека плавно перетекает в новую.
@@ -6993,6 +7513,7 @@ private:
 	Tab _tab = Tab::Now;
 	Tab _rebuiltTab = Tab::Queue;
 	QString _tabNote;
+	QString _openedPlaylist;
 	bool _heartOwn = false;
 	struct HomePage {
 		std::vector<Track> tracks;
@@ -7009,14 +7530,18 @@ private:
 	std::vector<Album> _homeArtistAlbums;
 	QColor _homeAccent;
 	Album _homeAlbum;
+	Track _homeArtistSeed;
 	QString _homeAlbumNote;
 	QTimer _homeMoreRetryTimer;
 	int _homeSection = 0;
 	int _homeFeedScroll = 0;
 	int _homeAlbumReturnScroll = 0;
+	int _homeArtistFeedScroll = 0;
 	int _homeAlbumGeneration = 0;
 	int _homeMoreFailures = 0;
 	bool _homeAlbumOpen = false;
+	bool _homeArtistOpen = false;
+	bool _homeReturnToArtist = false;
 	bool _homeAlbumIsTrack = false;
 	bool _homeAlbumLoading = false;
 	bool _homeMoreLoading = false;
@@ -8121,6 +8646,7 @@ void ShowCurrentTrackMenu(
 		menu->addAction(text, std::move(callback), icon);
 	};
 	AddRadioAction(menu.get(), controller, track);
+	AddToPlaylistMenu(menu.get(), controller, track);
 	const auto instance = Media::Player::instance();
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Пауза / играть")), [=] {
 		instance->playPause(AudioMsgId::Type::Song);
@@ -8962,7 +9488,7 @@ void ShowMusicBoxWith(
 			}
 			if (albumsShown && !albums->opened) {
 				for (const auto &album : albums->found) {
-					list->add(object_ptr<AlbumRow>(list, album, [=] {
+					list->add(object_ptr<AlbumRow>(list, controller, album, [=] {
 						crl::on_main(box, [=] { (*openAlbum)(album); });
 					}));
 				}
