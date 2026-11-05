@@ -436,6 +436,7 @@ void Dropdown::otherLeave() {
 }
 
 void Dropdown::startShow() {
+	raise();
 	if (isHidden()) {
 		show();
 	} else if (!_hiding) {
