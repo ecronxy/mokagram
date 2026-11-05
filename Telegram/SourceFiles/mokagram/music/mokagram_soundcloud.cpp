@@ -184,6 +184,7 @@ void ApiGet(
 	result.durationMs = object.value("duration").toInt();
 	result.authorization = object.value("track_authorization").toString();
 	result.artistId = QString::number(user.value("id").toVariant().toLongLong());
+	result.artistArtworkUrl = user.value("avatar_url").toString();
 	result.genre = object.value("genre").toString().trimmed().toLower();
 	result.playbackCount = object.value("playback_count").toVariant().toLongLong();
 	result.likesCount = object.value("likes_count").toVariant().toLongLong();
