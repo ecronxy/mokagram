@@ -17,6 +17,7 @@
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSaveFile>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QUuid>
 
 #include <algorithm>
 #include <cmath>
@@ -73,6 +74,8 @@ struct Library {
 	std::vector<Blocked> blocked;  // авторы, которых не предлагать
 	std::vector<Shown> shown;      // что уже попадало в подборку, старые сверху
 	std::vector<RecentItem> recent;
+	std::vector<Playlist> playlists;
+	rpl::event_stream<> playlistsChanged;
 	bool loaded = false;
 	rpl::event_stream<> likesChanged;
 	rpl::event_stream<> recentChanged;
@@ -94,6 +97,7 @@ struct Library {
 	o.insert("link", t.permalink);
 	o.insert("dur", t.durationMs);
 	o.insert("aid", t.artistId);
+	o.insert("artistArt", t.artistArtworkUrl);
 	o.insert("genre", t.genre);
 	o.insert("tags", QJsonArray::fromStringList(t.tags));
 	o.insert("plays", double(t.playbackCount));
@@ -111,6 +115,7 @@ struct Library {
 	t.permalink = o.value("link").toString();
 	t.durationMs = o.value("dur").toInt();
 	t.artistId = o.value("aid").toString();
+	t.artistArtworkUrl = o.value("artistArt").toString();
 	t.genre = o.value("genre").toString();
 	for (const auto &tag : o.value("tags").toArray()) {
 		t.tags.push_back(tag.toString());
@@ -188,6 +193,17 @@ void Save() {
 		recent.push_back(o);
 	}
 	root.insert("recent", recent);
+	auto playlists = QJsonArray();
+	for (const auto &playlist : lib.playlists) {
+		auto tracks = QJsonArray();
+		for (const auto &track : playlist.tracks) tracks.push_back(ToJson(track));
+		auto item = QJsonObject();
+		item.insert("id", playlist.id);
+		item.insert("name", playlist.name);
+		item.insert("tracks", tracks);
+		playlists.push_back(item);
+	}
+	root.insert("playlists", playlists);
 	QDir().mkpath(QFileInfo(FilePath()).absolutePath());
 	// Через временный файл: обрыв посреди записи не стирает историю.
 	auto file = QSaveFile(FilePath());
@@ -204,6 +220,18 @@ Library &Lib() {
 		auto file = QFile(FilePath());
 		if (file.open(QIODevice::ReadOnly)) {
 			const auto root = QJsonDocument::fromJson(file.readAll()).object();
+			for (const auto &v : root.value("playlists").toArray()) {
+				const auto o = v.toObject();
+				auto playlist = Playlist();
+				playlist.id = o.value("id").toString();
+				playlist.name = o.value("name").toString();
+				if (playlist.id.isEmpty() || playlist.name.trimmed().isEmpty()) continue;
+				for (const auto &value : o.value("tracks").toArray()) {
+					auto track = FromJson(value.toObject());
+					if (!track.id.isEmpty() && !IsTelegramId(track.id)) playlist.tracks.push_back(std::move(track));
+				}
+				library.playlists.push_back(std::move(playlist));
+			}
 			for (const auto &v : root.value("recent").toArray()) {
 				const auto o = v.toObject();
 				const auto data = o.value("data").toObject();
@@ -1003,6 +1031,78 @@ std::vector<Track> LikedTracks() {
 rpl::producer<> LikesChanged() {
 	return Lib().likesChanged.events();
 }
+
+std::vector<Playlist> Playlists() {
+	return Lib().playlists;
+}
+
+QString CreatePlaylist(const QString &name) {
+	const auto trimmed = name.trimmed();
+	if (trimmed.isEmpty()) return {};
+	auto &lib = Lib();
+	const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+	lib.playlists.insert(lib.playlists.begin(), Playlist{ id, trimmed, {} });
+	Save();
+	lib.playlistsChanged.fire({});
+	return id;
+}
+
+void RenamePlaylist(const QString &id, const QString &name) {
+	const auto trimmed = name.trimmed();
+	if (trimmed.isEmpty()) return;
+	auto &lib = Lib();
+	for (auto &playlist : lib.playlists) {
+		if (playlist.id == id && playlist.name != trimmed) {
+			playlist.name = trimmed;
+			Save();
+			lib.playlistsChanged.fire({});
+			return;
+		}
+	}
+}
+
+void DeletePlaylist(const QString &id) {
+	auto &lib = Lib();
+	const auto old = lib.playlists.size();
+	std::erase_if(lib.playlists, [&](const Playlist &p) { return p.id == id; });
+	if (old != lib.playlists.size()) { Save(); lib.playlistsChanged.fire({}); }
+}
+
+void AddPlaylistTracks(const QString &id, const std::vector<Track> &tracks) {
+	auto &lib = Lib();
+	for (auto &playlist : lib.playlists) {
+		if (playlist.id != id) continue;
+		auto changed = false;
+		for (const auto &track : tracks) {
+			if (track.id.isEmpty() || IsTelegramId(track.id) || track.unavailable) continue;
+			if (std::any_of(playlist.tracks.begin(), playlist.tracks.end(), [&](const Track &t) { return t.id == track.id; })) continue;
+			auto copy = track;
+			copy.transcodingUrl.clear();
+			copy.authorization.clear();
+			playlist.tracks.push_back(std::move(copy));
+			changed = true;
+		}
+		if (changed) { Save(); lib.playlistsChanged.fire({}); }
+		return;
+	}
+}
+
+void AddPlaylistTrack(const QString &id, const Track &track) {
+	AddPlaylistTracks(id, { track });
+}
+
+void RemovePlaylistTrack(const QString &id, const QString &trackId) {
+	auto &lib = Lib();
+	for (auto &playlist : lib.playlists) {
+		if (playlist.id != id) continue;
+		const auto old = playlist.tracks.size();
+		std::erase_if(playlist.tracks, [&](const Track &t) { return t.id == trackId; });
+		if (old != playlist.tracks.size()) { Save(); lib.playlistsChanged.fire({}); }
+		return;
+	}
+}
+
+rpl::producer<> PlaylistsChanged() { return Lib().playlistsChanged.events(); }
 
 std::vector<RecentItem> RecentItems() {
 	return Lib().recent;
