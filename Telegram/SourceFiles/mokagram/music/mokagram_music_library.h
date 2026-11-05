@@ -19,6 +19,21 @@ void SetLiked(const Track &track, bool liked);
 [[nodiscard]] std::vector<Track> LikedTracks();
 [[nodiscard]] rpl::producer<> LikesChanged();
 
+struct Playlist {
+	QString id;
+	QString name;
+	std::vector<Track> tracks;
+};
+
+[[nodiscard]] std::vector<Playlist> Playlists();
+[[nodiscard]] QString CreatePlaylist(const QString &name);
+void RenamePlaylist(const QString &id, const QString &name);
+void DeletePlaylist(const QString &id);
+void AddPlaylistTrack(const QString &id, const Track &track);
+void AddPlaylistTracks(const QString &id, const std::vector<Track> &tracks);
+void RemovePlaylistTrack(const QString &id, const QString &trackId);
+[[nodiscard]] rpl::producer<> PlaylistsChanged();
+
 struct RecentItem {
 	Track track;
 	Album album;
