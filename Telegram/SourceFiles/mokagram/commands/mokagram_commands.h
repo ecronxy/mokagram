@@ -11,6 +11,7 @@
 #include <QtCore/QStringList>
 #include <QtCore/QRect>
 #include <QtGui/QColor>
+#include <optional>
 #include <vector>
 
 class QPainter;
@@ -33,6 +34,10 @@ void RegisterSettings();
 	const TextWithTags &text,
 	FullReplyTo replyTo,
 	TextWithTags *replacement = nullptr);
+
+// Для «.calc 12+3» в поле: выражение и результат, пока набираешь. Пусто, если не .calc или не считается.
+[[nodiscard]] std::optional<std::pair<QString, QString>> CalcPreview(
+	const QString &text);
 
 // Алиасы: пары (имя, команда) без точки.
 [[nodiscard]] std::vector<std::pair<QString, QString>> Aliases();

@@ -1,6 +1,7 @@
 #include "mokagram/inline/mokagram_inline_ui.h"
 
 #include "mokagram/inline/mokagram_inline.h"
+#include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/widgets/fields/input_field.h"
@@ -210,6 +211,16 @@ private:
 			.timeZones = Settings::Bool(u"inline.timezones"_q),
 			.degrees = Settings::Bool(u"inline.degrees"_q),
 		};
+		if (const auto calc = Commands::CalcPreview(text)) {
+			_query = text;
+			_value = calc->second;
+			_accept = calc->first + u" = "_q + calc->second;
+			setAccessibleName(_value);
+			setToolTip(QString::fromUtf8(Lang::Tr("Нажмите или Tab, чтобы вставить результат")));
+			updatePosition();
+			return;
+		}
+		_accept.clear();
 		const auto result = Evaluate(text, options, CurrencyRates().values());
 		if (!result || result->needsRates) {
 			hide();
@@ -255,7 +266,7 @@ private:
 
 	void accept() {
 		if (_value.isEmpty() || _query != _field->getTextWithTags().text) return;
-		const auto value = _value;
+		const auto value = _accept.isEmpty() ? _value : _accept;
 		_field->setTextWithTags({value, {}}, Ui::InputField::HistoryAction::NewEntry);
 		_field->setCursorPosition(value.size());
 		_field->setFocus();
@@ -267,6 +278,7 @@ private:
 	QTimer _clock;
 	QString _query;
 	QString _value;
+	QString _accept;
 	QString _display;
 	bool _composing = false;
 

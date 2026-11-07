@@ -667,6 +667,26 @@ void WaitForVideoAndConvert(
 	});
 }
 
+std::optional<std::pair<QString, QString>> CalcPreview(const QString &text) {
+	if (!S::Bool(u"commands.enabled"_q)) {
+		return std::nullopt;
+	}
+	static const auto re = QRegularExpression(
+		u"^\\.([\\p{L}\\d_]+)\\s+(.+)$"_q,
+		QRegularExpression::DotMatchesEverythingOption);
+	const auto match = re.match(text.trimmed());
+	if (!match.hasMatch()
+		|| ResolveAlias(match.captured(1).toLower()) != u"calc"_q) {
+		return std::nullopt;
+	}
+	const auto arg = match.captured(2).trimmed();
+	auto value = 0.;
+	if (!Calc(arg).run(value)) {
+		return std::nullopt;
+	}
+	return std::make_pair(arg, FormatNumber(value));
+}
+
 bool Handle(
 		not_null<Window::SessionController*> controller,
 		not_null< ::History*> history,
