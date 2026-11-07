@@ -4,6 +4,7 @@
 // mokagram-id: 26415de3
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/perf/mokagram_perf.h"
 
 #include "mokagram/settings/mokagram_settings.h"
 
@@ -502,6 +503,17 @@ void RegisterSettings() {
 	}, data.lifetime);
 	static auto timer = base::Timer([] { ApplySchedule(); });
 	timer.callEach(30 * crl::time(1000));
+	// В экономном режиме (окно в фоне, «Экономия в фоне») проверяем раз в 5 минут,
+	// при возврате фокуса сверяемся сразу.
+	Perf::EconomyValue(
+	) | rpl::skip(1) | rpl::on_next([](bool economy) {
+		if (economy) {
+			timer.callEach(5 * 60 * crl::time(1000));
+		} else {
+			timer.callEach(30 * crl::time(1000));
+			ApplySchedule();
+		}
+	}, data.lifetime);
 	UpdateScheduleLabel();
 	ApplySchedule();
 }
