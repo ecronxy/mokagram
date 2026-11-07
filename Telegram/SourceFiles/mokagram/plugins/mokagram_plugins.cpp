@@ -985,7 +985,9 @@ bool SpawnHost(const LogFn &log) {
 	posix_spawn_file_actions_init(&actions);
 	posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
 	posix_spawn_file_actions_adddup2(&actions, child, 3);
+#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 34)
 	posix_spawn_file_actions_addclosefrom_np(&actions, 4);
+#endif // старый glibc сборочного образа: остальные дескрипторы и так с CLOEXEC
 	auto argv = std::vector<char*>();
 	for (const auto &item : command) {
 		argv.push_back(const_cast<char*>(item.c_str()));
