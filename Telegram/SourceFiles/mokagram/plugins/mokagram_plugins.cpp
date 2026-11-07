@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #include <climits>
+#include <filesystem>
 #include <cstring>
 #include <optional>
 extern char **environ;
@@ -80,7 +81,7 @@ constexpr const char *kKindNames[kHookKinds] = {
 	"0", "1", "2", "3"
 };
 
-bool _started = false;
+std::atomic<bool> _started = false;
 bool _helpersLoaded = false;
 LogFn _logFn;
 BridgeFn _bridge;
@@ -1357,7 +1358,28 @@ std::string PluginsDir() {
 	return std::string(home ? home : ".") + "/.local/share/mokagram/plugins";
 }
 
+// Каталог плагинов без единой записи: движок не нужен, Python не поднимаем.
+[[nodiscard]] bool HasInstalledPlugins() {
+	auto error = std::error_code();
+	for (const auto &entry : std::filesystem::directory_iterator(PluginsDir(), error)) {
+		if (!entry.path().filename().string().starts_with('.')) {
+			return true;
+		}
+	}
+	return false;
+}
+
+int StartEngine(LogFn log);
+
 int Start(LogFn log) {
+	if (!HasInstalledPlugins()) {
+		if (log) log("plugins: каталог пуст, движок поднимется при установке плагина");
+		return 0;
+	}
+	return StartEngine(std::move(log));
+}
+
+int StartEngine(LogFn log) {
 	if (const auto env = std::getenv("MOKAGRAM_PLUGINS")) {
 		if (std::string(env) == "0") {
 			if (log) log(Mokagram::Lang::Tr("plugins: отключены переменной MOKAGRAM_PLUGINS=0"));
@@ -1447,7 +1469,7 @@ std::string RequestInfoJson(const std::string &encoded) {
 }
 
 std::string LoadFile(const std::string &fileName, LogFn log) {
-	if (!_started && Start(log) < 0) {
+	if (!_started && StartEngine(log) < 0) {
 		return {};
 	}
 	const auto gil = Gil();
@@ -1796,7 +1818,7 @@ bool IsFromPlugin() {
 }
 
 std::string RecordInstall(const std::string &fileName, LogFn log) {
-	if (!_started && Start(log) < 0) {
+	if (!_started && StartEngine(log) < 0) {
 		return {};
 	}
 	const auto gil = Gil();

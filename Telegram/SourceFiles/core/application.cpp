@@ -37,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/options.h"
 #include "base/qt_signal_producer.h"
 #include "base/timer.h"
+#include "base/call_delayed.h"
 #include "base/unixtime.h"
 #include "core/core_screenshot_protection.h"
 #include "core/core_settings.h"
@@ -370,10 +371,15 @@ void Application::run() {
 	Mokagram::Update::Start();
 	Mokagram::Settings::StartDebugCommands();
 	perfStage("moka modules");
-	Mokagram::Plugins::Start([](const std::string &line) {
-		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+	// Python не стоит на пути к первому кадру: поднимаем после показа окна.
+	base::call_delayed(300, this, [] {
+		const auto started = crl::now();
+		Mokagram::Plugins::Start([](const std::string &line) {
+			LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
+		});
+		LOG(("[mokagram-perf] plugins (deferred): %1 ms").arg(
+			crl::now() - started));
 	});
-	perfStage("plugins");
 
 	style::SetCustomFont(settings().customFontFamily());
 	style::internal::StartFonts();
