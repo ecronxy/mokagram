@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "core/credits_amount.h"
 #include "lang/lang_keys.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "ui/text/text.h"
 #include "base/qt/qt_common_adapters.h"
 #include "base/qt/qt_string_view.h"
@@ -917,7 +918,9 @@ int NonZeroPartToInt(QString value) {
 		: (value.isEmpty() ? 0 : value.toInt());
 }
 
-ShortenedCount FormatCountToShort(int64 number, bool onlyK) {
+namespace {
+
+ShortenedCount FormatCountToShortRounded(int64 number, bool onlyK) {
 	auto result = ShortenedCount{ number };
 	const auto abs = std::abs(number);
 	const auto shorten = [&](int64 divider, char multiplier) {
@@ -944,6 +947,15 @@ ShortenedCount FormatCountToShort(int64 number, bool onlyK) {
 		result.string = QString::number(number);
 	}
 	return result;
+}
+
+} // namespace
+
+ShortenedCount FormatCountToShort(int64 number, bool onlyK) {
+	if (Mokagram::Settings::Bool(u"look.fullNumbers"_q)) {
+		return { .number = number, .string = FormatCountDecimal(number) };
+	}
+	return FormatCountToShortRounded(number, onlyK);
 }
 
 QString FormatCountDecimal(int64 number) {
@@ -990,7 +1002,7 @@ PluralResult Plural(
 	// To correctly select a shift for PluralType::Short
 	// we must first round the number.
 	const auto shortened = (type == lt_count_short)
-		? FormatCountToShort(int(base::SafeRound(value)))
+		? FormatCountToShortRounded(int(base::SafeRound(value)), false)
 		: ShortenedCount();
 
 	// Simplified.
@@ -1014,7 +1026,9 @@ PluralResult Plural(
 	if (integer) {
 		const auto round = int(base::SafeRound(value));
 		if (type == lt_count_short) {
-			return { shift, shortened.string };
+			return { shift, Mokagram::Settings::Bool(u"look.fullNumbers"_q)
+				? FormatCountDecimal(round)
+				: shortened.string };
 		} else if (type == lt_count_decimal) {
 			return { shift, FormatCountDecimal(round) };
 		}

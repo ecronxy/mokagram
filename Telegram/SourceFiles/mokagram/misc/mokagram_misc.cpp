@@ -505,6 +505,18 @@ void RegisterSettings() {
 		.sectionIcon = u"chats"_q,
 		.icon = u"calendar"_q,
 	});
+	Settings::Register({
+		.key = u"look.fullNumbers"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Числа")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Полные числа вместо сокращённых")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Просмотры, реакции и счётчики показываются как 12 457, а не 12.4K.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.requiresRestart = true,
+		.category = u"look"_q,
+		.sectionIcon = u"palette"_q,
+		.icon = u"id"_q,
+	});
 	Guard::RegisterSettings();
 	Settings::Register({
 		.key = u"documents.pdf"_q,
