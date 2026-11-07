@@ -39,6 +39,13 @@ void RegisterSettings();
 [[nodiscard]] std::optional<std::pair<QString, QString>> CalcPreview(
 	const QString &text);
 
+// Для «.cr 2 ton usdt» в поле: готовая строка сводки. needsRates: курсы ещё грузятся.
+struct CrResult {
+	QString text;
+	bool needsRates = false;
+};
+[[nodiscard]] std::optional<CrResult> CrPreview(const QString &text);
+
 // Алиасы: пары (имя, команда) без точки.
 [[nodiscard]] std::vector<std::pair<QString, QString>> Aliases();
 void SetAliases(const std::vector<std::pair<QString, QString>> &list);

@@ -4,6 +4,8 @@
 // mokagram-id: 57e0ff9e
 #include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/inline/mokagram_inline.h"
+#include "mokagram/inline/mokagram_inline_ui.h"
 
 #include "api/api_blocked_peers.h"
 #include "api/api_text_entities.h"
@@ -131,7 +133,7 @@ namespace S = Mokagram::Settings;
 	static const auto result = QStringList{
 		u"mute"_q, u"unmute"_q, u"ban"_q, u"unban"_q, u"kick"_q,
 		u"del"_q, u"pin"_q, u"unpin"_q, u"id"_q, u"save"_q,
-		u"tr"_q, u"calc"_q, u"archive"_q, u"unarchive"_q, u"dl"_q,
+		u"tr"_q, u"calc"_q, u"cr"_q, u"archive"_q, u"unarchive"_q, u"dl"_q,
 		u"tag"_q, u"note"_q, u"snip"_q, u"gif"_q, u"gr"_q, u"kq"_q,
 	};
 	return result;
@@ -667,6 +669,27 @@ void WaitForVideoAndConvert(
 	});
 }
 
+std::optional<CrResult> CrPreview(const QString &text) {
+	if (!S::Bool(u"commands.enabled"_q)) {
+		return std::nullopt;
+	}
+	static const auto re = QRegularExpression(
+		u"^\\.([\\p{L}\\d_]+)\\s+(.+)$"_q,
+		QRegularExpression::DotMatchesEverythingOption);
+	const auto match = re.match(text.trimmed());
+	if (!match.hasMatch()
+		|| ResolveAlias(match.captured(1).toLower()) != u"cr"_q) {
+		return std::nullopt;
+	}
+	const auto result = Inline::ConvertCurrencyCommand(
+		match.captured(2),
+		Inline::CurrencyRatesNow());
+	if (!result) {
+		return std::nullopt;
+	}
+	return CrResult{ result->text, result->needsRates };
+}
+
 std::optional<std::pair<QString, QString>> CalcPreview(const QString &text) {
 	if (!S::Bool(u"commands.enabled"_q)) {
 		return std::nullopt;
@@ -716,6 +739,7 @@ bool Handle(
 	const auto all = (arg.toLower() == u"all"_q);
 	const auto freeText = (command == u"tr"_q)
 		|| (command == u"calc"_q)
+		|| (command == u"cr"_q)
 		|| (command == u"tag"_q)
 		|| (command == u"note"_q)
 		|| (command == u"snip"_q)
@@ -766,6 +790,23 @@ bool Handle(
 		}
 		if (replacement) {
 			*replacement = TextWithTags{ arg + u" = "_q + FormatNumber(value) };
+		}
+		return true;
+	}
+	if (command == u"cr"_q) {
+		const auto result = Inline::ConvertCurrencyCommand(
+			arg,
+			Inline::CurrencyRatesNow());
+		if (result && result->needsRates) {
+			Inline::RefreshCurrencyRates();
+			toast(U(Mokagram::Lang::Tr("Курсы ещё загружаются, попробуйте через пару секунд")));
+		} else if (!result) {
+			toast(U(Mokagram::Lang::Tr("Не получилось посчитать")));
+		}
+		if (replacement) {
+			*replacement = (result && !result->needsRates)
+				? TextWithTags{ result->text }
+				: text;
 		}
 		return true;
 	}

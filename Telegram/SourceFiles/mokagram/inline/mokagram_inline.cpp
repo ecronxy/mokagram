@@ -339,4 +339,150 @@ std::optional<Result> Evaluate(
 	return value ? std::optional(Result{Kind::Math, Number(*value)}) : std::nullopt;
 }
 
+namespace {
+
+constexpr auto kStarUsd = 0.013;
+
+[[nodiscard]] QString SwapLayout(const QString &word, bool toRussian) {
+	static const auto latin = u"qwertyuiop[]asdfghjkl;'zxcvbnm,./`"_s;
+	static const auto cyrillic = u"йцукенгшщзхъфывапролджэячсмитьбю.ё"_s;
+	auto result = word;
+	for (auto &ch : result) {
+		const auto i = (toRussian ? latin : cyrillic).indexOf(ch);
+		if (i >= 0) ch = (toRussian ? cyrillic : latin)[i];
+	}
+	return result;
+}
+
+[[nodiscard]] QString CurrencyCode(const QString &raw, const QHash<QString, double> &rates) {
+	static const auto aliases = QHash<QString, QString>{
+		{ u"ton"_s, u"ton"_s }, { u"тон"_s, u"ton"_s }, { u"тонкоин"_s, u"ton"_s },
+		{ u"toncoin"_s, u"ton"_s }, { u"тона"_s, u"ton"_s }, { u"тонов"_s, u"ton"_s },
+		{ u"usdt"_s, u"usdt"_s }, { u"юсдт"_s, u"usdt"_s }, { u"тезер"_s, u"usdt"_s },
+		{ u"tether"_s, u"usdt"_s }, { u"тетер"_s, u"usdt"_s },
+		{ u"usd"_s, u"usd"_s }, { u"$"_s, u"usd"_s }, { u"доллар"_s, u"usd"_s },
+		{ u"доллара"_s, u"usd"_s }, { u"долларов"_s, u"usd"_s }, { u"бакс"_s, u"usd"_s },
+		{ u"баксов"_s, u"usd"_s }, { u"баксы"_s, u"usd"_s }, { u"дол"_s, u"usd"_s },
+		{ u"rub"_s, u"rub"_s }, { u"₽"_s, u"rub"_s }, { u"руб"_s, u"rub"_s },
+		{ u"рубль"_s, u"rub"_s }, { u"рубля"_s, u"rub"_s }, { u"рублей"_s, u"rub"_s },
+		{ u"р"_s, u"rub"_s }, { u"деревянных"_s, u"rub"_s },
+		{ u"eur"_s, u"eur"_s }, { u"€"_s, u"eur"_s }, { u"евро"_s, u"eur"_s },
+		{ u"btc"_s, u"btc"_s }, { u"биткоин"_s, u"btc"_s }, { u"биток"_s, u"btc"_s },
+		{ u"eth"_s, u"eth"_s }, { u"эфир"_s, u"eth"_s }, { u"эфириум"_s, u"eth"_s },
+		{ u"stars"_s, u"xtr"_s }, { u"star"_s, u"xtr"_s }, { u"xtr"_s, u"xtr"_s },
+		{ u"звезд"_s, u"xtr"_s }, { u"звёзд"_s, u"xtr"_s }, { u"звезды"_s, u"xtr"_s },
+		{ u"звёзды"_s, u"xtr"_s }, { u"звезда"_s, u"xtr"_s }, { u"звёзда"_s, u"xtr"_s },
+		{ u"⭐"_s, u"xtr"_s }, { u"⭐️"_s, u"xtr"_s }, { u"★"_s, u"xtr"_s },
+	};
+	static const auto latin = QRegularExpression(u"^[a-z]{2,10}$"_s);
+	for (const auto &candidate : {
+		raw.toLower(),
+		SwapLayout(raw.toLower(), true),
+		SwapLayout(raw.toLower(), false),
+	}) {
+		const auto i = aliases.constFind(candidate);
+		if (i != aliases.cend()) return *i;
+		if (latin.match(candidate).hasMatch() && rates.contains(candidate)) return candidate;
+	}
+	return QString();
+}
+
+[[nodiscard]] QString CurrencyLabel(const QString &code) {
+	return (code == u"rub"_s) ? u"₽"_s
+		: (code == u"xtr"_s) ? u"⭐"_s
+		: code.toUpper();
+}
+
+[[nodiscard]] QString MoneyNumber(double value) {
+	const auto abs = std::abs(value);
+	const auto digits = (abs >= 100.) ? 2 : (abs >= 1.) ? 3 : (abs >= 0.01) ? 5 : 8;
+	auto text = QString::number(value, 'f', digits);
+	if (text.contains(u'.')) {
+		while (text.endsWith(u'0')) text.chop(1);
+		if (text.endsWith(u'.')) text.chop(1);
+	}
+	const auto dot = text.indexOf(u'.');
+	auto integer = (dot < 0) ? text : text.left(dot);
+	const auto rest = (dot < 0) ? QString() : text.mid(dot);
+	const auto negative = integer.startsWith(u'-');
+	if (negative) integer.remove(0, 1);
+	for (auto i = integer.size() - 3; i > 0; i -= 3) integer.insert(i, QChar(0x202F));
+	return (negative ? u"-"_s : QString()) + integer + rest;
+}
+
+} // namespace
+
+std::optional<Conversion> ConvertCurrencyCommand(
+		const QString &args,
+		const QHash<QString, double> &usdRates) {
+	static const auto decimalComma = QRegularExpression(u"(?<=\\d),(?=\\d)"_s);
+	static const auto separators = QRegularExpression(u"[,;]+|->|→|=|\\s+"_s);
+	static const auto linkWords = QStringList{ u"в"_s, u"to"_s, u"in"_s, u"на"_s, u"и"_s, u"and"_s };
+	static const auto glued = QRegularExpression(
+		u"^(\\d+(?:\\.\\d+)?(?:kk|кк|k|к|m|м)?)([^\\d.].*)$"_s);
+	static const auto amountRe = QRegularExpression(
+		u"^(\\d+(?:\\.\\d+)?)(kk|кк|k|к|m|м)?$"_s,
+		QRegularExpression::CaseInsensitiveOption);
+	if (args.size() > 80 || args.contains(u'\n')) return std::nullopt;
+	auto text = args.trimmed();
+	text.replace(decimalComma, u"."_s);
+	auto tokens = QStringList();
+	for (const auto &part : text.split(separators, Qt::SkipEmptyParts)) {
+		if (linkWords.contains(part.toLower())) continue;
+		const auto match = glued.match(part);
+		if (!amountRe.match(part).hasMatch() && match.hasMatch()) {
+			tokens << match.captured(1) << match.captured(2);
+		} else {
+			tokens << part;
+		}
+	}
+	if (tokens.isEmpty()) return std::nullopt;
+	auto amount = 1.;
+	if (const auto match = amountRe.match(tokens.first()); match.hasMatch()) {
+		amount = match.captured(1).toDouble();
+		const auto suffix = match.captured(2).toLower();
+		if (suffix == u"k"_s || suffix == u"к"_s) amount *= 1e3;
+		else if (suffix == u"kk"_s || suffix == u"кк"_s || suffix == u"m"_s || suffix == u"м"_s) amount *= 1e6;
+		tokens.removeFirst();
+	}
+	if (tokens.isEmpty() || !std::isfinite(amount)) return std::nullopt;
+	auto rates = usdRates;
+	if (!rates.isEmpty() && !rates.contains(u"xtr"_s)) rates.insert(u"xtr"_s, 1. / kStarUsd);
+	auto codes = QStringList();
+	for (const auto &token : tokens) {
+		const auto code = CurrencyCode(token, rates);
+		if (code.isEmpty()) {
+			static const auto looksLikeCode = QRegularExpression(u"^[a-zA-Z]{2,10}$"_s);
+			if (rates.isEmpty() && looksLikeCode.match(token).hasMatch()) {
+				return Conversion{ {}, true };
+			}
+			continue;
+		}
+		codes << code;
+	}
+	if (codes.isEmpty()) return std::nullopt;
+	if (rates.isEmpty()) return Conversion{ {}, true };
+	const auto source = codes.takeFirst();
+	codes.removeAll(source);
+	codes.removeDuplicates();
+	if (codes.isEmpty()) {
+		for (const auto &code : { u"rub"_s, u"usdt"_s, u"xtr"_s }) {
+			if (code != source) codes << code;
+		}
+	}
+	const auto from = rates.value(source);
+	if (from <= 0.) return std::nullopt;
+	auto parts = QStringList();
+	for (const auto &code : codes) {
+		const auto to = rates.value(code);
+		if (to <= 0.) return std::nullopt;
+		const auto value = amount / from * to;
+		if (!std::isfinite(value)) return std::nullopt;
+		parts << MoneyNumber(value) + u' ' + CurrencyLabel(code);
+	}
+	return Conversion{
+		MoneyNumber(amount) + u' ' + CurrencyLabel(source) + u" ≈ "_s + parts.join(u" · "_s),
+	};
+}
+
 } // namespace Mokagram::Inline

@@ -220,6 +220,20 @@ private:
 			updatePosition();
 			return;
 		}
+		if (const auto cr = Commands::CrPreview(text)) {
+			if (cr->needsRates) {
+				hide();
+				CurrencyRates().refresh();
+				return;
+			}
+			_query = text;
+			_value = cr->text.section(u" ≈ "_q, 1);
+			_accept = cr->text;
+			setAccessibleName(_value);
+			setToolTip(QString::fromUtf8(Lang::Tr("Нажмите или Tab, чтобы вставить результат")));
+			updatePosition();
+			return;
+		}
 		_accept.clear();
 		const auto result = Evaluate(text, options, CurrencyRates().values());
 		if (!result || result->needsRates) {
@@ -285,6 +299,14 @@ private:
 };
 
 } // namespace
+
+const QHash<QString, double> &CurrencyRatesNow() {
+	return CurrencyRates().values();
+}
+
+void RefreshCurrencyRates() {
+	CurrencyRates().refresh();
+}
 
 void SetupInlineResults(not_null<Ui::InputField*> field) {
 	if (field->property("mokagramInlineResults").toBool()) return;

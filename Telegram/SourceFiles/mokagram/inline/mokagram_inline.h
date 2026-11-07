@@ -30,4 +30,14 @@ struct Result {
 	const QHash<QString, double> &usdRates = {},
 	const QDateTime &now = QDateTime::currentDateTimeUtc());
 
+// Команда «.cr 2 ton usdt»: сводка или перевод в указанные валюты. Пустой
+// text при needsRates: курсы ещё не загружены.
+struct Conversion {
+	QString text;
+	bool needsRates = false;
+};
+[[nodiscard]] std::optional<Conversion> ConvertCurrencyCommand(
+	const QString &args,
+	const QHash<QString, double> &usdRates);
+
 } // namespace Mokagram::Inline
