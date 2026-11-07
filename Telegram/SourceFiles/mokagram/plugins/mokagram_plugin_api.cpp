@@ -138,50 +138,93 @@ rpl::lifetime BridgeLifetime;
 // Путь, куда плагину можно писать и откуда читать: его папка данных, временная
 // или стандартные пользовательские папки для медиа. Python-слой обходится
 // (import __main__), поэтому мост проверяет сам: ~/.ssh, tdata, ~/.config — нельзя.
+[[nodiscard]] QString PluginDataRoot() {
+	return QDir::cleanPath(
+		QString::fromStdString(PluginsDir()) + u"/../plugin_data"_q);
+}
+
 [[nodiscard]] QString PluginDataDir(const QString &pid) {
 	static const auto bad = QRegularExpression("[^A-Za-z0-9_.-]");
 	const auto safe = QString(pid).replace(bad, "_");
-	return QDir::cleanPath(
-		QString::fromStdString(PluginsDir())
-		+ u"/../plugin_data/"_q
-		+ (safe.isEmpty() ? u"."_q : safe));
+	// Корень канонизируем (симлинки в пути профиля), папка плагина может ещё не существовать.
+	const auto root = QDir(PluginDataRoot()).canonicalPath();
+	return root.isEmpty() ? QString() : root + '/' + safe;
 }
 
 [[nodiscard]] bool InsideDir(const QString &base, const QString &candidate) {
-	return candidate == base || candidate.startsWith(base + u'/');
+	return !base.isEmpty()
+		&& (candidate == base || candidate.startsWith(base + u'/'));
 }
 
+[[nodiscard]] QString CanonicalOrParent(const QString &absolute) {
+	const auto info = QFileInfo(absolute);
+	if (info.exists()) {
+		return info.canonicalFilePath();
+	}
+	// Свежие файлы и подпапки ещё не на диске: канонизируем ближайший существующий каталог.
+	auto dir = info.dir();
+	auto canonical = dir.canonicalPath();
+	while (canonical.isEmpty() && dir.cdUp()) {
+		canonical = dir.canonicalPath();
+	}
+	return canonical.isEmpty()
+		? QString()
+		: QDir::cleanPath(canonical + '/' + info.fileName());
+}
+
+[[nodiscard]] bool InsideAnyStandardDir(
+		const QString &canonical,
+		std::initializer_list<QStandardPaths::StandardLocation> locations) {
+	for (const auto location : locations) {
+		const auto base = QStandardPaths::writableLocation(location);
+		if (!base.isEmpty()
+			&& InsideDir(QDir(base).canonicalPath(), canonical)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] bool PluginHasGrant(const QString &pid, const QString &grant) {
+	if (pid.isEmpty()) {
+		return false;
+	}
+	for (const auto &value : QJsonDocument::fromJson(QByteArray::fromStdString(
+			EffectiveGrantsJson(pid.toStdString()))).array()) {
+		if (value.toString() == grant) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Мост проверяет путь сам, потому что SDK-проверки в Python обходятся через
+// import __main__. Свободно: папка данных плагина и временные файлы (как в
+// sdk_api._path_ok). Остальное (Загрузки, Картинки, Музыка, Документы) только
+// при выданном праве files. Конечный симлинк не допускается никогда.
 [[nodiscard]] bool PluginPathAllowed(const QString &pid, const QString &path) {
-	if (path.isEmpty()) {
+	if (path.isEmpty() || pid.isEmpty()) {
 		return false;
 	}
 	const auto absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
 	if (QFileInfo(absolute).isSymLink()) {
 		return false;
 	}
-	// Канонизируем ближайший существующий каталог: свежие подпапки ещё не на диске.
-	auto dir = QFileInfo(absolute).dir();
-	auto canonical = dir.canonicalPath();
-	while (canonical.isEmpty() && dir.cdUp()) {
-		canonical = dir.canonicalPath();
-	}
+	const auto canonical = CanonicalOrParent(absolute);
 	if (canonical.isEmpty()) {
 		return false;
 	}
-	const auto candidates = {
-		PluginDataDir(pid),
-		QStandardPaths::writableLocation(QStandardPaths::TempLocation),
-		QStandardPaths::writableLocation(QStandardPaths::DownloadLocation),
-		QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
-		QStandardPaths::writableLocation(QStandardPaths::MusicLocation),
-		QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
-	};
-	for (const auto &base : candidates) {
-		if (!base.isEmpty() && InsideDir(QDir::cleanPath(base), canonical)) {
-			return true;
-		}
+	if (InsideDir(PluginDataDir(pid), canonical)
+		|| InsideAnyStandardDir(canonical, { QStandardPaths::TempLocation })) {
+		return true;
 	}
-	return false;
+	return PluginHasGrant(pid, u"files"_q)
+		&& InsideAnyStandardDir(canonical, {
+			QStandardPaths::DownloadLocation,
+			QStandardPaths::PicturesLocation,
+			QStandardPaths::MusicLocation,
+			QStandardPaths::DocumentsLocation,
+		});
 }
 
 [[nodiscard]] Main::Session *ActiveSession() {
@@ -1184,7 +1227,7 @@ std::string SendFile(const QJsonObject &args) {
 		return Reply(false, U("файл не найден или слишком большой"));
 	}
 	// Мост сам валидирует путь: SDK-проверки в Python обходятся через import __main__.
-	if (!PluginPathAllowed(QString(), path)) {
+	if (!PluginPathAllowed(args.value("pid").toString(), path)) {
 		return Reply(false, U("файл вне разрешённых папок"));
 	}
 	return OnMain([=]() -> std::string {
@@ -1467,7 +1510,7 @@ std::string SendAlbum(const QJsonObject &args) {
 			return Reply(false, U("файл не найден или слишком большой"));
 		}
 		// Как в SendFile: валидация на стороне моста, Python-слой обходится.
-		if (!PluginPathAllowed(QString(), info.absoluteFilePath())) {
+		if (!PluginPathAllowed(args.value("pid").toString(), info.absoluteFilePath())) {
 			return Reply(false, U("файл вне разрешённых папок"));
 		}
 		paths.push_back(info.absoluteFilePath());
@@ -1776,6 +1819,9 @@ std::string InvokeRaw(const QJsonObject &args) {
 		RequestInfoJson(bytes.toHex().toStdString()))).object();
 	if (!report.value("ok").toBool()) {
 		return Reply(false, U("не удалось проверить запрос плагина"));
+	}
+	if (!report.value("allowed").toBool()) {
+		return Reply(false, U("этот метод закрыт для плагинов"));
 	}
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();

@@ -97,7 +97,7 @@ constexpr auto kMaxCombinedPattern = 8192;
 
 // Эвристика против катастрофического бэктрекинга (ReDoS): квантификатор
 // сразу после группы, в теле которой уже есть квантификатор — классический
-// опасный случай вида «(a+)+». Проверка намеренно консервативная и может
+// опасный случай вида «(a+)+» или «(a|aa)+». Проверка намеренно консервативная и может
 // отклонить часть безопасных шаблонов; пропусков у неё почти нет.
 [[nodiscard]] bool DangerousNestedQuantifiers(const QString &pattern) {
 	auto opens = std::vector<int>();
@@ -149,9 +149,11 @@ constexpr auto kMaxCombinedPattern = 8192;
 			}
 			break;
 		}
+		case '|':
 		case '*':
 		case '+':
 		case '{':
+			// Альтернация под повторением ведёт себя как вложенный квантификатор: (a|aa)+.
 			if (!quantified.empty()) {
 				quantified.back() = true;
 			}
@@ -313,11 +315,17 @@ void Save() {
 	}
 }
 
+// Движок regex не умеет прерываться, поэтому длину проверяемого текста ограничиваем:
+// на длинных сообщениях даже полиномиальный шаблон не повесит главный поток.
+constexpr auto kMaxSubject = 4096;
+
 [[nodiscard]] bool Matches(
 		const Compiled &item,
-		QStringView text,
-		QStringView sender,
+		QStringView fullText,
+		QStringView fullSender,
 		uint64 peer) {
+	const auto text = fullText.left(kMaxSubject);
+	const auto sender = fullSender.left(kMaxSubject);
 	if (!item.peers.empty() && !item.peers.contains(peer)) {
 		return false;
 	} else if (item.exclusions.contains(peer)) {

@@ -183,7 +183,10 @@ def _moka_request_info(encoded):
                      or bool(request.get('allow_paid_stars'))
                      or bool(request.get('allow_paid_floodskip'))
                      or bool(request.get('suggested_post')))
-        return json.dumps({'ok': True, 'method': method, 'sensitive': sensitive,
+        # Жёсткий запрет методов, закрытых для плагинов в SDK: мост проверяет сам,
+        # потому что прямой вызов _moka_native обходит Python-проверки SDK.
+        allowed = sys.modules['mokagram_sdk.api']._tl_perm(method) is not None
+        return json.dumps({'ok': True, 'method': method, 'sensitive': sensitive, 'allowed': allowed,
                            'amounts': list(dict.fromkeys(amounts)),
                            'targets': list(dict.fromkeys(targets)),
                            'sha256': hashlib.sha256(raw).hexdigest()}, ensure_ascii=False)

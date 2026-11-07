@@ -332,7 +332,7 @@ def send_file(peer, path, caption='', as_photo=False, silent=False):
         _h['audit'](entry, 'send_file', target, 'rate_limit')
         return None
     peers[target] = now
-    res = _native('send_file', {'peer': target, 'path': path, 'caption': str(caption),
+    res = _native('send_file', {'pid': entry['id'], 'peer': target, 'path': path, 'caption': str(caption),
                                 'kind': 'photo' if as_photo else 'file', 'silent': bool(silent)})
     _h['audit'](entry, 'send_file', target, 'allowed' if res.get('ok') else 'failed', os.path.getsize(path))
     if not res.get('ok'):
@@ -799,7 +799,7 @@ def send_album(peer, paths, caption='', as_photo=True, silent=False):
     if not _limit(entry, 'send_file', 5, 60):
         _h['audit'](entry, 'send_album', target, 'rate_limit')
         return None
-    res = _native('send_album', {'peer': target, 'paths': paths, 'caption': str(caption),
+    res = _native('send_album', {'pid': entry['id'], 'peer': target, 'paths': paths, 'caption': str(caption),
                                  'kind': 'photo' if as_photo else 'file', 'silent': bool(silent)})
     _h['audit'](entry, 'send_album', target, 'allowed' if res.get('ok') else 'failed', len(paths))
     if not res.get('ok'):

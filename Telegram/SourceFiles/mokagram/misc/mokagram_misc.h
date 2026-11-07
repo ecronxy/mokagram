@@ -57,6 +57,10 @@ void ShowStickerSetOwner(
 // Повторный вызов безопасен (замена идемпотентна).
 [[nodiscard]] QByteArray BrandRewrite(const QByteArray &value);
 
+// Путь отладочного файла в личном каталоге пользователя (XDG_RUNTIME_DIR, 0700).
+// Пустая строка, если такого каталога нет: общий /tmp для этого не годится.
+[[nodiscard]] QString DebugFilePath(const QString &name);
+
 } // namespace Mokagram::Misc
 
 namespace Mokagram::Bot {

@@ -1179,6 +1179,22 @@ _fw_export()
 
 import zipfile
 
+# Что из настроек переносится бэкапом. Белый список: приватность (ghost.), защита (guard.),
+# источники плагинов и всё неизвестное восстановлением не меняются.
+_FW_PORTABLE_SETTINGS = ('bubbles.', 'look.', 'quote.', 'lyrics.', 'music.', 'fx.', 'lag.', 'saveinator.', 'feed.',
+                         'plugin.')
+
+
+def _fw_portable_settings(raw):
+    """moka_settings.json только с переносимыми ключами; битый файл даёт пустой набор."""
+    try:
+        values = json.loads(raw).get('values', {})
+    except (ValueError, AttributeError):
+        values = {}
+    values = {k: v for k, v in values.items() if isinstance(k, str) and k.startswith(_FW_PORTABLE_SETTINGS)}
+    return json.dumps({'values': values}, ensure_ascii=False)
+
+
 _FW_BACKUP_CLIENT = ('moka_settings.json', 'moka_notes.json', 'moka_snippets.json', 'mokagram_filters.json')
 _FW_BACKUP_LIMIT = 30 << 20
 
@@ -1218,18 +1234,9 @@ def _fw_cmd_backup(ctx):
                     full = os.path.join(cdir, fn)
                     if cdir and os.path.isfile(full):
                         if fn == 'moka_settings.json':
-                            # Настройки приватности (ghost.*) в бэкап не пишем:
-                            # тихое их изменение через восстановление — вектор атаки.
-                            try:
-                                with open(full, encoding='utf8') as f:
-                                    values = json.load(f).get('values', {})
-                                values = {k: v for k, v in values.items()
-                                          if not k.startswith('ghost.')}
-                                z.writestr('client/' + fn, json.dumps(
-                                    {'values': values}, ensure_ascii=False))
-                                continue
-                            except Exception:
-                                pass
+                            with open(full, 'rb') as f:
+                                z.writestr('client/' + fn, _fw_portable_settings(f.read()))
+                            continue
                         z.write(full, 'client/' + fn)
             me = json.loads(_moka_native('get_me', '{}'))
             if not me.get('ok'):
@@ -1277,17 +1284,10 @@ def _moka_restore(path):
                 if n.startswith('client/') and n[7:] in _FW_BACKUP_CLIENT:
                     target = os.path.join(stage, n[7:])
                     if n[7:] == 'moka_settings.json':
-                        # Старые бэкапы могут нести ghost.*: приватность тихо не выключаем.
-                        try:
-                            values = json.loads(z.read(n)).get('values', {})
-                            values = {k: v for k, v in values.items()
-                                      if not k.startswith('ghost.')}
-                            os.makedirs(os.path.dirname(target), exist_ok=True)
-                            with open(target, 'w', encoding='utf8') as f:
-                                json.dump({'values': values}, f, ensure_ascii=False)
-                            continue
-                        except Exception:
-                            pass
+                        os.makedirs(os.path.dirname(target), exist_ok=True)
+                        with open(target, 'w', encoding='utf8') as f:
+                            f.write(_fw_portable_settings(z.read(n)))
+                        continue
                 elif n.startswith('plugin_data/') and not n.endswith(('secrets.enc', 'secrets.key')):
                     target = os.path.join(stage, n)
                 else:

@@ -43,6 +43,8 @@
 #include "ui/unread_badge.h"
 #include "core/application.h"
 #include "base/flat_set.h"
+#include <QtCore/QFileInfo>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QFile>
 #include <QtCore/QTimer>
 #include <QtNetwork/QNetworkAccessManager>
@@ -86,6 +88,14 @@ void RegisterSettings();
 } // namespace Mokagram::Guard
 
 namespace Mokagram::Misc {
+
+QString DebugFilePath(const QString &name) {
+	const auto dir = QStandardPaths::writableLocation(
+		QStandardPaths::RuntimeLocation);
+	return (dir.isEmpty() || !QFileInfo(dir).isDir())
+		? QString()
+		: dir + '/' + name;
+}
 namespace {
 
 #include "mokagram/misc/mokagram_app_icons.inc"
