@@ -337,6 +337,13 @@ struct Category {
 		{ "chats.select_3000", "☑️" },
 		{ "misc.ping_dc", "📈" },
 		{ "lyrics.enabled", "🎵" },
+		{ "time.showSeconds", "🕓" },
+		{ "look.fullNumbers", "#️⃣" },
+		{ "bots.copyButtonData", "📋" },
+		{ "adblock.hideSponsored", "🚫" },
+		{ "regdate.show", "🗓" },
+		{ "privacy.relativeLastSeen", "🕓" },
+		{ "player.vinyl", "🎵" },
 	};
 	for (const auto &item : items) {
 		if (key.contains(QLatin1String(item.part))) {
@@ -1558,7 +1565,7 @@ void AskForRestart() {
 		}
 		return false;
 	};
-	if (starts({ "streamer.", "ghost.", "filters.", "privacy." })) {
+	if (starts({ "streamer.", "ghost.", "filters.", "privacy.", "regdate." })) {
 		return u"privacy"_q;
 	} else if (starts({ "scam.", "guard." })) {
 		return u"security"_q;
@@ -1571,7 +1578,7 @@ void AskForRestart() {
 		return u"system"_q;
 	} else if (starts({ "fx.startup" })) {
 		return u"look"_q;
-	} else if (starts({ "chats.", "fx.", "inline.", "translation.", "documents." })) {
+	} else if (starts({ "chats.", "fx.", "inline.", "translation.", "documents.", "time.", "bots.", "adblock." })) {
 		return u"chats"_q;
 	} else if (starts({ "misc.stars", "quote." })) {
 		return u"tools"_q;

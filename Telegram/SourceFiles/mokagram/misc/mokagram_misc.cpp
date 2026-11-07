@@ -608,7 +608,7 @@ void RegisterSettings() {
 	});
 	Settings::Register({
 		.key = u"look.fullNumbers"_q,
-		.section = QString::fromUtf8(Mokagram::Lang::Tr("Числа")),
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Время и числа")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Полные числа вместо сокращённых")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Просмотры, реакции и счётчики показываются как 12 457, а не 12.4K.")),
 		.kind = Settings::Kind::Bool,
