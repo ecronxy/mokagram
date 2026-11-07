@@ -14,6 +14,7 @@
 #include "api/api_stickers_creator.h"
 #include "base/unixtime.h"
 #include "history/history_item.h"
+#include "history/history_item_components.h"
 #include "history/history_item_text.h"
 #include "ui/text/text_utilities.h"
 #include "chat_helpers/compose/compose_show.h"
@@ -366,6 +367,47 @@ void ApplyAppIcon() {
 	}
 }
 
+void AddBotButtonCopyActions(
+		not_null<Ui::PopupMenu*> menu,
+		const std::shared_ptr<ClickHandler> &link) {
+	if (!Settings::Bool(u"bots.copyButtonData"_q)) {
+		return;
+	}
+	const auto handler = std::dynamic_pointer_cast<ReplyMarkupClickHandler>(
+		link);
+	const auto button = handler ? handler->getButton() : nullptr;
+	if (!button) {
+		return;
+	}
+	using Type = HistoryMessageMarkupButton::Type;
+	const auto add = [&](const char *title, QString text) {
+		menu->addAction(
+			QString::fromUtf8(Mokagram::Lang::Tr(title)),
+			[text = std::move(text)] {
+				QGuiApplication::clipboard()->setText(text);
+			},
+			&st::menuIconCopy);
+	};
+	const auto data = QString::fromUtf8(button->data);
+	switch (button->type) {
+	case Type::Callback:
+	case Type::CallbackWithPassword:
+		add("Копировать callback data", data);
+		break;
+	case Type::WebView:
+	case Type::SimpleWebView:
+		add("Копировать url", data);
+		break;
+	case Type::SwitchInline:
+	case Type::SwitchInlineSame:
+		add("Копировать inline query", data);
+		break;
+	default:
+		break;
+	}
+	add("Копировать текст кнопки", button->text);
+}
+
 QString FormatMessageTime(const QTime &time) {
 	return Settings::Bool(u"time.showSeconds"_q)
 		? QLocale().toString(time, u"HH:mm:ss"_q)
@@ -492,6 +534,17 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.sectionIcon = u"person"_q,
 		.action = [] { Stars::ShowSpendingStatsBox(); },
+	});
+	Settings::Register({
+		.key = u"bots.copyButtonData"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боты")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Копирование данных кнопок")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Правый клик по кнопке бота: скопировать callback data, url, inline query или текст кнопки.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = true,
+		.category = u"chats"_q,
+		.sectionIcon = u"bot"_q,
+		.icon = u"copy"_q,
 	});
 	Settings::Register({
 		.key = u"time.showSeconds"_q,

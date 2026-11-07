@@ -18,6 +18,7 @@
 class PhotoData;
 class PeerData;
 class HistoryItem;
+class ClickHandler;
 
 namespace ChatHelpers {
 class Show;
@@ -31,6 +32,11 @@ namespace Mokagram::Misc {
 
 // Регистрирует настройки раздела «Аккаунты» (misc.max_accounts).
 void RegisterSettings();
+
+// Пункты контекстного меню кнопки бота: текст, callback data, url, inline query.
+void AddBotButtonCopyActions(
+	not_null<Ui::PopupMenu*> menu,
+	const std::shared_ptr<ClickHandler> &link);
 
 // Время в подвале сообщения: «12:34:56» при time.showSeconds, иначе как в Telegram.
 [[nodiscard]] QString FormatMessageTime(const QTime &time);

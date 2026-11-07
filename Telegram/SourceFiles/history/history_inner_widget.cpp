@@ -3800,6 +3800,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 				HistoryView::CopyPostLink(controller, itemId, HistoryView::Context::History);
 			}, &st::menuIconLink);
 		}
+		Mokagram::Misc::AddBotButtonCopyActions(_menu, link);
 		if (item || isUponSelected > 0) {
 			if (item && isUponSelected <= 0) {
 				_menu->addAction(
