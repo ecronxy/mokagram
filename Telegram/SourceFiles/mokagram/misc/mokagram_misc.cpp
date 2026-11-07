@@ -109,7 +109,6 @@ void RegisterSponsoredEntry() {
 		.defaultValue = false,
 		.category = u"chats"_q,
 		.sectionIcon = u"block"_q,
-		.icon = u"block"_q,
 	});
 }
 
@@ -581,7 +580,6 @@ void RegisterSettings() {
 		.defaultValue = true,
 		.category = u"chats"_q,
 		.sectionIcon = u"bot"_q,
-		.icon = u"copy"_q,
 	});
 	Settings::Register({
 		.key = u"regdate.show"_q,
@@ -592,7 +590,6 @@ void RegisterSettings() {
 		.defaultValue = false,
 		.category = u"other"_q,
 		.sectionIcon = u"calendar"_q,
-		.icon = u"calendar"_q,
 	});
 	Settings::Register({
 		.key = u"time.showSeconds"_q,
@@ -604,7 +601,6 @@ void RegisterSettings() {
 		.requiresRestart = true,
 		.category = u"chats"_q,
 		.sectionIcon = u"chats"_q,
-		.icon = u"calendar"_q,
 	});
 	Settings::Register({
 		.key = u"look.fullNumbers"_q,
@@ -616,7 +612,6 @@ void RegisterSettings() {
 		.requiresRestart = true,
 		.category = u"look"_q,
 		.sectionIcon = u"palette"_q,
-		.icon = u"id"_q,
 	});
 	Settings::Register({
 		.key = u"privacy.relativeLastSeen"_q,
@@ -627,7 +622,6 @@ void RegisterSettings() {
 		.defaultValue = false,
 		.category = u"privacy"_q,
 		.sectionIcon = u"online"_q,
-		.icon = u"online"_q,
 	});
 	Guard::RegisterSettings();
 	Settings::Register({
