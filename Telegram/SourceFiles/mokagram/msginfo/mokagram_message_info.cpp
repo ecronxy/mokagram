@@ -6,6 +6,7 @@
 #include "mokagram/msginfo/mokagram_message_info.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_media_fingerprint.h"
+#include "mokagram/misc/mokagram_datereg.h"
 
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
@@ -114,6 +115,9 @@ struct Row {
 	add(U(Mokagram::Lang::Tr("Чат")), item->history()->peer->name()
 		+ u" ("_q + QString::number(item->history()->peer->id.value) + u")"_q);
 	add(U(Mokagram::Lang::Tr("Отправлено")), FullDate(item->date()));
+	if (const auto from = item->from()) {
+		add(U(Mokagram::Lang::Tr("Регистрация автора")), Mokagram::Misc::RegdateText(from));
+	}
 	if (const auto edited = item->Get<HistoryMessageEdited>()) {
 		if (edited->date) {
 			add(U(Mokagram::Lang::Tr("Изменено")), FullDate(edited->date));

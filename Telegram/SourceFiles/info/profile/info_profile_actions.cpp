@@ -1983,6 +1983,11 @@ Section DetailsFiller::makeInfo() {
 			Mokagram::Notes::NoteValue(user->id) | rpl::map([](QString note) {
 				return TextWithEntities{ note };
 			}));
+		addInfoLine(
+			QString::fromUtf8(Mokagram::Lang::Tr("Регистрация")),
+			Mokagram::Misc::RegdateValue(user) | rpl::map([](QString text) {
+				return TextWithEntities{ text };
+			}));
 
 		const auto usernameLine = addInfoOneLine(
 			UsernamesSubtext(_peer, tr::lng_info_username_label()),

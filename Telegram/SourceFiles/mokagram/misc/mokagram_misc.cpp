@@ -547,6 +547,17 @@ void RegisterSettings() {
 		.icon = u"copy"_q,
 	});
 	Settings::Register({
+		.key = u"regdate.show"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Дата регистрации")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Показывать дату регистрации")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Примерный месяц и год по айди аккаунта: в профиле и в информации о сообщении.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.category = u"other"_q,
+		.sectionIcon = u"calendar"_q,
+		.icon = u"calendar"_q,
+	});
+	Settings::Register({
 		.key = u"time.showSeconds"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Время и числа")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Секунды во времени сообщений")),
