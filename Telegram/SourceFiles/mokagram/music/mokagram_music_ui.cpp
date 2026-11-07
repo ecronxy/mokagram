@@ -9367,10 +9367,16 @@ void ShowMusicBoxWith(
 		const auto tabForYou = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Для вас")));
 		tabs->widthValue(
 		) | rpl::on_next([=](int width) {
-			const auto each = width / 3;
-			tabSearch->setGeometry(0, 0, QueueState().telegramSearch ? width : each, tabs->height());
-			tabLiked->setGeometry(each, 0, each, tabs->height());
-			tabForYou->setGeometry(2 * each, 0, width - 2 * each, tabs->height());
+			// Кнопки лежат ровно на сегментах плашки, чтобы подпись была по её центру.
+			const auto part = (width - 8) / 3.;
+			const auto at = [&](int i) { return 4 + int(base::SafeRound(part * i)); };
+			tabSearch->setGeometry(
+				QueueState().telegramSearch ? 0 : at(0),
+				0,
+				QueueState().telegramSearch ? width : at(1) - at(0),
+				tabs->height());
+			tabLiked->setGeometry(at(1), 0, at(2) - at(1), tabs->height());
+			tabForYou->setGeometry(at(2), 0, at(3) - at(2), tabs->height());
 		}, tabs->lifetime());
 
 		const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
@@ -9915,10 +9921,11 @@ void ShowMusicBoxWith(
 			if (chats) {
 				tabSearch->setGeometry(0, 0, tabs->width(), 40);
 			} else {
-				const auto each = tabs->width() / 3;
-				tabSearch->setGeometry(0, 0, each, 40);
-				tabLiked->setGeometry(each, 0, each, 40);
-				tabForYou->setGeometry(2 * each, 0, tabs->width() - 2 * each, 40);
+				const auto part = (tabs->width() - 8) / 3.;
+				const auto at = [&](int i) { return 4 + int(base::SafeRound(part * i)); };
+				tabSearch->setGeometry(at(0), 0, at(1) - at(0), 40);
+				tabLiked->setGeometry(at(1), 0, at(2) - at(1), 40);
+				tabForYou->setGeometry(at(2), 0, at(3) - at(2), 40);
 			}
 			input->setPlaceholder(rpl::single(input->getLastText().isEmpty()
 				? QString::fromUtf8(Mokagram::Lang::Tr(chats
