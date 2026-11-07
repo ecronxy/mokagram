@@ -366,6 +366,12 @@ void ApplyAppIcon() {
 	}
 }
 
+QString FormatMessageTime(const QTime &time) {
+	return Settings::Bool(u"time.showSeconds"_q)
+		? QLocale().toString(time, u"HH:mm:ss"_q)
+		: QLocale().toString(time, QLocale::ShortFormat);
+}
+
 void RegisterSettings() {
 	Settings::Register({
 		.key = u"misc.welcome_shown"_q,
@@ -486,6 +492,18 @@ void RegisterSettings() {
 		.category = u"other"_q,
 		.sectionIcon = u"person"_q,
 		.action = [] { Stars::ShowSpendingStatsBox(); },
+	});
+	Settings::Register({
+		.key = u"time.showSeconds"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Время и числа")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Секунды во времени сообщений")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Под сообщением время вида 12:34:56 вместо 12:34.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.requiresRestart = true,
+		.category = u"chats"_q,
+		.sectionIcon = u"chats"_q,
+		.icon = u"calendar"_q,
 	});
 	Guard::RegisterSettings();
 	Settings::Register({

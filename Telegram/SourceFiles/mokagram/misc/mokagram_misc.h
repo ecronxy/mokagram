@@ -11,6 +11,7 @@
 #include <memory>
 #include <vector>
 #include <QtCore/QString>
+#include <QtCore/QTime>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
 
@@ -30,6 +31,9 @@ namespace Mokagram::Misc {
 
 // Регистрирует настройки раздела «Аккаунты» (misc.max_accounts).
 void RegisterSettings();
+
+// Время в подвале сообщения: «12:34:56» при time.showSeconds, иначе как в Telegram.
+[[nodiscard]] QString FormatMessageTime(const QTime &time);
 
 // Выбранная в настройках иконка приложения; пустая, если стоит стандартная.
 [[nodiscard]] QIcon CustomAppIcon();
