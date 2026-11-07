@@ -4087,7 +4087,8 @@ private:
 		if (_glyph == Glyph::Add) {
 			const auto pop = 1. + 0.3 * std::sin(_pop.value(1.) * M_PI) + 0.06 * over;
 			p.translate(c);
-			p.scale(pop * 0.8, pop * 0.8);
+			const auto base = (width() >= 44) ? 1.05 : 0.8;
+			p.scale(pop * base, pop * base);
 			auto heart = QPainterPath();
 			heart.moveTo(QPointF(0, 8.5));
 			heart.cubicTo(QPointF(-14, -1), QPointF(-8.5, -11.5), QPointF(0, -4));
@@ -5944,7 +5945,7 @@ protected:
 			: result.compact
 			? pad + s(56) + pad / 2
 			: std::clamp(int(bar.width() * 0.27), s(220), s(360));
-		const auto rightWidth = pad + _queueToggle->width() + s(8) + _heart->width() + pad
+		const auto rightWidth = pad + _queueToggle->width() + s(2) + _heart->width() + pad
 			+ (result.compact ? 0 : iconWidth + volumeWidth + s(12));
 		const auto sideWidth = std::max(leftWidth, rightWidth);
 		const auto centerWidth = std::max(bar.width() - 2 * sideWidth, 0);
@@ -5971,7 +5972,7 @@ protected:
 			bar.x() + bar.width() - pad - _queueToggle->width(),
 			bar.y() + (bar.height() - _queueToggle->height()) / 2);
 		result.heart = QPoint(
-			result.queue.x() - s(8) - _heart->width(),
+			result.queue.x() - s(2) - _heart->width(),
 			bar.y() + (bar.height() - _heart->height()) / 2);
 		if (!result.compact) {
 			result.volume = QRect(
@@ -6983,7 +6984,17 @@ protected:
 		p.setPen(Qt::NoPen);
 		const auto homeColor = (_tab == Tab::Home && _homeAlbumOpen && _homeAccent.isValid())
 			? _homeAccent : QColor();
-		p.setBrush(homeColor.isValid() ? anim::color(st::windowBgOver->c, homeColor.darker(220), 0.65) : st::windowBgOver->c);
+		// На «Сейчас играет» дорожка тоже берёт оттенок обложки.
+		const auto trackPlain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		const auto trackTint = homeColor.isValid()
+			? homeColor
+			: (_accent.isValid() ? _accent : QColor());
+		p.setBrush(trackTint.isValid()
+			? anim::color(
+				anim::color(st::windowBgOver->c, trackTint.darker(220), 0.65),
+				st::windowBgOver->c,
+				homeColor.isValid() ? 0. : trackPlain)
+			: st::windowBgOver->c);
 		p.drawRoundedRect(layout.nav, layout.nav.height() / 2., layout.nav.height() / 2.);
 		const auto inset = s(4);
 		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(_nav.size());
