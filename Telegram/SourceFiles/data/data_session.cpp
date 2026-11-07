@@ -3159,6 +3159,7 @@ void Session::registerMessage(not_null<HistoryItem*> item) {
 		i->second->destroy();
 	}
 	list->emplace(itemId, item);
+	Mokagram::History::OnSeen(item);
 
 	if (!peerIsChannel(peerId) && IsServerMsgId(itemId)) {
 		_nonChannelMessages.emplace(itemId, item);
@@ -3348,21 +3349,31 @@ void Session::processMessagesDeleted(
 	const auto list = messagesList(peerId);
 	const auto affected = historyLoaded(peerId);
 	if (!list && !affected) {
+		auto missing = std::vector<int64>();
+		for (const auto &messageId : data) {
+			missing.push_back(messageId.v);
+		}
+		Mokagram::History::OnServerDeletedIds(&session(), peerId, std::move(missing));
 		return;
 	}
 
 	auto toDestroy = std::vector<not_null<HistoryItem*>>();
 	auto historiesToCheck = base::flat_set<not_null<History*>>();
+	auto missing = std::vector<int64>();
 	for (const auto &messageId : data) {
 		const auto i = list ? list->find(messageId.v) : Messages::iterator();
 		if (list && i != list->end()) {
 			const auto history = i->second->history();
 			toDestroy.push_back(i->second);
 			historiesToCheck.emplace(history);
-		} else if (affected) {
-			affected->unknownMessageDeleted(messageId.v);
+		} else {
+			missing.push_back(messageId.v);
+			if (affected) {
+				affected->unknownMessageDeleted(messageId.v);
+			}
 		}
 	}
+	Mokagram::History::OnServerDeletedIds(&session(), peerId, std::move(missing));
 	if (!toDestroy.empty()) {
 		Mokagram::History::OnServerDeleted(toDestroy);
 		notifyItemsAboutToBeDestroyed(toDestroy);
@@ -3380,13 +3391,17 @@ void Session::processMessagesDeleted(
 void Session::processNonChannelMessagesDeleted(const QVector<MTPint> &data) {
 	auto toDestroy = std::vector<not_null<HistoryItem*>>();
 	auto historiesToCheck = base::flat_set<not_null<History*>>();
+	auto missing = std::vector<int64>();
 	for (const auto &messageId : data) {
 		if (const auto item = nonChannelMessage(messageId.v)) {
 			const auto history = item->history();
 			toDestroy.push_back(item);
 			historiesToCheck.emplace(history);
+		} else {
+			missing.push_back(messageId.v);
 		}
 	}
+	Mokagram::History::OnServerDeletedIds(&session(), PeerId(), std::move(missing));
 	if (!toDestroy.empty()) {
 		Mokagram::History::OnServerDeleted(toDestroy);
 		notifyItemsAboutToBeDestroyed(toDestroy);

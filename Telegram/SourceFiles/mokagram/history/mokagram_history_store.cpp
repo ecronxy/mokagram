@@ -6,6 +6,7 @@
 #include "mokagram/history/mokagram_history_store.h"
 
 #include "base/unixtime.h"
+#include "data/data_peer_id.h"
 #include "logs.h"
 
 #include <crl/crl_on_main.h>
@@ -134,6 +135,27 @@ void Exec(sqlite3 *db, const char *sql) {
 		return false;
 	}
 	sqlite3_exec(db, "ALTER TABLE msg ADD COLUMN tl BLOB", nullptr, nullptr, nullptr);
+	sqlite3_exec(db, "ALTER TABLE msg ADD COLUMN reply_to INTEGER NOT NULL DEFAULT 0", nullptr, nullptr, nullptr);
+	sqlite3_exec(db, "ALTER TABLE msg ADD COLUMN reply_peer INTEGER NOT NULL DEFAULT 0", nullptr, nullptr, nullptr);
+	sqlite3_exec(
+		db,
+		"CREATE TABLE IF NOT EXISTS seen("
+		"peer INTEGER NOT NULL,"
+		"id INTEGER NOT NULL,"
+		"topic INTEGER NOT NULL DEFAULT 0,"
+		"date INTEGER NOT NULL DEFAULT 0,"
+		"from_id INTEGER NOT NULL DEFAULT 0,"
+		"text TEXT,"
+		"ents BLOB,"
+		"media TEXT,"
+		"tl BLOB,"
+		"reply_to INTEGER NOT NULL DEFAULT 0,"
+		"reply_peer INTEGER NOT NULL DEFAULT 0,"
+		"PRIMARY KEY(peer, id)) WITHOUT ROWID;"
+		"CREATE INDEX IF NOT EXISTS seen_by_id ON seen(id);",
+		nullptr,
+		nullptr,
+		nullptr);
 	const auto version = UserVersion(db);
 	if (version < 0) {
 		return false;
@@ -193,14 +215,14 @@ void WriteSnapshot(sqlite3 *db, const Snapshot &snapshot) {
 		db,
 		edited
 		? "INSERT OR REPLACE INTO msg"
-			"(peer,topic,id,kind,rev,date,event,from_id,text,ents,media,tl)"
+			"(peer,topic,id,kind,rev,date,event,from_id,text,ents,media,tl,reply_to,reply_peer)"
 			" VALUES(?1,?2,?3,2,"
 			"(SELECT COALESCE(MAX(rev),0)+1 FROM msg"
 			" WHERE peer=?1 AND kind=2 AND id=?3),"
-			"?4,?5,?6,?7,?8,?9,?10)"
+			"?4,?5,?6,?7,?8,?9,?10,?11,?12)"
 		: "INSERT OR REPLACE INTO msg"
-			"(peer,topic,id,kind,rev,date,event,from_id,text,ents,media,tl)"
-			" VALUES(?1,?2,?3,1,0,?4,?5,?6,?7,?8,?9,?10)");
+			"(peer,topic,id,kind,rev,date,event,from_id,text,ents,media,tl,reply_to,reply_peer)"
+			" VALUES(?1,?2,?3,1,0,?4,?5,?6,?7,?8,?9,?10,?11,?12)");
 	if (!stmt.ok()) {
 		return;
 	}
@@ -214,6 +236,35 @@ void WriteSnapshot(sqlite3 *db, const Snapshot &snapshot) {
 	stmt.bind(8, snapshot.entities);
 	stmt.bind(9, snapshot.media);
 	stmt.bind(10, snapshot.tl);
+	stmt.bind(11, snapshot.replyTo);
+	stmt.bind(12, int64(snapshot.replyPeer));
+	stmt.run();
+}
+
+void WriteSeen(sqlite3 *db, const Snapshot &snapshot, bool replace) {
+	auto stmt = Statement(
+		db,
+		replace
+		? "INSERT OR REPLACE INTO seen"
+			"(peer,id,topic,date,from_id,text,ents,media,tl,reply_to,reply_peer)"
+			" VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
+		: "INSERT OR IGNORE INTO seen"
+			"(peer,id,topic,date,from_id,text,ents,media,tl,reply_to,reply_peer)"
+			" VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)");
+	if (!stmt.ok()) {
+		return;
+	}
+	stmt.bind(1, int64(snapshot.peer));
+	stmt.bind(2, snapshot.id);
+	stmt.bind(3, snapshot.topic);
+	stmt.bind(4, int64(snapshot.date));
+	stmt.bind(5, int64(snapshot.from));
+	stmt.bind(6, snapshot.text);
+	stmt.bind(7, snapshot.entities);
+	stmt.bind(8, snapshot.media);
+	stmt.bind(9, snapshot.tl);
+	stmt.bind(10, snapshot.replyTo);
+	stmt.bind(11, int64(snapshot.replyPeer));
 	stmt.run();
 }
 
@@ -243,6 +294,11 @@ void Prune(sqlite3 *db, Limits limits) {
 		if (stmt.ok()) {
 			stmt.bind(1, cutoff);
 			stmt.run();
+		}
+		auto seen = Statement(db, "DELETE FROM seen WHERE date < ?1");
+		if (seen.ok()) {
+			seen.bind(1, cutoff);
+			seen.run();
 		}
 	}
 	if (limits.perChat > 0) {
@@ -284,6 +340,11 @@ void Prune(sqlite3 *db, Limits limits) {
 				"DELETE FROM msg WHERE (peer,kind,id,rev) IN"
 				" (SELECT peer,kind,id,rev FROM msg ORDER BY event ASC"
 				" LIMIT MAX(1, (SELECT count(*) FROM msg) / 10))");
+			Exec(
+				db,
+				"DELETE FROM seen WHERE (peer,id) IN"
+				" (SELECT peer,id FROM seen ORDER BY date ASC"
+				" LIMIT MAX(1, (SELECT count(*) FROM seen) / 10))");
 		}
 	}
 	Exec(db, "PRAGMA incremental_vacuum");
@@ -430,6 +491,75 @@ void Store::pruneNow(Limits limits) {
 	});
 }
 
+void Store::journal(Snapshot snapshot, bool replace) {
+	_impl->writer.post([snapshot = std::move(snapshot), replace](sqlite3 *db) {
+		WriteSeen(db, snapshot, replace);
+	});
+}
+
+void Store::claimDeleted(
+		uint64 peer,
+		std::vector<int64> ids,
+		Fn<void(std::vector<Snapshot>)> done) {
+	if (ids.empty()) {
+		return;
+	}
+	const auto weak = base::make_weak(this);
+	const auto now = base::unixtime::now();
+	_impl->writer.post([=](sqlite3 *db) {
+		auto result = std::vector<Snapshot>();
+		for (const auto id : ids) {
+			auto stmt = Statement(
+				db,
+				"SELECT peer,topic,id,date,from_id,text,ents,media,tl,"
+				"reply_to,reply_peer FROM seen"
+				" WHERE id=?1 AND (?2=0 OR peer=?2)");
+			if (!stmt.ok()) {
+				continue;
+			}
+			stmt.bind(1, id);
+			stmt.bind(2, int64(peer));
+			while (stmt.step()) {
+				const auto row = uint64(stmt.int64At(0));
+				if (!peer && peerIsChannel(PeerId(row))) {
+					continue;
+				}
+				auto &snapshot = result.emplace_back();
+				snapshot.peer = row;
+				snapshot.topic = stmt.int64At(1);
+				snapshot.id = stmt.int64At(2);
+				snapshot.kind = Kind::Deleted;
+				snapshot.date = int32(stmt.int64At(3));
+				snapshot.event = now;
+				snapshot.from = uint64(stmt.int64At(4));
+				snapshot.text = stmt.textAt(5);
+				snapshot.entities = stmt.blobAt(6);
+				snapshot.media = stmt.textAt(7);
+				snapshot.tl = stmt.blobAt(8);
+				snapshot.replyTo = stmt.int64At(9);
+				snapshot.replyPeer = uint64(stmt.int64At(10));
+			}
+		}
+		for (const auto &snapshot : result) {
+			WriteSnapshot(db, snapshot);
+		}
+		if (result.empty()) {
+			return;
+		}
+		crl::on_main(weak, [=, result = std::move(result)]() mutable {
+			const auto strong = weak.get();
+			if (!strong) {
+				return;
+			}
+			for (const auto &snapshot : result) {
+				++strong->_counts[snapshot.peer].deleted;
+			}
+			strong->_changes.fire({});
+			done(std::move(result));
+		});
+	});
+}
+
 void Store::removeOne(uint64 peer, int64 id) {
 	_impl->writer.post([=](sqlite3 *db) {
 		auto stmt = Statement(
@@ -460,6 +590,11 @@ void Store::clearPeer(uint64 peer) {
 			stmt.bind(1, int64(peer));
 			stmt.run();
 		}
+		auto seen = Statement(db, "DELETE FROM seen WHERE peer=?1");
+		if (seen.ok()) {
+			seen.bind(1, int64(peer));
+			seen.run();
+		}
 	});
 	_changes.fire({});
 }
@@ -470,6 +605,7 @@ void Store::clearAll() {
 	_revisions.clear();
 	_impl->writer.post([](sqlite3 *db) {
 		Exec(db, "DELETE FROM msg");
+		Exec(db, "DELETE FROM seen");
 		Exec(db, "PRAGMA incremental_vacuum");
 		Exec(db, "PRAGMA wal_checkpoint(TRUNCATE)");
 	});
@@ -553,7 +689,7 @@ void Store::loadPage(
 	_impl->reader.post([=](sqlite3 *db) {
 		auto result = std::vector<Snapshot>();
 		auto sql = QByteArray(
-			"SELECT peer,topic,id,kind,date,event,from_id,text,ents,media,tl"
+			"SELECT peer,topic,id,kind,date,event,from_id,text,ents,media,tl,reply_to,reply_peer"
 			" FROM msg WHERE (?1=0 OR peer=?1) AND kind=?2");
 		if (query.since) {
 			sql += " AND event>=?8";
@@ -601,6 +737,8 @@ void Store::loadPage(
 				row.entities = stmt.blobAt(8);
 				row.media = stmt.textAt(9);
 				row.tl = stmt.blobAt(10);
+				row.replyTo = stmt.int64At(11);
+				row.replyPeer = uint64(stmt.int64At(12));
 			}
 		}
 		crl::on_main(weak, [=, result = std::move(result)]() mutable {

@@ -3320,6 +3320,7 @@ void HistoryItem::setRealId(MsgId newId) {
 		_history->unregisterClientSideMessage(this);
 	}
 	_history->owner().notifyItemIdChange({ fullId(), oldId });
+	Mokagram::History::OnSeen(this);
 
 	// We don't fire MessageUpdate::Flag::ReplyMarkup and update keyboard
 	// in history widget, because it can't exist for an outgoing message.

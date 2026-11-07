@@ -9,6 +9,7 @@
 #include "mokagram/settings/mokagram_settings.h"
 
 #include "base/unixtime.h"
+#include "base/timer.h"
 #include "mtproto/sender.h"
 #include <deque>
 #include "core/click_handler_types.h"
@@ -60,8 +61,7 @@ struct Stores {
 		: u"history.save_edited"_q;
 	if (!Settings::Bool(key)) {
 		return false;
-	} else if ((kind == Kind::Deleted && item->out())
-		|| item->isService()
+	} else if (item->isService()
 		|| item->isLocal()
 		|| item->isEmpty()
 		|| !item->isRegular()) {
@@ -99,9 +99,13 @@ struct MediaMemory {
 	result.event = base::unixtime::now();
 	result.from = item->from()->id.value;
 	result.text = item->originalText().text;
+	if (const auto reply = item->Get<HistoryMessageReply>()) {
+		result.replyTo = reply->messageId().bare;
+		result.replyPeer = reply->externalPeerId().value;
+	}
 	if (item->media()) {
 		result.media = item->notificationText().text;
-		if (kind == Kind::Deleted) {
+		{
 			auto &mem = MediaMem().map;
 			const auto i = mem.find(item->fullId());
 			if (i != end(mem)) {
@@ -129,6 +133,7 @@ struct GhostHistory {
 	bool loaded = false;
 	bool loading = false;
 	base::flat_set<int64> created; // Исходные id, повторно не создаём.
+	base::flat_map<int64, HistoryItem*> byOrigin; // Для ответов на призраков.
 };
 
 struct GhostSession {
@@ -229,6 +234,23 @@ void CreateGhosts(
 		if (row.from == session->userPeerId().value) {
 			fields.flags |= MessageFlag::Outgoing;
 		}
+		if (row.replyTo) {
+			const auto target = row.replyPeer
+				? PeerId(row.replyPeer)
+				: history->peer->id;
+			auto replyId = MsgId(row.replyTo);
+			// Ответ на уже удалённое: ведём на его призрака, если он есть.
+			if (target == history->peer->id) {
+				const auto j = state.byOrigin.find(row.replyTo);
+				if (j != end(state.byOrigin) && ghosts.items.contains(j->second)) {
+					replyId = j->second->id;
+				}
+			}
+			fields.replyTo.messageId = FullMsgId(target, replyId);
+			if (row.topic > 1) {
+				fields.replyTo.topicRootId = MsgId(row.topic);
+			}
+		}
 		const auto channel = history->peer->asChannel();
 		if (channel && channel->isBroadcast()) {
 			fields.flags |= MessageFlag::Post;
@@ -251,6 +273,7 @@ void CreateGhosts(
 			media);
 		ghosts.items.emplace(item);
 		ghosts.origin.emplace(item, row.id);
+		state.byOrigin.emplace(row.id, item);
 		made.push_back(item);
 		touched.emplace(history);
 	}
@@ -420,7 +443,7 @@ void RegisterSettings() {
 		.title = U(Mokagram::Lang::Tr("Сколько дней хранить копии")),
 		.description = U(Mokagram::Lang::Tr("Более старые копии стираются. 0 значит хранить без ограничения по времени.")),
 		.kind = Settings::Kind::Int,
-		.defaultValue = 30,
+		.defaultValue = 0,
 		.minValue = 0,
 		.maxValue = 3650,
 		.icon = u"calendar"_q,
@@ -428,20 +451,20 @@ void RegisterSettings() {
 	add({
 		.key = u"history.keep_mb"_q,
 		.title = U(Mokagram::Lang::Tr("Сколько места занять (МБ)")),
-		.description = U(Mokagram::Lang::Tr("Предел для одного аккаунта. При переполнении удаляются самые старые копии.")),
+		.description = U(Mokagram::Lang::Tr("Предел для одного аккаунта, 0 значит без предела. При переполнении удаляются самые старые копии.")),
 		.kind = Settings::Kind::Int,
-		.defaultValue = 256,
-		.minValue = 16,
+		.defaultValue = 0,
+		.minValue = 0,
 		.maxValue = 4096,
 		.icon = u"storage"_q,
 	});
 	add({
 		.key = u"history.keep_per_chat"_q,
 		.title = U(Mokagram::Lang::Tr("Сколько копий на один чат")),
-		.description = U(Mokagram::Lang::Tr("Чтобы один шумный чат не занял всё место.")),
+		.description = U(Mokagram::Lang::Tr("Чтобы один шумный чат не занял всё место. 0 значит без ограничения.")),
 		.kind = Settings::Kind::Int,
-		.defaultValue = 5000,
-		.minValue = 100,
+		.defaultValue = 0,
+		.minValue = 0,
 		.maxValue = 100000,
 		.icon = u"chats"_q,
 	});
@@ -499,6 +522,96 @@ void OnServerDeleted(const std::vector<not_null<HistoryItem*>> &items) {
 	});
 }
 
+namespace {
+
+// Журнал заполняется не сразу, а порциями по таймеру: пачка из тысяч
+// сообщений при открытии чата не нагружает главный поток.
+struct SeenQueue {
+	std::deque<std::pair<base::weak_ptr<Main::Session>, FullMsgId>> pending;
+	base::flat_set<FullMsgId> recent;
+	std::deque<FullMsgId> recentOrder;
+	base::Timer timer;
+};
+
+[[nodiscard]] SeenQueue &Seen() {
+	static auto result = new SeenQueue(); // Таймер не должен жить дольше Qt.
+	return *result;
+}
+
+constexpr auto kSeenChunk = 150;
+constexpr auto kSeenRecent = 20000;
+
+void JournalNow(not_null<HistoryItem*> item, bool replace) {
+	if (!Eligible(item, Kind::Deleted) || !IsServerMsgId(item->id)) {
+		return;
+	}
+	StoreFor(&item->history()->session()).journal(
+		MakeSnapshot(item, Kind::Deleted),
+		replace);
+}
+
+void ProcessSeen() {
+	auto &queue = Seen();
+	for (auto i = 0; i != kSeenChunk && !queue.pending.empty(); ++i) {
+		const auto [weak, id] = queue.pending.front();
+		queue.pending.pop_front();
+		if (const auto session = weak.get()) {
+			if (const auto item = session->data().message(id)) {
+				JournalNow(item, false);
+			}
+		}
+	}
+	if (!queue.pending.empty()) {
+		queue.timer.callOnce(50);
+	}
+}
+
+} // namespace
+
+void OnSeen(not_null<HistoryItem*> item) {
+	if (item->isLocal() || !IsServerMsgId(item->id)) {
+		return;
+	}
+	auto &queue = Seen();
+	const auto id = item->fullId();
+	if (!queue.recent.emplace(id).second) {
+		return;
+	}
+	queue.recentOrder.push_back(id);
+	if (queue.recentOrder.size() > kSeenRecent) {
+		queue.recent.remove(queue.recentOrder.front());
+		queue.recentOrder.pop_front();
+	}
+	queue.pending.emplace_back(
+		base::make_weak(&item->history()->session()),
+		id);
+	if (!queue.timer.isActive()) {
+		queue.timer.setCallback(ProcessSeen);
+		queue.timer.callOnce(300);
+	}
+}
+
+void OnServerDeletedIds(
+		not_null<Main::Session*> session,
+		PeerId peer,
+		std::vector<int64> ids) {
+	if (ids.empty() || !Settings::Bool(u"history.save_deleted"_q)) {
+		return;
+	}
+	const auto weak = base::make_weak(session);
+	StoreFor(session).claimDeleted(
+		peer.value,
+		std::move(ids),
+		[=](std::vector<Snapshot> rows) {
+			if (const auto strong = weak.get()) {
+				std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) {
+					return a.id < b.id;
+				});
+				CreateGhosts(strong, std::move(rows));
+			}
+		});
+}
+
 void OnBeforeEdit(
 		not_null<HistoryItem*> item,
 		const QString &newText,
@@ -514,6 +627,16 @@ void OnBeforeEdit(
 	}
 	StoreFor(&item->history()->session()).push(
 		MakeSnapshot(item, Kind::Edited));
+	// Правка применится сразу после вызова: журнал обновляем уже с новым текстом.
+	const auto id = item->fullId();
+	const auto weak = base::make_weak(&item->history()->session());
+	crl::on_main(weak, [=] {
+		if (const auto strong = weak.get()) {
+			if (const auto now = strong->data().message(id)) {
+				JournalNow(now, true);
+			}
+		}
+	});
 }
 
 } // namespace Mokagram::History

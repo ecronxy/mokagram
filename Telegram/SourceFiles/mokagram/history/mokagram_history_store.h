@@ -39,6 +39,8 @@ struct Snapshot {
 	QByteArray entities;
 	QString media; // Короткая подпись медиа: «Фото», «Стикер» и так далее.
 	QByteArray tl; // MTPMessageMedia целиком (фото, голосовые и т.д.).
+	int64 replyTo = 0; // Id сообщения, на которое это ответ (0 = не ответ).
+	uint64 replyPeer = 0; // Чат того сообщения, 0 = тот же чат.
 };
 
 struct Counts {
@@ -74,6 +76,17 @@ public:
 	void pruneNow(Limits limits);
 	// Лимиты читаются в потоке интерфейса при каждой N-й записи.
 	void setLimitsProvider(Fn<Limits()> provider);
+
+	// Журнал всего, что клиент увидел: пишется при появлении сообщения,
+	// чтобы удаление находило копию, даже если сообщения нет в памяти.
+	// replace = false: уже записанное не перезаписывается (дёшево при повторной загрузке).
+	void journal(Snapshot snapshot, bool replace = false);
+	// Переводит записи журнала в «удалённые». peer = 0: чат неизвестен
+	// (обычное удаление приходит без чата), берутся только не-каналы.
+	void claimDeleted(
+		uint64 peer,
+		std::vector<int64> ids,
+		Fn<void(std::vector<Snapshot>)> done);
 
 	void removeOne(uint64 peer, int64 id);
 	void clearPeer(uint64 peer);
