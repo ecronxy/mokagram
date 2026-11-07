@@ -1367,27 +1367,49 @@ public:
 		setPointerCursor(true);
 		paintRequest(
 		) | rpl::on_next([=](QRect) {
+			// Как вкладки полноэкранной музыки: общая дорожка рисуется родителем,
+			// здесь только пилюля выбранной вкладки и подпись.
 			auto p = QPainter(this);
 			auto hq = PainterHighQualityEnabler(p);
+			const auto progress = _fade.value(_active ? 1. : 0.);
+			const auto inset = style::ConvertScale(3);
+			const auto pill = rect().adjusted(inset, inset, -inset, -inset);
 			p.setPen(Qt::NoPen);
-			auto tone = QColor(st::windowActiveTextFg->c);
-			tone.setAlpha(_active ? 60 : 0);
-			p.setBrush(_active ? tone : (isOver() ? st::windowBgOver : st::windowBg)->c);
-			p.drawRoundedRect(rect(), height() / 2., height() / 2.);
-			p.setFont(st::semiboldFont);
-			p.setPen(_active ? st::windowActiveTextFg : st::windowSubTextFg);
+			p.setBrush(st::windowActiveTextFg);
+			p.setOpacity(progress);
+			p.drawRoundedRect(pill, pill.height() / 2., pill.height() / 2.);
+			p.setOpacity(1.);
+			auto font = st::semiboldFont->f;
+			font.setPixelSize(style::ConvertScale(15));
+			p.setFont(font);
+			p.setPen(anim::color(
+				isOver() ? st::windowFg->c : st::windowSubTextFg->c,
+				QColor(Qt::white),
+				progress));
 			p.drawText(rect(), Qt::AlignCenter, _text);
 		}, lifetime());
 	}
 	void setActive(bool active) {
 		if (_active != active) {
 			_active = active;
-			update();
+			_fade.start(
+				[=] { update(); },
+				_active ? 0. : 1.,
+				_active ? 1. : 0.,
+				220,
+				anim::easeOutCubic);
 		}
+	}
+
+protected:
+	void onStateChanged(State was, StateChangeSource source) override {
+		AbstractButton::onStateChanged(was, source);
+		update();
 	}
 
 private:
 	QString _text;
+	Ui::Animations::Simple _fade;
 	bool _active = false;
 
 };
@@ -9296,6 +9318,15 @@ void ShowMusicBoxWith(
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(16, 4, 16, 6));
 		tabs->resize(tabs->width(), 36);
+		// Общая дорожка под вкладками, как в навигации полноэкранной музыки.
+		tabs->paintRequest(
+		) | rpl::on_next([=](QRect) {
+			auto p = QPainter(tabs);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(tabs->rect(), tabs->height() / 2., tabs->height() / 2.);
+		}, tabs->lifetime());
 		const auto tabSearch = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Поиск")));
 		const auto tabLiked = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Лайкнутые")));
 		const auto tabForYou = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Для вас")));
