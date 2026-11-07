@@ -196,6 +196,13 @@ void RegisterSettings() {
 		.defaultValue = true,
 	});
 	playerEntry({
+		.key = u"player.vinyl"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Виниловый диск у обложки")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("В полноэкранном плеере из-за обложки выглядывает диск: крутится при воспроизведении и плавно останавливается на паузе.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+	});
+	playerEntry({
 		.key = u"player.autoplay_next"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Автовоспроизведение следующего")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("После трека, голосового или кружка сам включается следующий.")),
