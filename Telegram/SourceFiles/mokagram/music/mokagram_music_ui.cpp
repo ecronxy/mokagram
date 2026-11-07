@@ -7375,13 +7375,7 @@ private:
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
 			_accent = CurrentCoverAccent();
-			const auto navColor = _accent.isValid()
-				? _accent
-				: st::windowActiveTextFg->c;
-			_nav[0]->setActiveColor(
-				Ui::CountContrast(navColor, Qt::white) >= Ui::CountContrast(navColor, Qt::black)
-					? QColor(Qt::white)
-					: QColor(Qt::black));
+			_nav[0]->setActiveColor(Qt::white);
 			// Полоса управления плавно перекрашивается под обложку трека.
 			{
 				const auto now = anim::color(_barFrom, _barTo, _barAnim.value(1.));
