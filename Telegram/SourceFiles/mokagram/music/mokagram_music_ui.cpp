@@ -1363,28 +1363,18 @@ public:
 	TabPill(QWidget *parent, const QString &text)
 	: AbstractButton(parent)
 	, _text(text) {
-		resize(width(), 36);
+		resize(width(), 40);
 		setPointerCursor(true);
 		paintRequest(
 		) | rpl::on_next([=](QRect) {
-			// Как вкладки полноэкранной музыки: общая дорожка рисуется родителем,
-			// здесь только пилюля выбранной вкладки и подпись.
+			// Плашка и дорожка рисуются родителем и едут между вкладками,
+			// здесь только подпись.
 			auto p = QPainter(this);
-			auto hq = PainterHighQualityEnabler(p);
 			const auto progress = _fade.value(_active ? 1. : 0.);
-			const auto inset = style::ConvertScale(3);
-			const auto pill = rect().adjusted(inset, inset, -inset, -inset);
-			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowActiveTextFg);
-			p.setOpacity(progress);
-			p.drawRoundedRect(pill, pill.height() / 2., pill.height() / 2.);
-			p.setOpacity(1.);
-			auto font = st::semiboldFont->f;
-			font.setPixelSize(style::ConvertScale(15));
-			p.setFont(font);
+			p.setFont(st::semiboldFont);
 			p.setPen(anim::color(
 				isOver() ? st::windowFg->c : st::windowSubTextFg->c,
-				QColor(Qt::white),
+				st::windowFg->c,
 				progress));
 			p.drawText(rect(), Qt::AlignCenter, _text);
 		}, lifetime());
@@ -1396,7 +1386,7 @@ public:
 				[=] { update(); },
 				_active ? 0. : 1.,
 				_active ? 1. : 0.,
-				220,
+				kSwitchDuration,
 				anim::easeOutCubic);
 		}
 	}
@@ -3906,11 +3896,25 @@ private:
 		const auto progress = _dragging ? _drag : _progress;
 		const auto y = height() / 2.;
 		const auto end = width() * progress;
-		const auto phase = _wavePlaying && !_dragging
-			&& Mokagram::Perf::UserIsLooking()
-			&& !PowerSaving::On(PowerSaving::kAnimations)
-			? crl::now() / 500. : 0.;
-		const auto amplitude = _wavePlaying && !_dragging ? st::motionWaveAmplitude : 0;
+		// Фаза копится с шагом по времени, а амплитуда плавно растёт и гаснет:
+		// при возврате в окно волна продолжает ход, а не прыгает.
+		const auto now = crl::now();
+		const auto dt = _waveAt ? std::min((now - _waveAt) / 1000., 0.1) : 0.;
+		_waveAt = now;
+		const auto looking = Mokagram::Perf::UserIsLooking()
+			&& !PowerSaving::On(PowerSaving::kAnimations);
+		const auto wanted = (_wavePlaying && !_dragging) ? 1. : 0.;
+		if (looking) {
+			_wavePhase += dt * 2. * (wanted > 0. ? 1. : 0.);
+			_waveAmp += (wanted - _waveAmp) * (1. - std::exp(-dt * 8.));
+		} else {
+			_waveAt = 0;
+		}
+		if (looking && std::abs(wanted - _waveAmp) > 0.01) {
+			update();
+		}
+		const auto phase = _wavePhase;
+		const auto amplitude = st::motionWaveAmplitude * _waveAmp;
 		p.setPen(QPen(QColor(255, 255, 255, 65), st::motionWaveStroke,
 			Qt::SolidLine, Qt::RoundCap));
 		p.drawLine(QPointF(std::min(end + st::motionWaveGap, double(width())), y),
@@ -3952,6 +3956,9 @@ private:
 	Ui::Animations::Simple _grow;
 	bool _expressive = false;
 	bool _wavePlaying = false;
+	float64 _wavePhase = 0.;
+	float64 _waveAmp = 0.;
+	crl::time _waveAt = 0;
 	bool _thin = false;
 	bool _over = false;
 	QColor _fill = Qt::white;
@@ -9311,8 +9318,16 @@ void ShowMusicBoxWith(
 		const auto tabs = content->add(
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(16, 4, 16, 6));
-		tabs->resize(tabs->width(), 36);
-		// Общая дорожка под вкладками, как в навигации полноэкранной музыки.
+		tabs->resize(tabs->width(), 40);
+		// Дорожка и плашка как у переключателей выше: плашка едет к выбранной
+		// вкладке и слегка вытягивается на ходу.
+		struct TabsSlide {
+			Ui::Animations::Simple animation;
+			int index = 0;
+			int from = 0;
+			int count = 3;
+		};
+		const auto slide = box->lifetime().make_state<TabsSlide>();
 		tabs->paintRequest(
 		) | rpl::on_next([=](QRect) {
 			auto p = QPainter(tabs);
@@ -9320,17 +9335,31 @@ void ShowMusicBoxWith(
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBgOver);
 			p.drawRoundedRect(tabs->rect(), tabs->height() / 2., tabs->height() / 2.);
+			const auto margin = 4;
+			const auto part = (tabs->width() - 2 * margin) / double(slide->count);
+			const auto at = slide->animation.value(slide->index);
+			const auto distance = std::abs(slide->index - slide->from);
+			const auto progress = distance
+				? std::clamp(std::abs(at - slide->from) / distance, 0., 1.)
+				: 1.;
+			const auto moving = part * 0.18 * (1. - std::abs(2. * progress - 1.));
+			const auto selected = QRectF(
+				margin + part * at - moving / 2,
+				margin,
+				part + moving,
+				tabs->height() - 2 * margin);
+			p.setBrush(st::windowActiveTextFg->c);
+			p.drawRoundedRect(selected, selected.height() / 2., selected.height() / 2.);
 		}, tabs->lifetime());
 		const auto tabSearch = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Поиск")));
 		const auto tabLiked = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Лайкнутые")));
 		const auto tabForYou = Ui::CreateChild<TabPill>(tabs, QString::fromUtf8(Mokagram::Lang::Tr("Для вас")));
 		tabs->widthValue(
 		) | rpl::on_next([=](int width) {
-			const auto gap = 8;
-			const auto each = (width - 2 * gap) / 3;
+			const auto each = width / 3;
 			tabSearch->setGeometry(0, 0, QueueState().telegramSearch ? width : each, tabs->height());
-			tabLiked->setGeometry(each + gap, 0, each, 36);
-			tabForYou->setGeometry(2 * (each + gap), 0, width - 2 * (each + gap), 36);
+			tabLiked->setGeometry(each, 0, each, tabs->height());
+			tabForYou->setGeometry(2 * each, 0, width - 2 * each, tabs->height());
 		}, tabs->lifetime());
 
 		const auto list = content->add(object_ptr<Ui::VerticalLayout>(content));
@@ -9692,9 +9721,19 @@ void ShowMusicBoxWith(
 			kinds->resize(kinds->width(), kindsShown ? 44 : 0);
 			chooseChat->setVisible(tab == 0 && queue.telegramSearch);
 			chooseChat->resize(chooseChat->width(), queue.telegramSearch ? 36 : 0);
-			tabs->resize(tabs->width(), queue.telegramSearch ? 0 : 36);
+			tabs->resize(tabs->width(), queue.telegramSearch ? 0 : 40);
 			tabLiked->setVisible(!queue.telegramSearch);
 			tabForYou->setVisible(!queue.telegramSearch);
+			if (slide->index != tab) {
+				slide->from = slide->index;
+				slide->animation.start(
+					[=] { tabs->update(); },
+					slide->index,
+					tab,
+					kSwitchDuration,
+					anim::easeOutCubic);
+				slide->index = tab;
+			}
 			tabSearch->setActive(tab == 0);
 			tabLiked->setActive(tab == 1);
 			tabForYou->setActive(tab == 2);
@@ -9851,14 +9890,14 @@ void ShowMusicBoxWith(
 			tabLiked->setVisible(!chats);
 			tabForYou->setVisible(!chats);
 			tabs->update();
+			slide->count = chats ? 1 : 3;
 			if (chats) {
-				tabSearch->setGeometry(0, 0, tabs->width(), 36);
+				tabSearch->setGeometry(0, 0, tabs->width(), 40);
 			} else {
-				const auto gap = 8;
-				const auto each = (tabs->width() - 2 * gap) / 3;
-				tabSearch->setGeometry(0, 0, each, 36);
-				tabLiked->setGeometry(each + gap, 0, each, 36);
-				tabForYou->setGeometry(2 * (each + gap), 0, tabs->width() - 2 * (each + gap), 36);
+				const auto each = tabs->width() / 3;
+				tabSearch->setGeometry(0, 0, each, 40);
+				tabLiked->setGeometry(each, 0, each, 40);
+				tabForYou->setGeometry(2 * each, 0, tabs->width() - 2 * each, 40);
 			}
 			input->setPlaceholder(rpl::single(input->getLastText().isEmpty()
 				? QString::fromUtf8(Mokagram::Lang::Tr(chats
