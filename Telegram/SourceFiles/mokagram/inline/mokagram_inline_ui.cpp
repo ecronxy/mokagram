@@ -29,7 +29,7 @@ namespace {
 
 constexpr auto kDebounceMs = 180;
 constexpr auto kRefreshSeconds = 6 * 60 * 60;
-constexpr auto kCryptoRefreshSeconds = 120;
+constexpr auto kCryptoRefreshSeconds = 20;
 constexpr auto kMaxAgeSeconds = 24 * 60 * 60;
 constexpr auto kRetrySeconds = 10 * 60;
 constexpr auto kMaxReplyBytes = 128 * 1024;
