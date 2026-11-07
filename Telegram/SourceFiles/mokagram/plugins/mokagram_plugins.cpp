@@ -1380,6 +1380,11 @@ int Start(LogFn log) {
 }
 
 int StartEngine(LogFn log) {
+	const auto perfStart = std::chrono::steady_clock::now();
+	const auto perfMs = [&] {
+		return std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now() - perfStart).count());
+	};
 	if (const auto env = std::getenv("MOKAGRAM_PLUGINS")) {
 		if (std::string(env) == "0") {
 			if (log) log(Mokagram::Lang::Tr("plugins: отключены переменной MOKAGRAM_PLUGINS=0"));
@@ -1403,6 +1408,7 @@ int StartEngine(LogFn log) {
 		return 0;
 	}
 	_started = true;
+	if (log) log("[mokagram-perf] plugins: хост поднят и скрипты загружены за " + perfMs() + " мс");
 #else
 	if (!EnsurePython(log)) {
 		return -1;
@@ -1434,6 +1440,7 @@ int StartEngine(LogFn log) {
 		std::string(kTlSchema),
 	});
 #endif
+	if (log) log("[mokagram-perf] plugins: _moka_init за " + perfMs() + " мс (всего с хостом)");
 	Drain(log);
 	QueueEvent("app_event", R"({"event":"START"})");
 	if (log) log("plugins loaded: " + count);
