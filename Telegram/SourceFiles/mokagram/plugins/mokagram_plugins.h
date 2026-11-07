@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace Mokagram::Plugins {
 
@@ -90,6 +91,19 @@ bool Invoke(
 	const std::string &token,
 	const std::string &payloadJson,
 	LogFn log);
+
+// Папка для временных файлов плагинов, общая для клиента и хоста (Linux, процесс под bwrap).
+// Пусто там, где хост встроен в клиент: тогда временные файлы лежат в системной папке.
+std::string SharedTempDir();
+
+// Папки клиента (рабочая папка и т.п.), которые нельзя монтировать в песочницу ни при каких настройках.
+void SetSandboxExcluded(std::vector<std::string> paths);
+
+// Хост плагинов живой? Всегда true там, где он встроен в клиент.
+bool HostAlive();
+
+// Принудительно перезапускает процесс-хост и заново загружает плагины. false, если хост встроен.
+bool RestartHost(LogFn log);
 
 // Вызывает on_plugin_unload у всех плагинов.
 void Shutdown(LogFn log);

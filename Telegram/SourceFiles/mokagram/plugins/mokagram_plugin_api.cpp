@@ -185,6 +185,18 @@ rpl::lifetime BridgeLifetime;
 	return false;
 }
 
+// Временные файлы плагинов лежат в одной папке, общей для клиента и хоста (см. SharedTempDir).
+// Без процесса-хоста (Windows, macOS) остаётся системная временная папка.
+[[nodiscard]] bool InsideSharedTemp(const QString &canonical) {
+	const auto shared = SharedTempDir();
+	if (shared.empty()) {
+		return InsideAnyStandardDir(canonical, { QStandardPaths::TempLocation });
+	}
+	return InsideDir(
+		QDir(QString::fromStdString(shared)).canonicalPath(),
+		canonical);
+}
+
 [[nodiscard]] bool PluginHasGrant(const QString &pid, const QString &grant) {
 	if (pid.isEmpty()) {
 		return false;
@@ -215,7 +227,7 @@ rpl::lifetime BridgeLifetime;
 		return false;
 	}
 	if (InsideDir(PluginDataDir(pid), canonical)
-		|| InsideAnyStandardDir(canonical, { QStandardPaths::TempLocation })) {
+		|| InsideSharedTemp(canonical)) {
 		return true;
 	}
 	return PluginHasGrant(pid, u"files"_q)
@@ -1621,11 +1633,116 @@ std::string DownloadMedia(const QJsonObject &args) {
 	});
 }
 
-std::string ClientDataDir(const QJsonObject &) {
+// Файлы клиента, которые видит бэкап. У хоста плагинов прямого доступа к tdata нет.
+const QStringList kBackupClientFiles = {
+	u"moka_settings.json"_q,
+	u"moka_notes.json"_q,
+	u"moka_snippets.json"_q,
+	u"mokagram_filters.json"_q,
+};
+constexpr auto kBackupFileLimit = qint64(30 * 1024 * 1024);
+
+[[nodiscard]] QString ClientTdataDir() {
+	return cWorkingDir() + u"tdata/"_q;
+}
+
+[[nodiscard]] QString RestoreStageDir() {
+	return ClientTdataDir() + u"restore-pending/"_q;
+}
+
+// Белый список настроек, которые переносятся бэкапом. Приватность (ghost.), защита (guard.),
+// источники плагинов и всё неизвестное восстановлением не меняются.
+[[nodiscard]] QByteArray FilterPortableSettings(const QByteArray &raw) {
+	static const auto prefixes = QStringList{
+		u"bubbles."_q, u"look."_q, u"quote."_q, u"lyrics."_q, u"music."_q,
+		u"fx."_q, u"lag."_q, u"saveinator."_q, u"feed."_q, u"plugin."_q,
+	};
+	const auto values = QJsonDocument::fromJson(raw).object().value("values").toObject();
+	auto kept = QJsonObject();
+	for (auto i = values.begin(); i != values.end(); ++i) {
+		for (const auto &prefix : prefixes) {
+			if (i.key().startsWith(prefix)) {
+				kept.insert(i.key(), i.value());
+				break;
+			}
+		}
+	}
+	return QJsonDocument(QJsonObject{ { "values", kept } }).toJson(QJsonDocument::Compact);
+}
+
+std::string BackupClientFile(const QJsonObject &args) {
+	const auto name = args.value("name").toString();
+	if (!kBackupClientFiles.contains(name)) {
+		return Reply(false, U("файл не входит в бэкап"));
+	}
+	auto file = QFile(ClientTdataDir() + name);
+	if (!file.exists()) {
+		return R"({"ok":true,"exists":false})";
+	}
+	if (file.size() > kBackupFileLimit || !file.open(QIODevice::ReadOnly)) {
+		return Reply(false, U("не удалось прочитать файл"));
+	}
+	auto data = file.readAll();
+	if (name == u"moka_settings.json"_q) {
+		data = FilterPortableSettings(data);
+	}
 	auto result = QJsonObject();
 	result.insert("ok", true);
-	result.insert("dir", cWorkingDir() + u"tdata/"_q);
+	result.insert("exists", true);
+	result.insert("data", QString::fromUtf8(data));
 	return Json(result);
+}
+
+std::string RestoreStageBegin(const QJsonObject &) {
+	QDir(RestoreStageDir()).removeRecursively();
+	QDir().mkpath(RestoreStageDir());
+	return Reply(true);
+}
+
+// Кладёт один файл бэкапа в карантин tdata/restore-pending. Применяет его только ApplyPendingRestore
+// при следующем запуске, и оба раза действует один и тот же белый список.
+std::string RestoreStagePut(const QJsonObject &args) {
+	const auto name = args.value("name").toString();
+	auto target = QString();
+	if (kBackupClientFiles.contains(name)) {
+		target = name;
+	} else if (name.startsWith(u"plugin_data/"_q) && name.size() < 300) {
+		const auto parts = name.split('/');
+		for (const auto &part : parts) {
+			if (part.isEmpty()
+				|| part == u"."_q
+				|| part == u".."_q
+				|| part.contains('\\')
+				|| part.contains(QChar(0))) {
+				return Reply(false, U("недопустимое имя файла"));
+			}
+		}
+		if (name.endsWith(u"secrets.enc"_q) || name.endsWith(u"secrets.key"_q)) {
+			return Reply(false, U("секреты не восстанавливаются"));
+		}
+		target = name;
+	} else {
+		return Reply(false, U("файл не входит в бэкап"));
+	}
+	auto data = QByteArray::fromBase64(args.value("data").toString().toLatin1());
+	if (data.size() > kBackupFileLimit) {
+		return Reply(false, U("файл слишком большой"));
+	}
+	if (target == u"moka_settings.json"_q) {
+		data = FilterPortableSettings(data);
+	}
+	const auto stage = QDir::cleanPath(RestoreStageDir());
+	const auto path = QDir::cleanPath(stage + '/' + target);
+	if (!path.startsWith(stage + '/')) {
+		return Reply(false, U("недопустимое имя файла"));
+	}
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	auto file = QFile(path);
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+		|| file.write(data) != data.size()) {
+		return Reply(false, U("не удалось записать файл"));
+	}
+	return Reply(true);
 }
 
 std::string ClientLang(const QJsonObject &) {
@@ -2818,8 +2935,12 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 		return SendAlbum(args);
 	} else if (op == "download_media") {
 		return DownloadMedia(args);
-	} else if (op == "client_data_dir") {
-		return ClientDataDir(args);
+	} else if (op == "backup_client_file") {
+		return BackupClientFile(args);
+	} else if (op == "restore_stage_begin") {
+		return RestoreStageBegin(args);
+	} else if (op == "restore_stage_put") {
+		return RestoreStagePut(args);
 	} else if (op == "client_lang") {
 		return ClientLang(args);
 	} else if (op == "install_plugin_file") {
@@ -2921,9 +3042,21 @@ void ApplyPendingRestore() {
 		if (!QFile::exists(from)) {
 			continue;
 		}
+		auto source = QFile(from);
+		if (!source.open(QIODevice::ReadOnly)) {
+			continue;
+		}
+		// Фильтр настроек применяем и здесь: карантин мог быть заполнен в обход Python.
+		auto data = source.readAll();
+		if (name == u"moka_settings.json"_q) {
+			data = FilterPortableSettings(data);
+		}
 		QFile::remove(tdata + name + u".bak"_q);
 		QFile::rename(tdata + name, tdata + name + u".bak"_q);
-		QFile::copy(from, tdata + name);
+		auto target = QFile(tdata + name);
+		if (target.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+			target.write(data);
+		}
 	}
 	if (QDir(root + u"plugin_data"_q).exists()) {
 		const auto base = QDir::cleanPath(
@@ -2964,6 +3097,10 @@ void EmitTyping(PeerData *peer, UserData *user, mtpTypeId type) {
 }
 
 void InstallBridge() {
+	SetSandboxExcluded({
+		cWorkingDir().toStdString(),
+		(cWorkingDir() + u"tdata"_q).toStdString(),
+	});
 	SetBridge(Bridge);
 	StartPluginAutoUpdate();
 	// Нормальный выход: плагины получают STOP и on_plugin_unload, пока интерпретатор ещё жив.

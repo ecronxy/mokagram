@@ -13,7 +13,8 @@ def emit(var, data, out):
             f.write("\t" + ", ".join(str(b - 256 if b > 127 else b) for b in data[i:i + 24]) + ",\n")
         f.write("};\n")
 for src, var in [("host", "kHostScript"), ("base_plugin", "kSdkScript"), ("sdk_api", "kApiScript"),
-                 ("tl_names", "kTlNamesScript"), ("tl", "kTlScript"), ("fw", "kFwScript")]:
+                 ("tl_names", "kTlNamesScript"), ("tl", "kTlScript"), ("fw", "kFwScript"),
+                 ("proc_main", "kProcMainScript")]:
     emit(var, b"\n" + open(src + ".py", "rb").read(), src + ".inc")
 emit("kTlSchema", open("tl_schema.json.tmp", "rb").read(), "tl_schema.inc")
 PY

@@ -884,7 +884,7 @@ def _fw_secret_file():
 
 def _fw_secret_key():
     import secrets as _s
-    path = os.path.join(os.path.expanduser('~'), '.config', 'mokagram', 'secrets.key')
+    path = os.path.join(_data_root(), 'secrets.key')   # внутри песочницы ~/.config не виден
     try:
         with open(path, 'rb') as f:
             key = f.read()
@@ -1177,33 +1177,13 @@ _fw_export()
 # Этап 6: бэкап и восстановление
 # =====================================================================================
 
+import base64
 import zipfile
 
-# Что из настроек переносится бэкапом. Белый список: приватность (ghost.), защита (guard.),
-# источники плагинов и всё неизвестное восстановлением не меняются.
-_FW_PORTABLE_SETTINGS = ('bubbles.', 'look.', 'quote.', 'lyrics.', 'music.', 'fx.', 'lag.', 'saveinator.', 'feed.',
-                         'plugin.')
-
-
-def _fw_portable_settings(raw):
-    """moka_settings.json только с переносимыми ключами; битый файл даёт пустой набор."""
-    try:
-        values = json.loads(raw).get('values', {})
-    except (ValueError, AttributeError):
-        values = {}
-    values = {k: v for k, v in values.items() if isinstance(k, str) and k.startswith(_FW_PORTABLE_SETTINGS)}
-    return json.dumps({'values': values}, ensure_ascii=False)
-
-
+# Файлы клиента и фильтр переносимых настроек живут в C++ (backup_client_file, restore_stage_*):
+# у хоста плагинов нет доступа к папке клиента.
 _FW_BACKUP_CLIENT = ('moka_settings.json', 'moka_notes.json', 'moka_snippets.json', 'mokagram_filters.json')
 _FW_BACKUP_LIMIT = 30 << 20
-
-
-def _fw_client_dir():
-    try:
-        return json.loads(_moka_native('client_data_dir', '{}')).get('dir', '')
-    except Exception:
-        return ''
 
 
 @_fw_builtin('backup', 'бэкап плагинов, их данных и настроек одним файлом в Избранное')
@@ -1229,15 +1209,10 @@ def _fw_cmd_backup(ctx):
                         if total > _FW_BACKUP_LIMIT:
                             raise RuntimeError('данные плагинов больше 30 МБ')
                         z.write(full, 'plugin_data/' + os.path.relpath(full, root).replace(os.sep, '/'))
-                cdir = _fw_client_dir()
                 for fn in _FW_BACKUP_CLIENT:
-                    full = os.path.join(cdir, fn)
-                    if cdir and os.path.isfile(full):
-                        if fn == 'moka_settings.json':
-                            with open(full, 'rb') as f:
-                                z.writestr('client/' + fn, _fw_portable_settings(f.read()))
-                            continue
-                        z.write(full, 'client/' + fn)
+                    res = json.loads(_moka_native('backup_client_file', json.dumps({'name': fn})))
+                    if res.get('ok') and res.get('exists'):
+                        z.writestr('client/' + fn, res['data'])
             me = json.loads(_moka_native('get_me', '{}'))
             if not me.get('ok'):
                 raise RuntimeError('нет открытой сессии')
@@ -1274,27 +1249,20 @@ def _moka_restore(path):
         if button != 'yes':
             return
         try:
-            stage = os.path.join(_fw_client_dir(), 'restore-pending')
-            import shutil
-            shutil.rmtree(stage, ignore_errors=True)
-            os.makedirs(stage, exist_ok=True)
+            _moka_native('restore_stage_begin', '{}')
             for n in names:
                 if n.endswith('/'):
                     continue
                 if n.startswith('client/') and n[7:] in _FW_BACKUP_CLIENT:
-                    target = os.path.join(stage, n[7:])
-                    if n[7:] == 'moka_settings.json':
-                        os.makedirs(os.path.dirname(target), exist_ok=True)
-                        with open(target, 'w', encoding='utf8') as f:
-                            f.write(_fw_portable_settings(z.read(n)))
-                        continue
+                    stage_name = n[7:]
                 elif n.startswith('plugin_data/') and not n.endswith(('secrets.enc', 'secrets.key')):
-                    target = os.path.join(stage, n)
+                    stage_name = n
                 else:
                     continue
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with z.open(n) as src, open(target, 'wb') as dst:
-                    dst.write(src.read())
+                res = json.loads(_moka_native('restore_stage_put', json.dumps({
+                    'name': stage_name, 'data': base64.b64encode(z.read(n)).decode('ascii')})))
+                if not res.get('ok'):
+                    raise RuntimeError(res.get('error', 'клиент отклонил файл ' + stage_name))
             import tempfile
             tmp = tempfile.mkdtemp(prefix='moka_restore_')
             for n in plugins:
