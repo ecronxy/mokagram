@@ -29,6 +29,7 @@ namespace {
 
 constexpr auto kDebounceMs = 180;
 constexpr auto kRefreshSeconds = 6 * 60 * 60;
+constexpr auto kCryptoRefreshSeconds = 120;
 constexpr auto kMaxAgeSeconds = 24 * 60 * 60;
 constexpr auto kRetrySeconds = 10 * 60;
 constexpr auto kMaxReplyBytes = 128 * 1024;
@@ -51,6 +52,18 @@ public:
 
 	rpl::producer<> changes() const {
 		return _changes.events();
+	}
+
+	void refreshFresh(qint64 maxAge) {
+		const auto now = QDateTime::currentSecsSinceEpoch();
+		if (_requesting
+			|| now - _attemptAt < 20
+			|| (!_values.isEmpty() && now - _fetchedAt < maxAge)) {
+			return;
+		}
+		_requesting = true;
+		_attemptAt = now;
+		request(false);
 	}
 
 	void refresh() {
@@ -221,13 +234,13 @@ private:
 			return;
 		}
 		if (const auto cr = Commands::CrPreview(text)) {
+			CurrencyRates().refreshFresh(kCryptoRefreshSeconds);
 			if (cr->needsRates) {
 				hide();
-				CurrencyRates().refresh();
 				return;
 			}
 			_query = text;
-			_value = cr->text.section(u" ≈ "_q, 1);
+			_value = cr->compact;
 			_accept = cr->text;
 			setAccessibleName(_value);
 			setToolTip(QString::fromUtf8(Lang::Tr("Нажмите или Tab, чтобы вставить результат")));
@@ -305,12 +318,13 @@ const QHash<QString, double> &CurrencyRatesNow() {
 }
 
 void RefreshCurrencyRates() {
-	CurrencyRates().refresh();
+	CurrencyRates().refreshFresh(kCryptoRefreshSeconds);
 }
 
 void SetupInlineResults(not_null<Ui::InputField*> field) {
 	if (field->property("mokagramInlineResults").toBool()) return;
 	field->setProperty("mokagramInlineResults", true);
+	RefreshCurrencyRates();
 	new Hint(field);
 }
 

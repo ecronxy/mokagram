@@ -687,7 +687,7 @@ std::optional<CrResult> CrPreview(const QString &text) {
 	if (!result) {
 		return std::nullopt;
 	}
-	return CrResult{ result->text, result->needsRates };
+	return CrResult{ result->text, result->compact, result->needsRates };
 }
 
 std::optional<std::pair<QString, QString>> CalcPreview(const QString &text) {

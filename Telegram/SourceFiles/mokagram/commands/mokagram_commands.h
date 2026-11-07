@@ -42,6 +42,7 @@ void RegisterSettings();
 // Для «.cr 2 ton usdt» в поле: готовая строка сводки. needsRates: курсы ещё грузятся.
 struct CrResult {
 	QString text;
+	QString compact;
 	bool needsRates = false;
 };
 [[nodiscard]] std::optional<CrResult> CrPreview(const QString &text);

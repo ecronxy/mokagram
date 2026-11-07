@@ -394,6 +394,38 @@ constexpr auto kStarUsd = 0.015;
 		: code.toUpper();
 }
 
+[[nodiscard]] QString CurrencyName(const QString &code) {
+	return (code == u"xtr"_s) ? u"STARS"_s : code.toUpper();
+}
+
+[[nodiscard]] QString CurrencyEmoji(const QString &code) {
+	static const auto emoji = QHash<QString, QString>{
+		{ u"ton"_s, u"💎"_s }, { u"usdt"_s, u"💵"_s }, { u"usd"_s, u"💵"_s },
+		{ u"rub"_s, u"🇷🇺"_s }, { u"xtr"_s, u"⭐"_s }, { u"eur"_s, u"💶"_s },
+		{ u"btc"_s, u"🟠"_s }, { u"eth"_s, u"🔷"_s },
+	};
+	return emoji.value(code, u"🪙"_s);
+}
+
+[[nodiscard]] QString MoneyNumber(double value);
+
+[[nodiscard]] QString MoneyFor(const QString &code, double value) {
+	static const auto crypto = QStringList{
+		u"ton"_s, u"btc"_s, u"eth"_s, u"not"_s, u"sol"_s, u"bnb"_s, u"doge"_s,
+		u"ltc"_s, u"trx"_s, u"xrp"_s, u"ada"_s, u"dot"_s,
+	};
+	if (code == u"xtr"_s && std::abs(value) >= 1.) {
+		return MoneyNumber(std::round(value));
+	} else if (!crypto.contains(code) && code != u"xtr"_s && std::abs(value) >= 0.01) {
+		auto text = QString::number(std::abs(value), 'f', 2);
+		const auto dot = text.indexOf(u'.');
+		auto integer = text.left(dot);
+		for (auto i = integer.size() - 3; i > 0; i -= 3) integer.insert(i, QChar(0x202F));
+		return (value < 0 ? u"-"_s : QString()) + integer + text.mid(dot);
+	}
+	return MoneyNumber(value);
+}
+
 [[nodiscard]] QString MoneyNumber(double value) {
 	const auto abs = std::abs(value);
 	const auto digits = (abs >= 100.) ? 2 : (abs >= 1.) ? 3 : (abs >= 0.01) ? 5 : 8;
@@ -455,35 +487,37 @@ std::optional<Conversion> ConvertCurrencyCommand(
 		if (code.isEmpty()) {
 			static const auto looksLikeCode = QRegularExpression(u"^[a-zA-Z]{2,10}$"_s);
 			if (rates.isEmpty() && looksLikeCode.match(token).hasMatch()) {
-				return Conversion{ {}, true };
+				return Conversion{ {}, {}, true };
 			}
 			continue;
 		}
 		codes << code;
 	}
 	if (codes.isEmpty()) return std::nullopt;
-	if (rates.isEmpty()) return Conversion{ {}, true };
+	if (rates.isEmpty()) return Conversion{ {}, {}, true };
 	const auto source = codes.takeFirst();
 	codes.removeAll(source);
 	codes.removeDuplicates();
 	if (codes.isEmpty()) {
-		for (const auto &code : { u"rub"_s, u"usdt"_s, u"xtr"_s }) {
+		for (const auto &code : { u"usdt"_s, u"xtr"_s, u"rub"_s }) {
 			if (code != source) codes << code;
 		}
 	}
 	const auto from = rates.value(source);
 	if (from <= 0.) return std::nullopt;
 	auto parts = QStringList();
+	auto lines = QStringList();
+	lines << u"🔄 Конвертация "_s + MoneyNumber(amount) + u' ' + CurrencyName(source);
+	lines << CurrencyName(source) + u' ' + CurrencyEmoji(source) + u": "_s + MoneyNumber(amount);
 	for (const auto &code : codes) {
 		const auto to = rates.value(code);
 		if (to <= 0.) return std::nullopt;
 		const auto value = amount / from * to;
 		if (!std::isfinite(value)) return std::nullopt;
-		parts << MoneyNumber(value) + u' ' + CurrencyLabel(code);
+		parts << MoneyFor(code, value) + u' ' + CurrencyLabel(code);
+		lines << CurrencyName(code) + u' ' + CurrencyEmoji(code) + u": "_s + MoneyFor(code, value);
 	}
-	return Conversion{
-		MoneyNumber(amount) + u' ' + CurrencyLabel(source) + u" ≈ "_s + parts.join(u" · "_s),
-	};
+	return Conversion{ lines.join(u'\n'), parts.join(u" · "_s) };
 }
 
 } // namespace Mokagram::Inline

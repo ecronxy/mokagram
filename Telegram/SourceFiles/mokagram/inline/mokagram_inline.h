@@ -33,7 +33,8 @@ struct Result {
 // Команда «.cr 2 ton usdt»: сводка или перевод в указанные валюты. Пустой
 // text при needsRates: курсы ещё не загружены.
 struct Conversion {
-	QString text;
+	QString text;     // готовое сообщение из нескольких строк
+	QString compact;  // «89.85 ₽ · 1.10 USDT» для серой подсказки
 	bool needsRates = false;
 };
 [[nodiscard]] std::optional<Conversion> ConvertCurrencyCommand(
