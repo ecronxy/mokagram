@@ -24,6 +24,8 @@
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_components.h"
+#include "history/history_item_helpers.h"
+#include "history/view/history_view_element.h"
 #include "main/main_session.h"
 #include "settings.h"
 #include "window/window_session_controller.h"
@@ -286,6 +288,32 @@ void RestoreFiles(
 }
 
 
+// Ответы на удалённое сообщение теряли цитату (оставался один ник):
+// переводим их на призрака удалённого.
+void RelinkReplies(
+		not_null<::History*> history,
+		const base::flat_map<int64, HistoryItem*> &byOrigin) {
+	if (byOrigin.empty()) {
+		return;
+	}
+	for (const auto &block : history->blocks) {
+		for (const auto &element : block->messages) {
+			const auto item = element->data();
+			const auto reply = item->Get<HistoryMessageReply>();
+			if (!reply
+				|| reply->externalPeerId()
+				|| !IsServerMsgId(reply->messageId())) {
+				continue;
+			}
+			const auto i = byOrigin.find(reply->messageId().bare);
+			if (i != end(byOrigin) && i->second != item) {
+				reply->setInLogReplyTo(item, i->second);
+				history->owner().requestItemResize(item);
+			}
+		}
+	}
+}
+
 // Создаёт призраков и один раз вставляет их в блоки по дате.
 void CreateGhosts(
 		not_null<Main::Session*> session,
@@ -366,6 +394,14 @@ void CreateGhosts(
 	}
 	for (const auto &history : touched) {
 		history->checkLocalMessages();
+	}
+	for (const auto &row : rows) {
+		if (const auto history = session->data().historyLoaded(PeerId(row.peer))) {
+			touched.emplace(history);
+		}
+	}
+	for (const auto &history : touched) {
+		RelinkReplies(history, ghosts.histories[history].byOrigin);
 	}
 	if (!qEnvironmentVariableIsEmpty("MOKAGRAM_DEBUG_CMD")) {
 		for (const auto &item : made) {
