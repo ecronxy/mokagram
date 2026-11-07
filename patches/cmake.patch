@@ -1,0 +1,97 @@
+diff --git i/init_target.cmake w/init_target.cmake
+index f2a089f..52f0d37 100644
+--- i/init_target.cmake
++++ w/init_target.cmake
+@@ -43,7 +43,7 @@ function(init_target target_name) # init_target(my_target [cxx_std_..] folder_na
+             endif()
+         endif()
+     endif()
+-    if (DESKTOP_APP_SPECIAL_TARGET AND DESKTOP_APP_ENABLE_LTO)
++    if (MOKA_ENABLE_LTO)
+         if (MSVC)
+             set_property(TARGET ${target_name} APPEND_STRING PROPERTY STATIC_LIBRARY_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:/LTCG>")
+         elseif (CMAKE_GENERATOR STREQUAL Xcode)
+@@ -72,8 +72,7 @@ function(init_non_host_target target_name)
+         )
+     endif()
+     if (APPLE
+-        AND DESKTOP_APP_SPECIAL_TARGET
+-        AND DESKTOP_APP_ENABLE_LTO
++        AND MOKA_ENABLE_LTO
+         AND NOT CMAKE_GENERATOR STREQUAL Xcode
+         AND DESKTOP_APP_MAC_ARCH MATCHES "^(arm64|x86_64)$")
+         target_link_options(${target_name} PRIVATE
+diff --git i/options_linux.cmake w/options_linux.cmake
+index c5f9a95..9789035 100644
+--- i/options_linux.cmake
++++ w/options_linux.cmake
+@@ -38,6 +38,13 @@ INTERFACE
+     -Wl,--as-needed
+ )
+ 
++if (MOKA_X86_64_V2 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
++    target_compile_options(common_options
++    INTERFACE
++        -march=x86-64-v2
++    )
++endif()
++
+ if (DESKTOP_APP_SPECIAL_TARGET)
+     target_compile_options(common_options
+     INTERFACE
+diff --git i/options_win.cmake w/options_win.cmake
+index 9ff67e8..b3b12fd 100644
+--- i/options_win.cmake
++++ w/options_win.cmake
+@@ -67,6 +67,7 @@ if (MSVC)
+         $<$<AND:$<CONFIG:Debug>,$<OR:$<BOOL:${build_win64}>,$<BOOL:${build_winarm}>>>:/DEBUG:FASTLINK>
+         $<$<NOT:$<AND:$<CONFIG:Debug>,$<OR:$<BOOL:${build_win64}>,$<BOOL:${build_winarm}>>>>:$<IF:$<BOOL:$<GENEX_EVAL:$<TARGET_PROPERTY:MSVC_DEBUG_INFORMATION_FORMAT>>>,/DEBUG,/DEBUG:NONE>>
+         $<$<NOT:$<CONFIG:Debug>>:/OPT:REF>
++        $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>
+         /INCREMENTAL:NO
+         /DEPENDENTLOADFLAG:0x800
+     )
+@@ -101,14 +102,17 @@ if (MSVC)
+         target_compile_options(common_options
+         INTERFACE
+             /WX
+-            $<$<AND:$<NOT:$<CONFIG:Debug>>,$<BOOL:${DESKTOP_APP_ENABLE_LTO}>>:/GL>
+-        )
+-        target_link_options(common_options
+-        INTERFACE
+-            $<$<AND:$<NOT:$<CONFIG:Debug>>,$<BOOL:${DESKTOP_APP_ENABLE_LTO}>>:/LTCG>
+-            $<$<AND:$<NOT:$<CONFIG:Debug>>,$<BOOL:${DESKTOP_APP_ENABLE_LTO}>>:/LTCGOUT:>
+         )
+     endif()
++    target_compile_options(common_options
++    INTERFACE
++        $<$<AND:$<NOT:$<CONFIG:Debug>>,$<BOOL:${MOKA_ENABLE_LTO}>>:/GL>
++    )
++    target_link_options(common_options
++    INTERFACE
++        $<$<AND:$<NOT:$<CONFIG:Debug>>,$<BOOL:${MOKA_ENABLE_LTO}>>:/LTCG>
++        $<$<AND:$<NOT:$<CONFIG:Debug>>,$<BOOL:${MOKA_ENABLE_LTO}>>:/LTCGOUT:>
++    )
+ endif()
+ 
+ target_link_libraries(common_options
+diff --git i/variables.cmake w/variables.cmake
+index 0adc703..a155fe8 100644
+--- i/variables.cmake
++++ w/variables.cmake
+@@ -41,6 +41,15 @@ cmake_dependent_option(DESKTOP_APP_RELEASE_QT "Link the optimized Qt build even
+ option(DESKTOP_APP_USE_HUNSPELL_ONLY "Disable system spellchecker and use bundled Hunspell only. (For debugging purposes)" OFF)
+ option(DESKTOP_APP_ASAN "Enable address sanitizer" OFF)
+ cmake_dependent_option(DESKTOP_APP_ENABLE_LTO "Enable Link Time Optimization (slow builds, use for releases)." OFF DESKTOP_APP_SPECIAL_TARGET OFF)
++# mokaGram: LTO для release включён и в сборках без special target. Для отладки: -DMOKA_LTO=OFF.
++option(MOKA_LTO "Enable Link Time Optimization in release configurations." ON)
++if (MOKA_LTO OR (DESKTOP_APP_SPECIAL_TARGET AND DESKTOP_APP_ENABLE_LTO))
++    set(MOKA_ENABLE_LTO ON)
++else()
++    set(MOKA_ENABLE_LTO OFF)
++endif()
++# mokaGram: x86-64-v2 (SSE4.2, POPCNT) для 64-битных линукс-билдов. Отключить: -DMOKA_X86_64_V2=OFF.
++option(MOKA_X86_64_V2 "Compile for the x86-64-v2 baseline on Linux." ON)
+ cmake_dependent_option(DESKTOP_APP_USE_ENCHANT "Use Enchant instead of bundled Hunspell." OFF LINUX OFF)
+ cmake_dependent_option(DESKTOP_APP_USE_CLD3 "Disable system text language recognition and use bundled cld3 only." OFF APPLE ON)
+ cmake_dependent_option(DESKTOP_APP_USE_PANGO "Render text via Pango instead of private Qt API." "${LINUX}" "NOT DESKTOP_APP_DISABLE_PRIVATE_QT_API" ON)
