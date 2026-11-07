@@ -9391,6 +9391,9 @@ void ShowMusicBoxWith(
 			const auto rect = transitionRect();
 			transition->now = Ui::GrabWidget(content, rect);
 			overlay->setGeometry(rect);
+			// Вкладки живут поверх перехода, чтобы плашка ехала по-настоящему.
+			overlay->setMask(QRegion(overlay->rect()).subtracted(
+				QRegion(tabs->geometry().translated(-rect.topLeft()))));
 			overlay->show();
 			overlay->raise();
 		};
@@ -9413,6 +9416,13 @@ void ShowMusicBoxWith(
 			overlay->hide();
 			transition->top = top;
 			auto was = Ui::GrabWidget(content, transitionRect());
+			// Старые вкладки в снимке не нужны: они остаются живыми.
+			{
+				auto p = QPainter(&was);
+				p.fillRect(
+					tabs->geometry().translated(0, -top),
+					st::boxBg);
+			}
 			transition->changing = true;
 			change();
 			transition->changing = false;
