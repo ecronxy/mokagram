@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_user.h"
+#include "mokagram/settings/mokagram_settings.h"
 
 #include "api/api_credits.h"
 #include "api/api_global_privacy.h"
@@ -135,7 +136,9 @@ Data::LastseenStatus LastseenFromMTP(
 	return status.match([](const MTPDuserStatusEmpty &data) {
 		return Data::LastseenStatus::LongAgo();
 	}, [&](const MTPDuserStatusRecently &data) {
-		return currentStatus.isLocalOnlineValue()
+		return (currentStatus.isLocalOnlineValue()
+			|| (currentStatus.onlineTill()
+				&& Mokagram::Settings::Bool(u"privacy.relativeLastSeen"_q)))
 			? Data::LastseenStatus::OnlineTill(
 				currentStatus.onlineTill(),
 				true,

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_peer_values.h"
+#include "mokagram/settings/mokagram_settings.h"
 
 #include "lang/lang_keys.h"
 #include "data/data_channel.h"
@@ -27,6 +28,11 @@ constexpr auto kMinOnlineChangeTimeout = crl::time(1000);
 constexpr auto kMaxOnlineChangeTimeout = 86400 * crl::time(1000);
 constexpr auto kSecondsInDay = 86400;
 
+[[nodiscard]] bool ShowRelativeLastSeen(LastseenStatus status) {
+	return status.isLocalOnlineValue()
+		&& Mokagram::Settings::Bool(u"privacy.relativeLastSeen"_q);
+}
+
 int OnlinePhraseChangeInSeconds(LastseenStatus status, TimeId now) {
 	const auto till = status.onlineTill();
 	if (till > now) {
@@ -35,7 +41,7 @@ int OnlinePhraseChangeInSeconds(LastseenStatus status, TimeId now) {
 		return int(std::min(
 			int64(till) - int64(now),
 			int64(std::numeric_limits<int>::max())));
-	} else if (status.isHidden()) {
+	} else if (status.isHidden() && !ShowRelativeLastSeen(status)) {
 		return std::numeric_limits<int>::max();
 	}
 	const auto minutes = (now - till) / 60;
@@ -81,7 +87,7 @@ std::optional<QString> OnlineTextCommon(LastseenStatus status, TimeId now) {
 		return tr::lng_status_last_week(tr::now);
 	} else if (status.isWithinMonth()) {
 		return tr::lng_status_last_month(tr::now);
-	} else if (status.isHidden()) {
+	} else if (status.isHidden() && !ShowRelativeLastSeen(status)) {
 		return tr::lng_status_recently(tr::now);
 	}
 	return std::nullopt;

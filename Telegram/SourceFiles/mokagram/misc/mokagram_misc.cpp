@@ -517,6 +517,17 @@ void RegisterSettings() {
 		.sectionIcon = u"palette"_q,
 		.icon = u"id"_q,
 	});
+	Settings::Register({
+		.key = u"privacy.relativeLastSeen"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Статус «в сети»")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Точное время вместо «был(а) недавно»")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Если Telegram скрывает время, но мы видели человека в сети или за действием, пишем «был(а) 5 минут назад». Строка обновляется сама.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.category = u"privacy"_q,
+		.sectionIcon = u"online"_q,
+		.icon = u"online"_q,
+	});
 	Guard::RegisterSettings();
 	Settings::Register({
 		.key = u"documents.pdf"_q,
