@@ -5353,7 +5353,6 @@ public:
 	: RpWidget(parent.get())
 	, _controller(controller)
 	, _view(Ui::CreateChild<LyricsView>(this))
-	, _nextList(Ui::CreateChild<Ui::VerticalLayout>(this))
 	, _seek(Ui::CreateChild<SeekBar>(this))
 	, _heart(Ui::CreateChild<RoundGlyph>(this, Glyph::Add, 44))
 	, _collapse(Ui::CreateChild<RoundGlyph>(this, Glyph::Collapse, 44))
@@ -5523,7 +5522,6 @@ public:
 			if (_tab == Tab::Queue) {
 				rebuildTab();
 			}
-			rebuildNext();
 		}, lifetime());
 		for (const auto button : { _heart, _collapse, _filter, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
 			button->setOverlay(true);
@@ -5859,8 +5857,6 @@ protected:
 		QRect cover;
 		QRect info;
 		QRect lyrics;
-		QRect next;
-		bool showNext = false;
 		QRect barCover;
 		QRect barInfo;
 		QRect seek;
@@ -5923,23 +5919,10 @@ protected:
 					std::min(s(56), coverHeight));
 				lyricsLeft = margin + colWidth + s(32);
 			}
-			auto lyricsRight = width() - margin;
-			// На широком окне справа колонка «Далее»: ближайшие треки очереди.
-			if (result.showRight && width() >= s(1400) && _nextCount > 0) {
-				const auto nextWidth = std::clamp(int(width() * 0.2), s(260), s(340));
-				const auto nextHeight = s(44) + _nextCount * kRowHeight;
-				result.showNext = true;
-				result.next = QRect(
-					width() - margin - nextWidth,
-					top + std::max((areaHeight - nextHeight) / 2, 0),
-					nextWidth,
-					nextHeight);
-				lyricsRight = result.next.x() - s(32);
-			}
 			result.lyrics = QRect(
 				lyricsLeft,
 				top,
-				std::max(lyricsRight - lyricsLeft, 0),
+				std::max(width() - margin - lyricsLeft, 0),
 				areaHeight);
 		} else {
 			const auto contentWidth = std::max(width() - 2 * margin, 0);
@@ -6100,11 +6083,6 @@ protected:
 		_seek->setGeometry(layout.seek);
 		_view->setVisible(_tab == Tab::Now);
 		_view->setGeometry(layout.lyrics);
-		_nextList->setVisible(_tab == Tab::Now && layout.showNext);
-		if (layout.showNext) {
-			_nextList->resizeToWidth(layout.next.width());
-			_nextList->move(layout.next.x(), layout.next.y() + s(44));
-		}
 		_tabScroll->setVisible(_tab != Tab::Now);
 		_tabScroll->setGeometry(
 			layout.center.x(),
@@ -6926,32 +6904,6 @@ protected:
 		update();
 		scheduleHomeMoreIfNeeded();
 	}
-	void rebuildNext() {
-		_nextList->clear();
-		_nextCount = 0;
-		const auto &queue = QueueState();
-		const auto playingId = PlayingTrack().id;
-		if (queue.index >= 0
-			&& queue.index < int(queue.tracks.size())
-			&& queue.tracks[queue.index].id == playingId) {
-			const auto room = std::clamp(
-				(height() - style::ConvertScale(300)) / kRowHeight,
-				1,
-				5);
-			for (auto i = queue.index + 1; i < int(queue.tracks.size()) && _nextCount < room; ++i) {
-				_nextList->add(object_ptr<Row>(
-					_nextList,
-					_controller,
-					queue.tracks[i],
-					i,
-					RowMode::Queue));
-				++_nextCount;
-			}
-		}
-		auto event = QResizeEvent(size(), size());
-		resizeEvent(&event);
-		update();
-	}
 	void fillQueue() {
 		const auto &queue = QueueState();
 		const auto playingId = PlayingTrack().id;
@@ -7063,17 +7015,6 @@ protected:
 			font.setPixelSize(s(size));
 			return font;
 		};
-
-		if (_tab == Tab::Now && layout.showNext) {
-			auto font = st::semiboldFont->f;
-			font.setPixelSize(s(15));
-			p.setFont(font);
-			p.setPen(st::windowSubTextFg);
-			p.drawText(
-				QRect(layout.next.x() + s(16), layout.next.y(), layout.next.width() - s(32), s(44)),
-				Qt::AlignLeft | Qt::AlignVCenter,
-				QString::fromUtf8(Mokagram::Lang::Tr("Далее в очереди")));
-		}
 
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
@@ -7523,7 +7464,6 @@ private:
 			if (_tab == Tab::Queue) {
 				rebuildTab();
 			}
-			rebuildNext();
 		}
 		if (_lyricsFor != track.id) {
 			_lyricsFor = track.id;
@@ -7544,8 +7484,6 @@ private:
 
 	const not_null<Window::SessionController*> _controller;
 	const not_null<LyricsView*> _view;
-	const not_null<Ui::VerticalLayout*> _nextList;
-	int _nextCount = 0;
 	const not_null<SeekBar*> _seek;
 	const not_null<RoundGlyph*> _heart;
 	const not_null<RoundGlyph*> _collapse;
