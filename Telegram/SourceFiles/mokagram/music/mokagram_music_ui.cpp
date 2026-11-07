@@ -5173,7 +5173,7 @@ public:
 	: AbstractButton(parent)
 	, _track(track)
 	, _playing(playing) {
-		resize(width(), style::ConvertScale(48));
+		resize(width(), style::ConvertScale(56));
 		setPointerCursor(true);
 		if (const auto item = TrackMessage(track)) {
 			const auto document = item->media()->document();
@@ -5219,7 +5219,7 @@ private:
 				_art = image->original();
 			}
 		}
-		const auto side = s(36);
+		const auto side = s(40);
 		const auto art = QRect(s(8), (height() - side) / 2, side, side);
 		auto path = QPainterPath();
 		path.addRoundedRect(art, s(8), s(8));
@@ -5240,7 +5240,7 @@ private:
 		p.setFont(title);
 		p.setPen(_playing ? st::windowActiveTextFg->c : st::windowFg->c);
 		p.drawText(
-			QRect(left, height() / 2 - s(19), textWidth, s(18)),
+			QRect(left, height() / 2 - s(21), textWidth, s(20)),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			QFontMetrics(title).elidedText(_track.title, Qt::ElideRight, textWidth));
 		auto sub = st::normalFont->f;
@@ -5248,7 +5248,7 @@ private:
 		p.setFont(sub);
 		p.setPen(st::windowSubTextFg->c);
 		p.drawText(
-			QRect(left, height() / 2 + s(1), textWidth, s(17)),
+			QRect(left, height() / 2 + s(1), textWidth, s(18)),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			QFontMetrics(sub).elidedText(_track.artist, Qt::ElideRight, textWidth));
 	}
@@ -6060,12 +6060,13 @@ protected:
 			// На широком окне справа панель очереди, как у Spotify.
 			if (result.showRight && width() >= s(1400) && _sideRows > 0) {
 				const auto sideWidth = std::clamp(int(width() * 0.22), s(280), s(360));
+				const auto sideHeight = std::min(sideContentHeight(), areaHeight);
 				result.showNext = true;
 				result.next = QRect(
 					width() - margin - sideWidth,
-					top,
+					top + std::max((areaHeight - sideHeight) / 2, 0),
 					sideWidth,
-					areaHeight);
+					sideHeight);
 				lyricsRight = result.next.x() - s(32);
 			}
 			result.lyrics = QRect(
@@ -7066,15 +7067,19 @@ protected:
 		update();
 		scheduleHomeMoreIfNeeded();
 	}
+	[[nodiscard]] int sideContentHeight() const {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		return s(44) + s(8) + _sideLabels * s(28) + _sideRows * s(56);
+	}
 	void rebuildSide() {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		_sideList->clear();
 		_sideRows = 0;
 		_sideLabels = 0;
 		const auto room = std::clamp(
-			(computeLayout().lyrics.height() - s(44) - s(8) - 2 * s(28)) / s(48),
+			(height() - s(300) - s(52) - 2 * s(28)) / s(56),
 			1,
-			30);
+			8);
 		const auto &queue = QueueState();
 		const auto playingId = PlayingTrack().id;
 		if (_sideTab == 0) {
@@ -7240,7 +7245,7 @@ protected:
 
 		if (_tab == Tab::Now && layout.showNext) {
 			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(0x1c, 0x1c, 0x1c));
+			p.setBrush(QColor(0, 0, 0, 90));
 			p.drawRoundedRect(layout.next, s(22), s(22));
 		}
 
