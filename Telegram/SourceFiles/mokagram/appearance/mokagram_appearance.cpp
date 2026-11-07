@@ -197,8 +197,8 @@ void RegisterSettings() {
 	});
 	playerEntry({
 		.key = u"player.vinyl"_q,
-		.title = QString::fromUtf8(Mokagram::Lang::Tr("Виниловый диск у обложки")),
-		.description = QString::fromUtf8(Mokagram::Lang::Tr("В полноэкранном плеере из-за обложки выглядывает диск: крутится при воспроизведении и плавно останавливается на паузе.")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Обложка в виде диска")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("В верхней панели плеера обложка круглая, как виниловый диск: крутится при воспроизведении и плавно останавливается на паузе.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = true,
 	});

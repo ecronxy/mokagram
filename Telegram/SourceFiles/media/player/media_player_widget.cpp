@@ -70,6 +70,64 @@ namespace {
 	return WaveHeight() / 2;
 }
 
+// Mokagram: круглый виниловый диск, обложка внутри вращается.
+void PaintDisc(
+		QPainter &p,
+		const QRectF &box,
+		const QPixmap &label,
+		double angle) {
+	const auto radius = std::min(box.width(), box.height()) / 2.;
+	const auto center = box.center();
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	auto base = QRadialGradient(center, radius);
+	base.setColorAt(0., QColor(0x1c, 0x1c, 0x1e));
+	base.setColorAt(0.6, QColor(0x10, 0x10, 0x11));
+	base.setColorAt(1., QColor(0x07, 0x07, 0x08));
+	p.setBrush(base);
+	p.drawEllipse(center, radius, radius);
+	p.setBrush(Qt::NoBrush);
+	p.setPen(QPen(QColor(255, 255, 255, 14), 1.));
+	for (auto r = radius * 0.7; r < radius * 0.97; r += radius * 0.09) {
+		p.drawEllipse(center, r, r);
+	}
+	auto sheen = QConicalGradient(center, 35.);
+	sheen.setColorAt(0., QColor(255, 255, 255, 0));
+	sheen.setColorAt(0.07, QColor(255, 255, 255, 34));
+	sheen.setColorAt(0.14, QColor(255, 255, 255, 0));
+	sheen.setColorAt(0.5, QColor(255, 255, 255, 0));
+	sheen.setColorAt(0.57, QColor(255, 255, 255, 26));
+	sheen.setColorAt(0.64, QColor(255, 255, 255, 0));
+	sheen.setColorAt(1., QColor(255, 255, 255, 0));
+	p.setPen(Qt::NoPen);
+	p.setBrush(sheen);
+	p.drawEllipse(center, radius * 0.98, radius * 0.98);
+	const auto inner = radius * 0.64;
+	p.save();
+	p.translate(center);
+	p.rotate(angle);
+	auto clip = QPainterPath();
+	clip.addEllipse(QPointF(), inner, inner);
+	p.setClipPath(clip);
+	const auto field = QRectF(-inner, -inner, inner * 2, inner * 2);
+	if (label.isNull()) {
+		p.fillRect(field, QColor(0x23, 0x23, 0x25));
+	} else {
+		const auto scaled = QSizeF(label.size()).scaled(field.size(), Qt::KeepAspectRatioByExpanding);
+		p.drawPixmap(
+			QRectF(-scaled.width() / 2, -scaled.height() / 2, scaled.width(), scaled.height()),
+			label,
+			QRectF(QPointF(), QSizeF(label.size())));
+	}
+	p.restore();
+	p.setBrush(Qt::NoBrush);
+	p.setPen(QPen(QColor(0, 0, 0, 120), 1.));
+	p.drawEllipse(center, inner, inner);
+	p.setPen(Qt::NoPen);
+	p.setBrush(QColor(0x0b, 0x0b, 0x0c));
+	p.drawEllipse(center, radius * 0.09, radius * 0.09);
+}
+
 // Mokagram: верхняя полоса плеера, волнистая как в полноэкранном плеере.
 class WavySlider final : public Ui::FilledSlider {
 public:
@@ -77,8 +135,8 @@ public:
 	: FilledSlider(parent, st)
 	, _st(st)
 	, _waveAnimation([=] {
-		if (!_playing || !isVisible()
-			|| QGuiApplication::applicationState() != Qt::ApplicationActive
+		if ((!_playing && !_strength.animating())
+			|| !isVisible()
 			|| PowerSaving::On(PowerSaving::kAnimations)) {
 			return false;
 		}
@@ -92,8 +150,9 @@ public:
 			return;
 		}
 		_playing = playing;
-		if (!playing) {
-			_waveAnimation.stop();
+		_strength.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 450, anim::easeOutCubic);
+		if (!_waveAnimation.animating()) {
+			_waveAnimation.start();
 		}
 		update();
 	}
@@ -108,19 +167,19 @@ protected:
 		const auto from = double(seekRect.x());
 		const auto end = from + seekRect.width();
 		const auto mid = from + getCurrentValue() * seekRect.width();
-		const auto animate = _playing && !disabled && !isChanging()
-			&& QGuiApplication::applicationState() == Qt::ApplicationActive
+		const auto strength = (disabled || isChanging())
+			? 0.
+			: _strength.value(_playing ? 1. : 0.);
+		const auto animate = strength > 0.
 			&& !PowerSaving::On(PowerSaving::kAnimations);
 		if (animate && !_waveAnimation.animating()) {
 			_waveAnimation.start();
-		} else if (!animate) {
-			_waveAnimation.stop();
 		}
 		const auto stroke = style::ConvertScaleExact(2.);
 		// Мелкая волна: ниже и короче, чем в полноэкранном плеере.
 		const auto length = style::ConvertScaleExact(14.);
 		const auto amplitude = animate
-			? std::min(style::ConvertScaleExact(1.5), (height() - stroke) / 2.)
+			? strength * std::min(style::ConvertScaleExact(1.5), (height() - stroke) / 2.)
 			: 0.;
 		// Волна по середине своей полосы: середина лежит на границе плашки и шапки чата.
 		const auto y = height() / 2.;
@@ -166,6 +225,7 @@ protected:
 private:
 	const style::FilledSlider &_st;
 	Ui::Animations::Basic _waveAnimation;
+	Ui::Animations::Simple _strength;
 	bool _playing = false;
 
 };
@@ -718,7 +778,33 @@ void Widget::paintEvent(QPaintEvent *e) {
 		path.addRoundedRect(art, 12, 12);
 		const auto current = instance()->current(AudioMsgId::Type::Song);
 		const auto cover = Mokagram::Music::CoverForPlayback(current);
-		if (!cover.isNull()) {
+		const auto vinyl = Mokagram::Settings::Bool(u"player.vinyl"_q);
+		if (vinyl) {
+			const auto now = crl::now();
+			const auto speed = PowerSaving::On(PowerSaving::kAnimations)
+				? 0.
+				: _spin.value(_discPlaying ? 1. : 0.);
+			if (_discTime) {
+				_discAngle = std::fmod(
+					_discAngle + 80. * speed * std::min<crl::time>(now - _discTime, 100) / 1000.,
+					360.);
+			}
+			_discTime = now;
+			if (!cover.isNull() && _discLabelKey != cover.cacheKey()) {
+				_discLabelKey = cover.cacheKey();
+				_discLabel = QPixmap::fromImage(cover.scaled(
+					QSize(96, 96),
+					Qt::KeepAspectRatioByExpanding,
+					Qt::SmoothTransformation));
+			}
+			PaintDisc(
+				p,
+				QRectF(art),
+				cover.isNull() ? QPixmap() : _discLabel,
+				_discAngle);
+		}
+		if (vinyl) {
+		} else if (!cover.isNull()) {
 			p.save();
 			p.setClipPath(path);
 			p.drawImage(art, cover);
@@ -1106,8 +1192,24 @@ void Widget::handleSongUpdate(const TrackState &state) {
 		? tr::lng_shortcuts_media_pause(tr::now)
 		: tr::lng_shortcuts_media_play(tr::now));
 
-	static_cast<WavySlider*>(_playbackSlider.data())->setPlaying(
-		showPause && !state.id.audio()->loading());
+	const auto spinning = showPause && !state.id.audio()->loading();
+	static_cast<WavySlider*>(_playbackSlider.data())->setPlaying(spinning);
+	if (_discPlaying != spinning) {
+		_discPlaying = spinning;
+		_spin.start([=] { update(); }, spinning ? 0. : 1., spinning ? 1. : 0., spinning ? 500 : 1100, anim::easeOutCubic);
+		if (!_discAnimation.animating()) {
+			_discAnimation.init([=] {
+				const auto more = isVisible()
+					&& (_discPlaying || _spin.animating())
+					&& !PowerSaving::On(PowerSaving::kAnimations);
+				if (more) {
+					update(0, 0, 100, st::mediaPlayerHeight);
+				}
+				return more;
+			});
+			_discAnimation.start();
+		}
+	}
 	updateTimeText(state);
 }
 

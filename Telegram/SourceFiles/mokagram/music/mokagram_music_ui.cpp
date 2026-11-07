@@ -3826,10 +3826,7 @@ public:
 	}
 	void setExpressive(bool expressive, bool playing) {
 		_expressive = expressive;
-		if (_wavePlaying != playing) {
-			_wavePlaying = playing;
-			_wave.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 450, anim::easeOutCubic);
-		}
+		_wavePlaying = playing;
 		update();
 	}
 	void setThin(bool thin) {
@@ -3887,11 +3884,11 @@ private:
 		const auto progress = _dragging ? _drag : _progress;
 		const auto y = height() / 2.;
 		const auto end = width() * progress;
-		const auto strength = _wave.value(_wavePlaying ? 1. : 0.);
-		const auto phase = !_dragging
+		const auto phase = _wavePlaying && !_dragging
+			&& Mokagram::Perf::UserIsLooking()
 			&& !PowerSaving::On(PowerSaving::kAnimations)
 			? crl::now() / 500. : 0.;
-		const auto amplitude = _dragging ? 0. : st::motionWaveAmplitude * strength;
+		const auto amplitude = _wavePlaying && !_dragging ? st::motionWaveAmplitude : 0;
 		p.setPen(QPen(QColor(255, 255, 255, 65), st::motionWaveStroke,
 			Qt::SolidLine, Qt::RoundCap));
 		p.drawLine(QPointF(std::min(end + st::motionWaveGap, double(width())), y),
@@ -3931,7 +3928,6 @@ private:
 	}
 
 	Ui::Animations::Simple _grow;
-	Ui::Animations::Simple _wave;
 	bool _expressive = false;
 	bool _wavePlaying = false;
 	bool _thin = false;
@@ -5619,14 +5615,11 @@ public:
 		}, lifetime());
 		_ambientTimer.setInterval(33);
 		connect(&_ambientTimer, &QTimer::timeout, this, [=] {
-			if (!isVisible() || !_isPlaying
+			if (!isVisible() || !_isPlaying || !Mokagram::Perf::UserIsLooking()
 				|| PowerSaving::On(PowerSaving::kAnimations)) return;
-			if (Mokagram::Perf::UserIsLooking()
-				&& Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
+			if (Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
 				_view->update();
 				update();
-			} else if (_tab == Tab::Now && Mokagram::Settings::Bool(u"player.vinyl"_q)) {
-				update(computeLayout().right);
 			}
 			_seek->update();
 		});
@@ -5881,16 +5874,13 @@ protected:
 			if (result.showRight) {
 				const auto colWidth = std::clamp(int(width() * 0.29), s(190), s(460));
 				result.right = QRect(margin, top, colWidth, areaHeight);
-				const auto vinyl = Mokagram::Settings::Bool(u"player.vinyl"_q);
-				const auto full = std::max(std::min({
+				const auto side = std::max(std::min({
 					colWidth - 2 * pad,
 					std::max(areaHeight - s(16), 0) * 4 / 5,
 					s(420) }), 0);
-				const auto side = vinyl ? full * 100 / 128 : full;
-				const auto reach = vinyl ? side * 28 / 100 : 0;
 				const auto coverHeight = side * 5 / 4;
 				const auto y = top + std::max((areaHeight - coverHeight) / 2, 0);
-				result.cover = QRect(margin + (colWidth - side - reach) / 2, y, side, coverHeight);
+				result.cover = QRect(margin + (colWidth - side) / 2, y, side, coverHeight);
 				const auto infoInset = std::min(s(24), side / 4);
 				result.info = QRect(
 					result.cover.x() + infoInset,
@@ -7055,17 +7045,6 @@ protected:
 				from.height() + (to.height() - from.height()) * morph);
 		}();
 		const auto coverRadius = s(10) + (s(22) - s(10)) * morph;
-		const auto spinning = PowerSaving::On(PowerSaving::kAnimations)
-			? 0.
-			: _spin.value(_isPlaying ? 1. : 0.);
-		const auto paintTime = crl::now();
-		if (_discTime) {
-			_discAngle = std::fmod(
-				_discAngle + 80. * spinning * std::min<crl::time>(paintTime - _discTime, 100) / 1000.,
-				360.);
-		}
-		_discTime = paintTime;
-		const auto vinylShown = Mokagram::Settings::Bool(u"player.vinyl"_q);
 		const auto drawCover = [&](const QPixmap &pixmap, double opacity, bool current) {
 			if (opacity <= 0. || !layout.showRight || _tab != Tab::Now) {
 				return;
@@ -7075,9 +7054,6 @@ protected:
 			p.translate(coverRect.center());
 			p.scale(scale, scale);
 			p.translate(-coverRect.center());
-			if (vinylShown) {
-				paintVinyl(p, coverRect, pixmap, _discAngle);
-			}
 			auto path = QPainterPath();
 			path.addRoundedRect(coverRect, coverRadius, coverRadius);
 			p.setClipPath(path);
@@ -7260,70 +7236,6 @@ protected:
 	}
 
 private:
-	static void paintVinyl(
-			QPainter &p,
-			const QRectF &cover,
-			const QPixmap &label,
-			double angle) {
-		const auto radius = cover.width() * 0.45;
-		const auto center = QPointF(
-			cover.right() + cover.width() * 0.28 - radius,
-			cover.center().y());
-		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		auto shadow = QRadialGradient(center + QPointF(0, radius * 0.04), radius * 1.1);
-		shadow.setColorAt(0.85, QColor(0, 0, 0, 110));
-		shadow.setColorAt(1., QColor(0, 0, 0, 0));
-		p.setBrush(shadow);
-		p.drawEllipse(center + QPointF(0, radius * 0.04), radius * 1.1, radius * 1.1);
-		auto base = QRadialGradient(center, radius);
-		base.setColorAt(0., QColor(0x1c, 0x1c, 0x1e));
-		base.setColorAt(0.4, QColor(0x10, 0x10, 0x11));
-		base.setColorAt(1., QColor(0x07, 0x07, 0x08));
-		p.setBrush(base);
-		p.drawEllipse(center, radius, radius);
-		p.setBrush(Qt::NoBrush);
-		p.setPen(QPen(QColor(255, 255, 255, 12), 1.));
-		for (auto r = radius * 0.42; r < radius * 0.98; r += radius * 0.065) {
-			p.drawEllipse(center, r, r);
-		}
-		auto sheen = QConicalGradient(center, 35.);
-		sheen.setColorAt(0., QColor(255, 255, 255, 0));
-		sheen.setColorAt(0.07, QColor(255, 255, 255, 34));
-		sheen.setColorAt(0.14, QColor(255, 255, 255, 0));
-		sheen.setColorAt(0.5, QColor(255, 255, 255, 0));
-		sheen.setColorAt(0.57, QColor(255, 255, 255, 26));
-		sheen.setColorAt(0.64, QColor(255, 255, 255, 0));
-		sheen.setColorAt(1., QColor(255, 255, 255, 0));
-		p.setPen(Qt::NoPen);
-		p.setBrush(sheen);
-		p.drawEllipse(center, radius * 0.98, radius * 0.98);
-		const auto labelRadius = radius * 0.34;
-		p.save();
-		p.translate(center);
-		p.rotate(angle);
-		auto clip = QPainterPath();
-		clip.addEllipse(QPointF(), labelRadius, labelRadius);
-		p.setClipPath(clip);
-		const auto box = QRectF(-labelRadius, -labelRadius, labelRadius * 2, labelRadius * 2);
-		if (label.isNull()) {
-			p.fillRect(box, QColor(0x23, 0x23, 0x25));
-		} else {
-			const auto scaled = QSizeF(label.size()).scaled(box.size(), Qt::KeepAspectRatioByExpanding);
-			p.drawPixmap(
-				QRectF(-scaled.width() / 2, -scaled.height() / 2, scaled.width(), scaled.height()),
-				label,
-				QRectF(QPointF(), QSizeF(label.size())));
-		}
-		p.restore();
-		p.setBrush(Qt::NoBrush);
-		p.setPen(QPen(QColor(255, 255, 255, 40), 1.));
-		p.drawEllipse(center, labelRadius, labelRadius);
-		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(0x0b, 0x0b, 0x0c));
-		p.drawEllipse(center, radius * 0.055, radius * 0.055);
-	}
-
 	QImage motionFrame(Media::Clip::ReaderPointer &reader, QSize size) {
 		if (!reader || !reader->ready() || size.isEmpty()) return {};
 		const auto request = Media::Clip::FrameRequest{
@@ -7473,7 +7385,6 @@ private:
 		if (_isPlaying != playing) {
 			_isPlaying = playing;
 			_playAnim.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 180, anim::easeOutCubic);
-			_spin.start([=] { update(computeLayout().right); }, playing ? 0. : 1., playing ? 1. : 0., playing ? 500 : 1100, anim::easeOutCubic);
 		}
 		_play->setPlaying(playing);
 		_seek->setExpressive(true, playing);
@@ -7659,9 +7570,6 @@ private:
 	QColor _accent;
 	Ui::Animations::Simple _fade;
 	Ui::Animations::Simple _playAnim;
-	Ui::Animations::Simple _spin;
-	double _discAngle = 0.;
-	crl::time _discTime = 0;
 	Ui::Animations::Simple _coverMorph;
 	Ui::Animations::Simple _coverClosing;
 	QRect _morphFrom;
