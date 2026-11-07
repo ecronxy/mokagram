@@ -334,11 +334,20 @@ Application::~Application() {
 }
 
 void Application::run() {
+	const auto perfStart = crl::now();
+	auto perfLast = perfStart;
+	const auto perfStage = [&](const char *name) {
+		const auto now = crl::now();
+		LOG(("[mokagram-perf] run: %1 +%2 ms (total %3 ms)").arg(
+			QString::fromLatin1(name)).arg(now - perfLast).arg(now - perfStart));
+		perfLast = now;
+	};
 	// Depends on OpenSSL on macOS, so on ThirdParty::start().
 	// Depends on notifications settings.
 	_notifications = std::make_unique<Window::Notifications::System>();
 
 	startLocalStorage();
+	perfStage("localStorage");
 
 	Mokagram::Plugins::ApplyPendingRestore();
 	Mokagram::Settings::Load();
@@ -360,12 +369,15 @@ void Application::run() {
 	Mokagram::Update::RegisterSettings();
 	Mokagram::Update::Start();
 	Mokagram::Settings::StartDebugCommands();
+	perfStage("moka modules");
 	Mokagram::Plugins::Start([](const std::string &line) {
 		LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
 	});
+	perfStage("plugins");
 
 	style::SetCustomFont(settings().customFontFamily());
 	style::internal::StartFonts();
+	perfStage("fonts");
 
 	Test::ApplyStartupOverrides();
 
@@ -445,6 +457,7 @@ void Application::run() {
 	_windows.emplace(nullptr, std::make_unique<Window::Controller>());
 	setLastActiveWindow(_windows.front().second.get());
 	_windowInSettings = _lastActivePrimaryWindow = _lastActiveWindow;
+	perfStage("window created");
 
 	_domain->activeChanges(
 	) | rpl::on_next([=](not_null<Main::Account*> account) {

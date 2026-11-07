@@ -307,6 +307,7 @@ struct Category {
 		{ "history.filters_enabled", "📑" },
 		{ "hide_blocked", "🚫" },
 		{ "lag.idle", "💤" },
+		{ "lag.fps", "📊" },
 		{ "lag.autostart", "▶️" },
 		{ "lag.background", "🔽" },
 		{ "lag.toaster", "⚙️" },

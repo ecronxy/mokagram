@@ -1895,6 +1895,13 @@ void RegisterSettings() {
 		.defaultValue = true,
 	});
 	lag({
+		.key = u"lag.fps"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Счётчик кадров")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Плавающий оверлей с текущим fps и 1% low за последние 5 секунд. Нужен для замеров.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = false,
+	});
+	lag({
 		.key = u"lag.emoji_cap"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько эмодзи играет одновременно")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Остальные премиум-эмодзи замирают на кадре. 0 значит без ограничения.")),
