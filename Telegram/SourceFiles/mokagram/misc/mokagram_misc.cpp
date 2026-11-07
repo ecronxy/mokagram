@@ -40,6 +40,7 @@
 #include "base/call_delayed.h"
 #include <deque>
 #include <map>
+#include <set>
 #include <QtGui/QGuiApplication>
 #include "ui/unread_badge.h"
 #include "core/application.h"
@@ -89,6 +90,31 @@ void RegisterSettings();
 } // namespace Mokagram::Guard
 
 namespace Mokagram::Misc {
+namespace {
+
+std::set<uint64> &SponsoredBlockedPeers() {
+	static auto result = std::set<uint64>();
+	return result;
+}
+
+void RegisterSponsoredEntry() {
+	const auto blocked = int(SponsoredBlockedPeers().size());
+	Settings::Register({
+		.key = u"adblock.hideSponsored"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Реклама")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Скрывать спонсорские сообщения")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Не запрашиваем и не показываем рекламу в каналах. Скрыто за сессию: "))
+			+ QString::number(blocked),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = false,
+		.category = u"chats"_q,
+		.sectionIcon = u"block"_q,
+		.icon = u"block"_q,
+	});
+}
+
+} // namespace
+
 
 QString DebugFilePath(const QString &name) {
 	const auto dir = QStandardPaths::writableLocation(
@@ -408,6 +434,16 @@ void AddBotButtonCopyActions(
 	add("Копировать текст кнопки", button->text);
 }
 
+bool SponsoredHidden() {
+	return Settings::Bool(u"adblock.hideSponsored"_q);
+}
+
+void NoteSponsoredBlocked(not_null<PeerData*> peer) {
+	if (SponsoredBlockedPeers().insert(peer->id.value).second) {
+		RegisterSponsoredEntry();
+	}
+}
+
 QString FormatMessageTime(const QTime &time) {
 	return Settings::Bool(u"time.showSeconds"_q)
 		? QLocale().toString(time, u"HH:mm:ss"_q)
@@ -415,6 +451,7 @@ QString FormatMessageTime(const QTime &time) {
 }
 
 void RegisterSettings() {
+	RegisterSponsoredEntry();
 	Settings::Register({
 		.key = u"misc.welcome_shown"_q,
 		.title = u"welcome"_q,

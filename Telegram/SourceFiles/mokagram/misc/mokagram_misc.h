@@ -38,6 +38,10 @@ void AddBotButtonCopyActions(
 	not_null<Ui::PopupMenu*> menu,
 	const std::shared_ptr<ClickHandler> &link);
 
+// adblock.hideSponsored: спонсорские сообщения не запрашиваются и не показываются.
+[[nodiscard]] bool SponsoredHidden();
+void NoteSponsoredBlocked(not_null<PeerData*> peer);
+
 // Время в подвале сообщения: «12:34:56» при time.showSeconds, иначе как в Telegram.
 [[nodiscard]] QString FormatMessageTime(const QTime &time);
 

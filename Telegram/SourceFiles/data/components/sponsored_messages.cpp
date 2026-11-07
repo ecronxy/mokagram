@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_element.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "mokagram/misc/mokagram_misc.h"
 #include "ui/chat/sponsored_message_bar.h"
 #include "ui/text/text_utilities.h" // tr::rich.
 
@@ -302,7 +303,9 @@ HistoryItem *SponsoredMessages::injectItem(
 }
 
 bool SponsoredMessages::canHaveFor(not_null<History*> history) const {
-	if (history->peer->isChannel()) {
+	if (Mokagram::Misc::SponsoredHidden()) {
+		return false;
+	} else if (history->peer->isChannel()) {
 		return true;
 	} else if (const auto user = history->peer->asUser()) {
 		return user->isBot();
@@ -311,7 +314,8 @@ bool SponsoredMessages::canHaveFor(not_null<History*> history) const {
 }
 
 bool SponsoredMessages::canHaveFor(not_null<HistoryItem*> item) const {
-	return item->history()->peer->isBroadcast()
+	return !Mokagram::Misc::SponsoredHidden()
+		&& item->history()->peer->isBroadcast()
 		&& item->isRegular();
 }
 
@@ -325,7 +329,13 @@ bool SponsoredMessages::isTopBarFor(not_null<History*> history) const {
 }
 
 void SponsoredMessages::request(not_null<History*> history, Fn<void()> done) {
-	if (!canHaveFor(history)) {
+	if (Mokagram::Misc::SponsoredHidden()) {
+		const auto user = history->peer->asUser();
+		if (history->peer->isChannel() || (user && user->isBot())) {
+			Mokagram::Misc::NoteSponsoredBlocked(history->peer);
+		}
+		return;
+	} else if (!canHaveFor(history)) {
 		return;
 	}
 	auto &request = _requests[history];
@@ -366,6 +376,10 @@ void SponsoredMessages::requestForVideo(
 	Expects(done != nullptr);
 
 	if (!canHaveFor(item)) {
+		if (Mokagram::Misc::SponsoredHidden()
+			&& item->history()->peer->isBroadcast()) {
+			Mokagram::Misc::NoteSponsoredBlocked(item->history()->peer);
+		}
 		done({});
 		return;
 	}
