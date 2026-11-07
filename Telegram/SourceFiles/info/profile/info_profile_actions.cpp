@@ -1948,6 +1948,12 @@ Section DetailsFiller::makeInfo() {
 					? QString::fromUtf8("DC%1, %2").arg(dcNum).arg(
 						QString::fromUtf8(places[dcNum]))
 					: QString::fromUtf8(Mokagram::Lang::Tr("DC неизвестен (у аккаунта нет фото)"));
+				if (const auto estimate = Mokagram::Misc::RegdateText(user);
+					!estimate.isEmpty() && !Mokagram::Misc::DateRegEnabled()) {
+					// Оценка по таблице: показываем только в подсказке календарика.
+					state->date = QString::fromUtf8(Mokagram::Lang::Tr("Регистрация: "))
+						+ estimate;
+				}
 				if (Mokagram::Misc::DateRegEnabled()) {
 					Mokagram::Misc::RegistrationDate(
 						user->id.value & PeerId::kChatTypeMask
@@ -1982,11 +1988,6 @@ Section DetailsFiller::makeInfo() {
 			QString::fromUtf8(Mokagram::Lang::Tr("Заметка (видна только тебе)")),
 			Mokagram::Notes::NoteValue(user->id) | rpl::map([](QString note) {
 				return TextWithEntities{ note };
-			}));
-		addInfoLine(
-			QString::fromUtf8(Mokagram::Lang::Tr("Регистрация")),
-			Mokagram::Misc::RegdateValue(user) | rpl::map([](QString text) {
-				return TextWithEntities{ text };
 			}));
 
 		const auto usernameLine = addInfoOneLine(
