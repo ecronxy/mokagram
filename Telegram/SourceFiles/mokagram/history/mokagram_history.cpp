@@ -15,6 +15,9 @@
 #include "core/click_handler_types.h"
 #include "data/data_channel.h"
 #include "data/data_media_types.h"
+#include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "core/file_location.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -26,8 +29,10 @@
 #include "window/window_session_controller.h"
 
 #include <crl/crl_on_main.h>
+#include <crl/crl_async.h>
 
 #include <QtCore/QDir>
+#include <QtCore/QFile>
 
 #include <algorithm>
 
@@ -200,6 +205,87 @@ struct GhostSession {
 	return body;
 }
 
+// Файлы голосовых и кружков удалённых сообщений: копия лежит рядом с базой.
+[[nodiscard]] QString SavedFilePath(
+		not_null<Main::Session*> session,
+		uint64 peer,
+		int64 messageId,
+		not_null<DocumentData*> document) {
+	return cWorkingDir()
+		+ u"tdata/mokagram/%1/files/%2/%3_%4.%5"_q.arg(
+			session->uniqueId()).arg(peer).arg(messageId).arg(document->id).arg(
+			document->isVoiceMessage() ? u"ogg"_q : u"mp4"_q);
+}
+
+[[nodiscard]] bool SavableDocument(not_null<DocumentData*> document) {
+	if (!document->isVoiceMessage() && !document->isVideoMessage()) {
+		return false;
+	}
+	const auto limit = int64(Settings::Int(u"history.save_files_mb"_q))
+		* 1024 * 1024;
+	return !limit || document->size <= limit;
+}
+
+// Берёт только то, что клиент уже скачал: лишних загрузок нет.
+void SaveFiles(not_null<HistoryItem*> item) {
+	if (!Settings::Bool(u"history.save_files"_q) || !item->media()) {
+		return;
+	}
+	const auto document = item->media()->document();
+	if (!document || !SavableDocument(document)) {
+		return;
+	}
+	const auto target = SavedFilePath(
+		&item->history()->session(),
+		item->history()->peer->id.value,
+		item->id.bare,
+		document);
+	if (QFile::exists(target)) {
+		return;
+	}
+	const auto view = document->createMediaView();
+	auto bytes = view->loaded() ? view->bytes() : QByteArray();
+	const auto source = bytes.isEmpty()
+		? document->filepath(true)
+		: QString();
+	if (bytes.isEmpty() && source.isEmpty()) {
+		return;
+	}
+	crl::async([=, bytes = std::move(bytes)] {
+		QDir().mkpath(QFileInfo(target).absolutePath());
+		if (!bytes.isEmpty()) {
+			auto file = QFile(target);
+			if (file.open(QIODevice::WriteOnly)) {
+				file.write(bytes);
+			}
+		} else {
+			QFile::copy(source, target);
+		}
+	});
+}
+
+void RestoreFiles(
+		not_null<Main::Session*> session,
+		not_null<HistoryItem*> ghost,
+		const Snapshot &row) {
+	if (!ghost->media()) {
+		return;
+	}
+	if (const auto document = ghost->media()->document()) {
+		if (SavableDocument(document)) {
+			const auto path = SavedFilePath(
+				session,
+				row.peer,
+				row.id,
+				document);
+			if (QFile::exists(path)) {
+				document->setLocation(Core::FileLocation(path));
+			}
+		}
+	}
+}
+
+
 // Создаёт призраков и один раз вставляет их в блоки по дате.
 void CreateGhosts(
 		not_null<Main::Session*> session,
@@ -273,6 +359,7 @@ void CreateGhosts(
 			media);
 		ghosts.items.emplace(item);
 		ghosts.origin.emplace(item, row.id);
+		RestoreFiles(session, item, row);
 		state.byOrigin.emplace(row.id, item);
 		made.push_back(item);
 		touched.emplace(history);
@@ -399,6 +486,26 @@ void RegisterSettings() {
 		.icon = u"history"_q,
 	});
 	add({
+		.key = u"history.save_files"_q,
+		.title = U(Mokagram::Lang::Tr("Сохранять голосовые и кружки")),
+		.description = U(Mokagram::Lang::Tr("При удалении копируется то, что клиент уже скачал, лишних загрузок нет. Удалённое голосовое проигрывается из копии.")),
+		.kind = Settings::Kind::Bool,
+		.defaultValue = true,
+		.dependsOn = u"history.save_deleted"_q,
+		.icon = u"history"_q,
+	});
+	add({
+		.key = u"history.save_files_mb"_q,
+		.title = U(Mokagram::Lang::Tr("Предел размера файла (МБ)")),
+		.description = U(Mokagram::Lang::Tr("Файлы больше не сохраняются. 0 значит без предела.")),
+		.kind = Settings::Kind::Int,
+		.defaultValue = 20,
+		.minValue = 0,
+		.maxValue = 2000,
+		.dependsOn = u"history.save_files"_q,
+		.icon = u"storage"_q,
+	});
+	add({
 		.key = u"history.save_edited"_q,
 		.title = U(Mokagram::Lang::Tr("Сохранять прошлые версии правок")),
 		.description = U(Mokagram::Lang::Tr("Если сообщение отредактировали, старый текст останется у вас.")),
@@ -500,6 +607,7 @@ void OnServerDeleted(const std::vector<not_null<HistoryItem*>> &items) {
 			continue;
 		}
 		const auto session = &item->history()->session();
+		SaveFiles(item);
 		auto snapshot = MakeSnapshot(item, Kind::Deleted);
 		if (GhostsEnabled()) {
 			ghostSession = session;
