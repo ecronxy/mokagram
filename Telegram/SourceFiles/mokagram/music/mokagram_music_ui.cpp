@@ -5166,121 +5166,6 @@ private:
 };
 
 // Переключатель из двух-трёх сегментов, как в окне музыки: пилюля с ползущим акцентом.
-// Компактная строка боковой панели «Сейчас играет»: обложка, название, исполнитель.
-class SideRow final : public Ui::AbstractButton {
-public:
-	SideRow(QWidget *parent, const Track &track, bool playing, Fn<void()> play)
-	: AbstractButton(parent)
-	, _track(track)
-	, _playing(playing) {
-		resize(width(), style::ConvertScale(56));
-		setPointerCursor(true);
-		if (const auto item = TrackMessage(track)) {
-			const auto document = item->media()->document();
-			_media = document->createMediaView();
-			_media->thumbnailWanted(item->fullId());
-			document->session().downloaderTaskFinished(
-			) | rpl::on_next([=] { update(); }, lifetime());
-		} else if (!IsTelegramTrack(track)) {
-			LoadImage(ArtUrl(track.artworkUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
-				_art = std::move(image);
-				update();
-			}));
-		}
-		if (play) {
-			setClickedCallback(std::move(play));
-		}
-		paintRequest(
-		) | rpl::on_next([=](QRect) {
-			paint();
-		}, lifetime());
-	}
-
-protected:
-	void onStateChanged(State was, StateChangeSource source) override {
-		AbstractButton::onStateChanged(was, source);
-		update();
-	}
-
-private:
-	void paint() {
-		auto p = QPainter(this);
-		auto hq = PainterHighQualityEnabler(p);
-		const auto s = [](int v) { return style::ConvertScale(v); };
-		if (isOver() || isDown()) {
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(255, 255, 255, 22));
-			p.drawRoundedRect(rect(), s(12), s(12));
-		}
-		if (_media) {
-			if (const auto image = _media->thumbnail()) {
-				_art = image->original();
-			} else if (const auto image = _media->thumbnailInline()) {
-				_art = image->original();
-			}
-		}
-		const auto side = s(40);
-		const auto art = QRect(s(8), (height() - side) / 2, side, side);
-		auto path = QPainterPath();
-		path.addRoundedRect(art, s(8), s(8));
-		if (!_art.isNull()) {
-			p.save();
-			p.setClipPath(path);
-			p.drawImage(art, _art);
-			p.restore();
-		} else {
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(255, 255, 255, 28));
-			p.drawPath(path);
-		}
-		const auto left = art.right() + s(12);
-		const auto textWidth = std::max(width() - left - s(8), 0);
-		auto title = st::semiboldFont->f;
-		title.setPixelSize(s(14));
-		p.setFont(title);
-		p.setPen(_playing ? st::windowActiveTextFg->c : st::windowFg->c);
-		p.drawText(
-			QRect(left, height() / 2 - s(21), textWidth, s(20)),
-			Qt::AlignVCenter | Qt::AlignLeft,
-			QFontMetrics(title).elidedText(_track.title, Qt::ElideRight, textWidth));
-		auto sub = st::normalFont->f;
-		sub.setPixelSize(s(12));
-		p.setFont(sub);
-		p.setPen(st::windowSubTextFg->c);
-		p.drawText(
-			QRect(left, height() / 2 + s(1), textWidth, s(18)),
-			Qt::AlignVCenter | Qt::AlignLeft,
-			QFontMetrics(sub).elidedText(_track.artist, Qt::ElideRight, textWidth));
-	}
-
-	Track _track;
-	bool _playing = false;
-	QImage _art;
-	std::shared_ptr<Data::DocumentMedia> _media;
-
-};
-
-class SideLabel final : public Ui::RpWidget {
-public:
-	SideLabel(QWidget *parent, const QString &text) : RpWidget(parent) {
-		resize(width(), style::ConvertScale(28));
-		setAttribute(Qt::WA_TransparentForMouseEvents);
-		paintRequest(
-		) | rpl::on_next([=](QRect) {
-			auto p = QPainter(this);
-			auto font = st::normalFont->f;
-			font.setPixelSize(style::ConvertScale(12));
-			p.setFont(font);
-			p.setPen(st::windowSubTextFg->c);
-			p.drawText(
-				rect().adjusted(style::ConvertScale(8), 0, 0, 0),
-				Qt::AlignVCenter | Qt::AlignLeft,
-				text);
-		}, lifetime());
-	}
-
-};
-
 class Segmented final : public Ui::AbstractButton {
 public:
 	Segmented(QWidget *parent, std::vector<QString> labels, Fn<void(int)> chosen)
@@ -5468,7 +5353,6 @@ public:
 	: RpWidget(parent.get())
 	, _controller(controller)
 	, _view(Ui::CreateChild<LyricsView>(this))
-	, _sideList(Ui::CreateChild<Ui::VerticalLayout>(this))
 	, _seek(Ui::CreateChild<SeekBar>(this))
 	, _heart(Ui::CreateChild<RoundGlyph>(this, Glyph::Add, 44))
 	, _collapse(Ui::CreateChild<RoundGlyph>(this, Glyph::Collapse, 44))
@@ -5574,24 +5458,6 @@ public:
 			_nav[i] = item;
 		}
 		_nav[0]->setActive(true);
-		for (auto i = 0; i != 2; ++i) {
-			const auto item = Ui::CreateChild<NavItem>(
-				this,
-				QString::fromUtf8(Mokagram::Lang::Tr(i ? "Недавние" : "Очередь")),
-				false);
-			item->setClickedCallback([=] {
-				_sideTab = i;
-				rebuildSide();
-			});
-			item->hide();
-			_sideTabs[i] = item;
-		}
-		RecentChanged(
-		) | rpl::on_next([=] {
-			if (_sideTab == 1) {
-				rebuildSide();
-			}
-		}, lifetime());
 		_searchField = Ui::CreateChild<QLineEdit>(this);
 		_searchField->setFrame(false);
 		_searchField->installEventFilter(this);
@@ -5656,7 +5522,6 @@ public:
 			if (_tab == Tab::Queue) {
 				rebuildTab();
 			}
-			rebuildSide();
 		}, lifetime());
 		for (const auto button : { _heart, _collapse, _filter, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
 			button->setOverlay(true);
@@ -5992,8 +5857,6 @@ protected:
 		QRect cover;
 		QRect info;
 		QRect lyrics;
-		QRect next;
-		bool showNext = false;
 		QRect barCover;
 		QRect barInfo;
 		QRect seek;
@@ -6056,23 +5919,10 @@ protected:
 					std::min(s(56), coverHeight));
 				lyricsLeft = margin + colWidth + s(32);
 			}
-			auto lyricsRight = width() - margin;
-			// На широком окне справа панель очереди, как у Spotify.
-			if (result.showRight && width() >= s(1400) && _sideRows > 0) {
-				const auto sideWidth = std::clamp(int(width() * 0.22), s(280), s(360));
-				const auto sideHeight = std::min(sideContentHeight(), areaHeight);
-				result.showNext = true;
-				result.next = QRect(
-					width() - margin - sideWidth,
-					top + std::max((areaHeight - sideHeight) / 2, 0),
-					sideWidth,
-					sideHeight);
-				lyricsRight = result.next.x() - s(32);
-			}
 			result.lyrics = QRect(
 				lyricsLeft,
 				top,
-				std::max(lyricsRight - lyricsLeft, 0),
+				std::max(width() - margin - lyricsLeft, 0),
 				areaHeight);
 		} else {
 			const auto contentWidth = std::max(width() - 2 * margin, 0);
@@ -6233,19 +6083,6 @@ protected:
 		_seek->setGeometry(layout.seek);
 		_view->setVisible(_tab == Tab::Now);
 		_view->setGeometry(layout.lyrics);
-		{
-			const auto shown = (_tab == Tab::Now && layout.showNext);
-			_sideList->setVisible(shown);
-			_sideTabs[0]->setVisible(shown);
-			_sideTabs[1]->setVisible(shown);
-			if (shown) {
-				const auto pad = s(8);
-				_sideTabs[0]->setGeometry(layout.next.x() + pad, layout.next.y() + pad, s(96), s(36));
-				_sideTabs[1]->setGeometry(layout.next.x() + pad + s(96), layout.next.y() + pad, s(120), s(36));
-				_sideList->resizeToWidth(layout.next.width() - 2 * pad);
-				_sideList->move(layout.next.x() + pad, layout.next.y() + s(44));
-			}
-		}
 		_tabScroll->setVisible(_tab != Tab::Now);
 		_tabScroll->setGeometry(
 			layout.center.x(),
@@ -7067,70 +6904,6 @@ protected:
 		update();
 		scheduleHomeMoreIfNeeded();
 	}
-	[[nodiscard]] int sideContentHeight() const {
-		const auto s = [](int v) { return style::ConvertScale(v); };
-		return s(44) + s(8) + _sideLabels * s(28) + _sideRows * s(56);
-	}
-	void rebuildSide() {
-		const auto s = [](int v) { return style::ConvertScale(v); };
-		_sideList->clear();
-		_sideRows = 0;
-		_sideLabels = 0;
-		const auto room = std::clamp(
-			(height() - s(300) - s(52) - 2 * s(28)) / s(56),
-			1,
-			8);
-		const auto &queue = QueueState();
-		const auto playingId = PlayingTrack().id;
-		if (_sideTab == 0) {
-			if (queue.index >= 0
-				&& queue.index < int(queue.tracks.size())
-				&& queue.tracks[queue.index].id == playingId) {
-				_sideList->add(object_ptr<SideLabel>(
-					_sideList,
-					QString::fromUtf8(Mokagram::Lang::Tr("Сейчас играет"))));
-				_sideList->add(object_ptr<SideRow>(
-					_sideList, queue.tracks[queue.index], true, nullptr));
-				_sideRows += 1;
-				_sideLabels += 1;
-				if (queue.index + 1 < int(queue.tracks.size())) {
-					_sideList->add(object_ptr<SideLabel>(
-						_sideList,
-						QString::fromUtf8(Mokagram::Lang::Tr("Далее"))));
-					_sideLabels += 1;
-				}
-				for (auto i = queue.index + 1; i < int(queue.tracks.size()) && i <= queue.index + room; ++i) {
-					_sideList->add(object_ptr<SideRow>(
-						_sideList, queue.tracks[i], false, [=] { PlayIndex(i); }));
-					++_sideRows;
-				}
-			}
-		} else {
-			auto tracks = std::vector<Track>();
-			for (const auto &item : RecentItems()) {
-				if (!item.isAlbum) {
-					tracks.push_back(item.track);
-				}
-				if (int(tracks.size()) >= room + 2) {
-					break;
-				}
-			}
-			for (auto i = 0; i != int(tracks.size()); ++i) {
-				_sideList->add(object_ptr<SideRow>(
-					_sideList, tracks[i], tracks[i].id == playingId, [=] {
-						QueueState().results = tracks;
-						QueueState().custom = false;
-						PlayFromResults(i);
-					}));
-				++_sideRows;
-			}
-		}
-		_sideTabs[0]->setActive(_sideTab == 0);
-		_sideTabs[1]->setActive(_sideTab == 1);
-		auto event = QResizeEvent(size(), size());
-		resizeEvent(&event);
-		update();
-	}
 	void fillQueue() {
 		const auto &queue = QueueState();
 		const auto playingId = PlayingTrack().id;
@@ -7242,12 +7015,6 @@ protected:
 			font.setPixelSize(s(size));
 			return font;
 		};
-
-		if (_tab == Tab::Now && layout.showNext) {
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(0, 0, 0, 90));
-			p.drawRoundedRect(layout.next, s(22), s(22));
-		}
 
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
@@ -7697,7 +7464,6 @@ private:
 			if (_tab == Tab::Queue) {
 				rebuildTab();
 			}
-			rebuildSide();
 		}
 		if (_lyricsFor != track.id) {
 			_lyricsFor = track.id;
@@ -7718,11 +7484,6 @@ private:
 
 	const not_null<Window::SessionController*> _controller;
 	const not_null<LyricsView*> _view;
-	const not_null<Ui::VerticalLayout*> _sideList;
-	std::array<NavItem*, 2> _sideTabs = {};
-	int _sideTab = 0;
-	int _sideRows = 0;
-	int _sideLabels = 0;
 	const not_null<SeekBar*> _seek;
 	const not_null<RoundGlyph*> _heart;
 	const not_null<RoundGlyph*> _collapse;
