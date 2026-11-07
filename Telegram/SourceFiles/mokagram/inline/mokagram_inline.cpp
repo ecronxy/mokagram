@@ -341,7 +341,7 @@ std::optional<Result> Evaluate(
 
 namespace {
 
-constexpr auto kStarUsd = 0.013;
+constexpr auto kStarUsd = 0.015;
 
 [[nodiscard]] QString SwapLayout(const QString &word, bool toRussian) {
 	static const auto latin = u"qwertyuiop[]asdfghjkl;'zxcvbnm,./`"_s;
@@ -357,7 +357,8 @@ constexpr auto kStarUsd = 0.013;
 [[nodiscard]] QString CurrencyCode(const QString &raw, const QHash<QString, double> &rates) {
 	static const auto aliases = QHash<QString, QString>{
 		{ u"ton"_s, u"ton"_s }, { u"тон"_s, u"ton"_s }, { u"тонкоин"_s, u"ton"_s },
-		{ u"toncoin"_s, u"ton"_s }, { u"тона"_s, u"ton"_s }, { u"тонов"_s, u"ton"_s },
+		{ u"toncoin"_s, u"ton"_s }, { u"gram"_s, u"ton"_s }, { u"грам"_s, u"ton"_s }, { u"грамм"_s, u"ton"_s },
+		{ u"граммы"_s, u"ton"_s }, { u"грамы"_s, u"ton"_s }, { u"грамов"_s, u"ton"_s }, { u"тона"_s, u"ton"_s }, { u"тонов"_s, u"ton"_s },
 		{ u"usdt"_s, u"usdt"_s }, { u"юсдт"_s, u"usdt"_s }, { u"тезер"_s, u"usdt"_s },
 		{ u"tether"_s, u"usdt"_s }, { u"тетер"_s, u"usdt"_s },
 		{ u"usd"_s, u"usd"_s }, { u"$"_s, u"usd"_s }, { u"доллар"_s, u"usd"_s },

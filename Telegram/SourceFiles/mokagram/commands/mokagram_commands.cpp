@@ -801,7 +801,7 @@ bool Handle(
 			Inline::RefreshCurrencyRates();
 			toast(U(Mokagram::Lang::Tr("Курсы ещё загружаются, попробуйте через пару секунд")));
 		} else if (!result) {
-			toast(U(Mokagram::Lang::Tr("Не получилось посчитать")));
+			toast(U(Mokagram::Lang::Tr("Не понял валюту. Пример: .cr 2 ton usdt")));
 		}
 		if (replacement) {
 			*replacement = (result && !result->needsRates)
